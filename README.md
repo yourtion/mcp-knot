@@ -228,16 +228,19 @@ The frontend uses JWT-based authentication. To configure authentication:
    - Password: `admin`
 
 2. **Production Setup**:
-   - Configure credentials in `backend/config/system.json`
-   - Set strong passwords using bcrypt hashing
-   - Configure JWT secret in environment variables
+   - Configure credentials, JWT secret, and server port in `system.json` (see
+     `backend/config/system.json.example` and the schema at
+     `packages/share/src/config/schemas/system.schema.ts`).
+   - Set strong passwords using bcrypt hashing in the `auth.users` block.
+   - JWT secret/expiry come from the `auth.jwt` block in `system.json`, **not**
+     environment variables.
 
 3. **Environment Variables**:
    ```bash
-   # Backend (.env)
-   JWT_SECRET=your-secret-key-here
-   JWT_EXPIRES_IN=1h
-   JWT_REFRESH_EXPIRES_IN=7d
+   # Backend (.env) — only env vars the code actually reads; see .env.production.example
+   NODE_ENV=production
+   CONFIG_PATH=/path/to/config      # directory containing system.json, mcp_server.json, group.json
+   VALIDATION_KEY_SECRET=<>=32 chars>  # required when group validation is enabled
    ```
 
 #### Accessing the Web Interface
@@ -461,25 +464,23 @@ pnpm test:mcp         # MCP protocol tests
 
 - [Web UI Guide](docs/WEB_UI_GUIDE.md) - Complete web interface usage guide
 - [CLI Usage Guide](docs/CLI_USAGE.md) - Detailed CLI usage and configuration
-- [FAQ](docs/FAQ.md) - Frequently asked questions and troubleshooting
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Frequently asked questions and troubleshooting
 
 ### Technical Documentation
 
 - [API Reference](docs/API_REFERENCE.md) - Complete API documentation
 - [Group Routing Guide](docs/GROUP_ROUTING.md) - Group-based routing documentation
-- [Migration Guide](docs/MIGRATION.md) - Upgrading from previous versions
 
 ### Development & Deployment
 
 - [Development Guide](docs/DEVELOPMENT.md) - Development environment setup and contribution guide
 - [Release Process](#release-process) - Version management and publishing with Changesets
-- [NPM Trusted Publishers](docs/NPM_TRUSTED_PUBLISHERS.md) - Secure package publishing setup
 - [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment instructions
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ### Release Process
 
-MCP Knot uses [Changesets](https://github.com/changesets/changesets) for version management and publishing, with [NPM Trusted Publishers](docs/NPM_TRUSTED_PUBLISHERS.md) for secure package publishing.
+MCP Knot uses [Changesets](https://github.com/changesets/changesets) for version management and publishing.
 
 #### Daily Development Workflow
 

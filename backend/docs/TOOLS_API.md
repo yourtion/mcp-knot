@@ -150,7 +150,9 @@
 
 ## 历史记录和统计
 
-### GET /api/tools/history
+> 以下管理与监控端点挂在 `/api/tools-admin` 路由组下（区别于上方的 `/api/tools` 基础端点）。
+
+### GET /api/tools-admin/history
 
 获取工具执行历史记录
 
@@ -162,7 +164,7 @@
 - `serverId` (可选): 按服务器ID过滤
 - `groupId` (可选): 按组ID过滤
 
-### GET /api/tools/history/:executionId
+### GET /api/tools-admin/history/:executionId
 
 获取特定执行记录的详细信息
 
@@ -170,7 +172,7 @@
 
 - `executionId`: 执行记录ID
 
-### GET /api/tools/stats
+### GET /api/tools-admin/stats
 
 获取工具执行统计信息
 
@@ -208,7 +210,7 @@
 
 ## 监控和健康检查
 
-### GET /api/tools/monitoring
+### GET /api/tools-admin/monitoring
 
 获取工具状态监控信息
 
@@ -242,7 +244,7 @@
 }
 ```
 
-### GET /api/tools/health
+### GET /api/tools-admin/health
 
 获取工具健康检查信息
 
@@ -250,7 +252,7 @@
 
 - `groupId` (可选): 指定组ID，默认为 'default'
 
-### GET /api/tools/performance
+### GET /api/tools-admin/performance
 
 获取工具性能分析信息
 
@@ -296,7 +298,7 @@
 }
 ```
 
-### GET /api/tools/errors
+### GET /api/tools-admin/errors
 
 获取工具错误日志和调试信息
 

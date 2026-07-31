@@ -168,8 +168,8 @@
 
 #### 后端
 
-- Hono 4.7.8
-- @modelcontextprotocol/sdk 1.16.0
+- Hono 4.12.32
+- @modelcontextprotocol/* v2（core/server/client/node/hono 等独立包，由原 `@modelcontextprotocol/sdk` 单包拆分而来）
 - jsonwebtoken 9.0.2
 - bcryptjs 3.0.2
 
@@ -249,5 +249,3 @@
 - 基础 API 端点
 
 ---
-
-更多历史版本信息请查看 [CHANGELOG.md](../CHANGELOG.md)
