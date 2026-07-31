@@ -1,194 +1,228 @@
-# 故障排除指南
+# 故障排除与常见问题
 
-本指南帮助您诊断和解决 MCP Knot 使用过程中遇到的常见问题。
+> 本文档合并了原 FAQ 与故障排除指南，帮助你诊断和解决 MCP Knot 使用过程中的常见问题。所有示例端口、路径与端点均与当前代码一致。
+
+## 目录
+
+- [快速诊断](#快速诊断)
+- [常见问题](#常见问题)
+  - [安装与启动](#安装与启动)
+  - [认证与登录](#认证与登录)
+  - [MCP 服务器连接](#mcp-服务器连接)
+  - [工具使用](#工具使用)
+  - [组管理](#组管理)
+  - [API 到 MCP](#api-到-mcp)
+  - [配置文件](#配置文件)
+  - [性能](#性能)
+  - [Docker 与部署](#docker-与部署)
+  - [安全](#安全)
+- [错误代码与端点参考](#错误代码与端点参考)
+- [获取帮助](#获取帮助)
+
+---
 
 ## 快速诊断
 
-### 系统健康检查
-
-首先检查系统整体状态：
+### 健康检查
 
 ```bash
-# 检查 API 服务器健康状态
+# 后端健康检查（默认端口 8181）
 curl http://localhost:8181/health
 
-# 检查所有组的状态
+# 各组状态
 curl http://localhost:8181/api/groups
 
-# 检查系统指标
-curl http://localhost:8181/api/system/metrics
+# 仪表板系统信息（需登录态）
+curl http://localhost:8181/api/dashboard/system-info
+curl http://localhost:8181/api/dashboard/memory
 ```
 
-### 日志检查
+> 注意：系统信息位于 `/api/dashboard/*` 路由组下（`system-info`、`memory`、`stats`、`performance` 等）。**不存在** `/api/system/metrics` 或 `/api/system/info`。
 
-查看应用程序日志获取详细错误信息：
+### 查看日志
+
+项目使用统一的 Logger 输出到 **stdout**，没有固定的 `logs/mcp-knot.log` 文件，也没有 `pnpm --filter ... logs` 这类命令。
 
 ```bash
-# API 服务器日志
-pnpm --filter @mcp-core/mcp-knot-api logs
+# 直接启动时：日志直接打印到终端
+pnpm start:api
 
-# Docker 环境日志
+# Docker 环境
 docker-compose logs -f mcp-knot-api
 
-# 系统日志文件
-tail -f logs/mcp-knot.log
+# PM2 托管时
+pm2 logs mcp-knot-api --lines 100
 ```
+
+---
 
 ## 常见问题
 
-### 1. 服务启动问题
+### 安装与启动
 
-#### 问题：API 服务器无法启动
+#### 支持哪些 Node.js 版本？
 
-**症状**:
-
-```
-Error: listen EADDRINUSE: address already in use :::3000
-```
-
-**解决方案**:
+最低 **Node.js 20**（`package.json` 的 `engines.node` 为 `">=20"`，Docker 镜像基于 `node:20-alpine`）。低于 20 会启动失败。
 
 ```bash
-# 检查端口占用
-lsof -i :3000
-
-# 杀死占用进程
-kill -9 <PID>
-
-# 或更改端口
-export PORT=3001
-pnpm dev:api
+node --version     # 检查版本
+nvm install 20 && nvm use 20   # 用 nvm 升级
 ```
 
-#### 问题：依赖包缺失
+#### 推荐使用 pnpm 而不是 npm
 
-**症状**:
-
-```
-Error: Cannot find module '@mcp-core/mcp-knot-core'
-```
-
-**解决方案**:
+MCP Knot 是 monorepo，推荐 pnpm：
 
 ```bash
-# 重新安装依赖
+npm install -g pnpm
 pnpm install
-
-# 构建核心包
-pnpm build:core
-
-# 清理并重新构建
-pnpm clean && pnpm build
 ```
 
-### 2. 配置问题
+#### 安装依赖时出现权限错误
 
-#### 问题：配置文件未找到
-
-**症状**:
-
-```
-Error: Configuration file not found: mcp_server.json
-```
-
-**解决方案**:
+不要使用 `sudo`。配置 npm 全局目录到用户路径：
 
 ```bash
-# 检查配置文件路径
-ls -la backend/config/
-
-# 创建默认配置
-cp backend/config/mcp_server.json.example backend/config/mcp_server.json
-
-# 验证配置格式
-cat backend/config/mcp_server.json | jq .
+mkdir ~/.npm-global
+npm config set prefix '~/.npm-global'
+# 在 ~/.bashrc 或 ~/.zshrc 中加入：export PATH=~/.npm-global/bin:$PATH
+source ~/.zshrc
 ```
 
-#### 问题：配置格式错误
+#### Windows 上如何运行？
 
-**症状**:
+推荐 WSL2 + Ubuntu，按 Linux 步骤安装 Node.js 与 pnpm。原生 Windows 下部分 MCP 服务器可能不兼容。
 
-```
-Error: Invalid JSON in configuration file
-```
+#### API 服务器无法启动（端口被占用）
 
-**解决方案**:
+**症状**：`Error: listen EADDRINUSE: address already in use :::8181`
 
 ```bash
-# 验证 JSON 格式
-jsonlint backend/config/mcp_server.json
-
-# 或使用 jq
-jq . backend/config/mcp_server.json
-
-# 检查常见错误：
-# - 缺少逗号
-# - 多余的逗号
-# - 引号不匹配
-# - 括号不匹配
+# 检查占用 8181 端口的进程
+lsof -i :8181
+kill -9 <PID>            # 杀死占用进程
 ```
 
-### 3. MCP 服务器连接问题
+要改端口，**不要用 `export PORT=xxxx`**——代码不读取 `process.env.PORT`。请在 `config/system.json` 中设置 `server.port`：
 
-#### 问题：无法连接到 MCP 服务器
-
-**症状**:
-
-```
-Error: Failed to connect to MCP server 'filesystem'
-```
-
-**诊断步骤**:
-
-```bash
-# 1. 检查服务器配置
-cat backend/config/mcp_server.json | jq '.servers.filesystem'
-
-# 2. 手动测试服务器命令
-npx -y @modelcontextprotocol/server-filesystem /path/to/directory
-
-# 3. 检查环境变量
-env | grep -i mcp
-
-# 4. 检查网络连接
-ping localhost
-```
-
-**解决方案**:
-
-```bash
-# 更新服务器配置
+```json
 {
-  "servers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/correct/path"],
-      "env": {},
-      "timeout": 30000,
-      "retries": 3
+  "server": { "port": 8281, "host": "0.0.0.0" }
+}
+```
+
+前端开发服务器默认 **8180**（与后端 8181 区分，旧文档中的 3000/3001 是错误的）。
+
+#### 依赖包缺失
+
+**症状**：`Cannot find module '@mcp-core/mcp-knot-core'`
+
+```bash
+pnpm install
+pnpm build
+```
+
+#### 前端无法连接到后端
+
+1. 确认后端在运行：`curl http://localhost:8181/health`
+2. 检查 `system.json` 中的 CORS 配置
+3. 检查前端的 API 代理与反向代理（Nginx 等）配置
+4. 确认防火墙未拦截 8181 端口
+
+### 认证与登录
+
+#### 默认登录凭据
+
+- 用户名：`admin`
+- 密码：`admin`
+
+> 默认凭据仅适用于开发环境。其来源是 `backend/src/services/auth.ts` 中的硬编码 `defaultSystemConfig`——当 `config/system.json` 为空 `{}`（仓库默认状态）时回退到这套硬编码配置，密码哈希**仅在内存中生成、不落盘**。生产环境必须自定义。
+
+#### 如何更改管理员密码
+
+由于默认走硬编码回退，要自定义密码必须在 `config/system.json` 中写完整的 `users` 块（schema 见 `packages/share/src/config/schemas/system.schema.ts`）。密码字段以明文写入，后端启动时会在内存中生成 bcrypt 哈希，**不会自动写回文件**。
+
+示例 `config/system.json`（节选，实际需补齐 schema 要求的其它字段如 `server`、`auth` 等）：
+
+```json
+{
+  "server": { "port": 8181, "host": "0.0.0.0" },
+  "auth": {
+    "jwt": {
+      "secret": "请替换为至少 32 字符的强随机字符串",
+      "expiresIn": "24h",
+      "refreshExpiresIn": "7d",
+      "issuer": "mcp-knot"
+    },
+    "security": {
+      "maxLoginAttempts": 5,
+      "lockoutDuration": 900000,
+      "passwordMinLength": 6,
+      "requireStrongPassword": false
+    }
+  },
+  "users": {
+    "admin": {
+      "id": "admin",
+      "username": "admin",
+      "password": "your-new-password",
+      "role": "admin",
+      "groups": ["default"],
+      "createdAt": "2025-01-01T00:00:00.000Z"
     }
   }
 }
-
-# 安装缺失的包
-npm install -g @modelcontextprotocol/server-filesystem
-
-# 检查路径权限
-ls -la /path/to/directory
 ```
 
-#### 问题：MCP 服务器超时
+写完后重启后端使配置生效。
 
-**症状**:
+#### 忘记密码
 
-```
-Error: MCP server timeout after 30000ms
-```
+直接编辑 `config/system.json`：删除 `users` 块（让其回退到默认 `admin/admin`），或修改 `users.admin.password` 字段，然后重启服务，用新密码登录。
 
-**解决方案**:
+#### 一直提示"令牌已过期"
 
-```bash
-# 增加超时时间
+1. **系统时间不准确**：JWT 依赖准确时间，校准系统时钟。
+2. **JWT 密钥不一致**：确保使用同一份 `system.json`（`auth.jwt.secret`）。
+3. **过期时间太短**：在 `system.json` 中调大 `auth.jwt.expiresIn`。
+
+#### 支持多用户吗？
+
+当前默认配置仅含单管理员账户。可在 `system.json` 的 `users` 块中声明多个用户，或借助组（group）级别的验证密钥与反向代理实现访问控制。
+
+### MCP 服务器连接
+
+#### 支持哪些类型的服务器
+
+1. **stdio**：标准输入/输出（最常见）
+2. **SSE**：Server-Sent Events
+3. **WebSocket**：计划支持
+
+#### 连接失败
+
+1. **手动验证命令**：
+   ```bash
+   npx -y @modelcontextprotocol/server-filesystem /path/to/dir
+   ```
+2. **检查环境变量**：所需 API Key 是否配置、格式是否正确。
+3. **检查路径权限**：
+   ```bash
+   ls -la /path/to/server
+   chmod +x /path/to/server
+   ```
+4. **查看后端日志**（见[快速诊断](#快速诊断)）。
+
+#### 连接后立即断开
+
+可能原因：上游服务器进程崩溃、MCP 握手失败、连接超时过短、系统资源不足。用 MCP Inspector 调试，或在 `mcp_server.json` 中调大 `timeout`。
+
+#### 服务器超时
+
+**症状**：`Error: MCP server timeout after 30000ms`
+
+在 `config/mcp_server.json` 中增大该服务器的 `timeout`：
+
+```json
 {
   "servers": {
     "slow-server": {
@@ -198,491 +232,291 @@ Error: MCP server timeout after 30000ms
     }
   }
 }
-
-# 检查服务器性能
-time npx -y @modelcontextprotocol/server-slow
-
-# 优化服务器配置
 ```
 
-### 4. 组路由问题
+#### 更新/删除服务器的影响
 
-#### 问题：组路由返回 404
+- 更新配置会断开现有连接并重连。
+- 删除服务器会：断开连接、从所有组移除、使其工具不可用、且不可恢复。建议删除前先禁用。
 
-**症状**:
+### 工具使用
+
+#### 工具未找到
+
+检查：服务器是否已连接、工具名是否正确（区分大小写）、若在组内调用确认工具在组的允许列表中、必要时重连服务器刷新工具列表。
+
+#### 工具执行超时
+
+在服务器配置中增大 `timeout`，或减少一次处理的数据量，确保上游服务器资源充足。
+
+#### 参数如何填写
+
+参考工具的 `inputSchema`：必填项必须提供、类型需匹配（string/number/boolean 等）、遵循描述中的格式要求。
+
+### 组管理
+
+#### 什么是组
+
+组是服务器的逻辑集合，用于：组织服务器、做工具级访问控制、提供独立 MCP 端点、基于验证密钥控制访问。一个服务器可属于多个组。
+
+#### 组的 MCP 端点
+
+每个组有唯一入口：
 
 ```
-GET /development/mcp/list_tools -> 404 Not Found
+POST http://your-domain:8181/:groupId/mcp
 ```
 
-**诊断步骤**:
+例如：`development` 组 → `http://localhost:8181/development/mcp`
 
-```bash
-# 1. 检查组配置
-cat backend/config/group.json | jq '.groups.development'
+> 这是**唯一**的 MCP 入口（JSON-RPC over HTTP，带 `Mcp-Method` 头）。**不存在** `/mcp/list_tools`、`/:group/mcp/list_tools`、`/mcp/call_tool`、`/:group/mcp/call_tool`，全局 `/mcp` 也已移除。
 
-# 2. 检查组是否启用
-curl http://localhost:8181/api/groups/development
+#### 组路由返回 404
 
-# 3. 检查路由注册
-curl http://localhost:8181/api/groups
-```
+**症状**：访问 `/:groupId/mcp` 得到 404
 
-**解决方案**:
+1. 检查 `config/group.json` 中该组是否存在且 `enabled: true`：
+   ```bash
+   curl http://localhost:8181/api/groups/<groupId>
+   ```
+2. 检查组内服务器是否都已连接。
+3. 修改后需重启或等待配置热加载。
 
-```bash
-# 确保组配置正确
+#### 工具不在允许列表
+
+**症状**：`Tool 'write_file' not allowed in group 'development'`
+
+在组配置中把工具加入允许列表，或用 `["*"]` 放开（生产环境慎用）：
+
+```json
 {
   "groups": {
-    "development": {
-      "name": "开发工具组",
-      "servers": ["filesystem"],
-      "enabled": true
+    "development": { "allowedTools": ["read_file", "write_file"] }
+  }
+}
+```
+
+#### 组管理 API 的约定
+
+- 路径参数名为 `:groupId`，例如 `GET /api/groups/:groupId`。
+- **更新组用 `PUT`**（不是 `PATCH`）：`PUT /api/groups/:groupId`。
+- 删除组：`DELETE /api/groups/:groupId`。
+
+#### 验证密钥如何工作
+
+为组设置验证密钥后，客户端访问该组端点需在请求头携带：
+
+```bash
+curl -X POST http://localhost:8181/development/mcp \
+  -H "X-Validation-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/file.txt"}}}'
+```
+
+密钥不匹配时请求被拒绝。
+
+### API 到 MCP
+
+#### 功能说明
+
+将现有 REST API 转换为 MCP 工具，使其可通过 MCP 协议访问。生成的工具会自动加入系统，名称为配置中的 `toolName`。
+
+#### 参数映射
+
+```json
+{
+  "parameters": {
+    "city": {
+      "type": "string",
+      "required": true,
+      "mapping": { "target": "query", "name": "q" }
     }
   }
 }
-
-# 重启服务器
-pnpm dev:api
 ```
 
-#### 问题：工具不在允许列表中
+支持的 `target`：`query`、`path`、`body`、`header`。
 
-**症状**:
+#### 认证方式
 
+支持 Bearer Token、API Key、Basic Auth。在 API 配置的 `auth` 块中声明。
+
+#### 测试失败排查
+
+确认：API URL 可达（curl/Postman 验证）、认证信息正确、参数名与类型匹配、Hub 所在网络可访问外部 API。
+
+### 配置文件
+
+#### 配置目录在哪里？
+
+代码读取 `<cwd>/config/*.json`，具体由 `backend/src/utils/config.ts` 的 `getConfigDir()` 决定：
+
+```ts
+process.env.CONFIG_PATH || path.resolve(process.cwd(), 'config')
 ```
-Error: Tool 'write_file' not allowed in group 'development'
-```
 
-**解决方案**:
+- 从仓库根执行 `pnpm start:api` → 读取 `./config/`（不是 `backend/config/`）。
+- 要读取 `backend/config/`，可设 `CONFIG_PATH=backend/config`，或从 `backend/` 目录启动。
+
+#### 有哪些配置文件？
+
+共 4 个：
+
+| 文件 | 作用 |
+| --- | --- |
+| `mcp_server.json` | MCP 服务器定义 |
+| `group.json` | 组配置 |
+| `system.json` | 系统、认证、用户、监控等 |
+| `api-tools.json` | API 到 MCP 工具配置 |
+
+#### 配置文件未找到
+
+**症状**：`Error: Configuration file not found: mcp_server.json`
+
+确认配置目录下存在该文件；若使用 `CONFIG_PATH`，确认变量指向的目录正确。
+
+#### 配置 JSON 格式错误
 
 ```bash
-# 更新组配置，添加工具到允许列表
-{
-  "groups": {
-    "development": {
-      "allowedTools": ["read_file", "write_file", "list_directory"]
-    }
-  }
-}
-
-# 或允许所有工具
-{
-  "groups": {
-    "development": {
-      "allowedTools": ["*"]
-    }
-  }
-}
+jq . config/mcp_server.json     # 用 jq 校验
 ```
 
-### 5. CLI 问题
+常见错误：缺少/多余逗号、引号不匹配、括号不匹配。
 
-#### 问题：CLI 命令未找到
+### 性能
 
-**症状**:
+#### 响应慢
 
-```
-bash: mcp-knot: command not found
-```
+- 调低仪表板实时监控频率（`system.json` 的 `monitoring` 块）。
+- 关闭不需要的服务器、调优连接池。
+- 调高日志级别（减少 IO）。
 
-**解决方案**:
+#### 内存使用过高
 
 ```bash
-# 检查 CLI 包是否已构建
-cd packages/cli
-pnpm build
-
-# 全局安装
-npm install -g @mcp-core/mcp-knot-cli
-
-# 或使用本地路径
-./packages/cli/bin/mcp-knot.js
-
-# 检查 PATH 环境变量
-echo $PATH
+NODE_OPTIONS="--max-old-space-size=4096" pnpm start:api
+ps aux | grep mcp-knot            # 观察占用
 ```
 
-#### 问题：CLI 配置文件错误
+必要时启用 Node.js 堆分析（`--inspect`、`--prof`）排查内存泄漏，或定期重启进程。
 
-**症状**:
+#### 提高并发
 
-```
-Error: Invalid CLI configuration
-```
+PM2 集群模式：`pm2 start dist/src/index.js -i max`；或在 Nginx 层做负载均衡部署多实例。
 
-**解决方案**:
+### Docker 与部署
+
+#### 容器无法启动
 
 ```bash
-# 创建默认配置
-mcp-knot --init
-
-# 或手动创建
-cat > mcp_server.json << EOF
-{
-  "servers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-      "env": {}
-    }
-  }
-}
-EOF
-
-# 验证配置
-mcp-knot --config mcp_server.json --validate
-```
-
-### 6. 性能问题
-
-#### 问题：响应时间过长
-
-**诊断步骤**:
-
-```bash
-# 检查系统指标
-curl http://localhost:8181/api/system/metrics
-
-# 检查组统计
-curl http://localhost:8181/api/groups/development/stats
-
-# 监控资源使用
-top -p $(pgrep -f mcp-knot)
-```
-
-**解决方案**:
-
-```bash
-# 优化连接池配置
-{
-  "servers": {
-    "filesystem": {
-      "pool": {
-        "min": 2,
-        "max": 10,
-        "idleTimeout": 300000
-      }
-    }
-  }
-}
-
-# 启用缓存
-{
-  "cache": {
-    "enabled": true,
-    "ttl": 300,
-    "maxSize": 1000
-  }
-}
-
-# 调整日志级别
-{
-  "logging": {
-    "level": "warn"
-  }
-}
-```
-
-#### 问题：内存使用过高
-
-**诊断步骤**:
-
-```bash
-# 检查内存使用
-ps aux | grep mcp-knot
-
-# 检查 Node.js 堆使用
-node --inspect backend/dist/src/index.js
-
-# 生成堆快照
-kill -USR2 <PID>
-```
-
-**解决方案**:
-
-```bash
-# 限制 Node.js 内存
-node --max-old-space-size=512 backend/dist/src/index.js
-
-# 启用垃圾回收日志
-node --trace-gc backend/dist/src/index.js
-
-# 优化配置
-{
-  "performance": {
-    "maxConnections": 50,
-    "connectionTimeout": 30000,
-    "memoryLimit": "512MB"
-  }
-}
-```
-
-### 7. Docker 问题
-
-#### 问题：Docker 容器无法启动
-
-**症状**:
-
-```
-Error: Container exited with code 1
-```
-
-**诊断步骤**:
-
-```bash
-# 查看容器日志
 docker logs mcp-knot-api
-
-# 检查容器状态
 docker ps -a
-
-# 进入容器调试
 docker exec -it mcp-knot-api /bin/sh
 ```
 
-**解决方案**:
+常见原因：挂载的 `config/` 目录缺失或 JSON 格式错误、端口冲突、Node 版本低于 20。
+
+#### 容器间网络连接问题
+
+容器之间请用服务名而非 `localhost`。例如 compose 服务名为 `mcp-knot-api` 时，容器内访问后端应使用 `http://mcp-knot-api:8181`。
+
+#### 推荐部署方式
+
+1. **传统**：PM2 + Nginx（小型部署）
+2. **Docker Compose**：容器化环境
+3. **Kubernetes**：大规模、高可用
+
+#### 零停机部署
+
+PM2 集群模式 `pm2 reload mcp-knot-api` 滚动重启；或蓝绿部署、Kubernetes 滚动更新配合 `/health` 健康检查。
+
+#### 自动备份
+
+定期打包 `config/` 目录即可（配置是 MCP Knot 的核心持久化数据）：
 
 ```bash
-# 检查 Dockerfile
-cat backend/Dockerfile
-
-# 重新构建镜像
-docker build -f backend/Dockerfile -t mcp-knot/api .
-
-# 检查挂载的配置文件
-ls -la ./backend/config/
+tar -czf config-backup-$(date +%Y%m%d).tar.gz config/
+find . -name "config-backup-*.tar.gz" -mtime +30 -delete
 ```
 
-#### 问题：容器间网络连接问题
+配合 cron 定时执行。
 
-**症状**:
+### 安全
 
-```
-Error: connect ECONNREFUSED 127.0.0.1:3000
-```
+#### 基本最佳实践
 
-**解决方案**:
+1. 更改默认管理员密码（见[认证与登录](#认证与登录)）。
+2. 启用 HTTPS、配置防火墙、仅开放必要端口。
+3. 定期更新依赖、备份配置、检查日志。
+4. 必要时启用 IP 白名单或 VPN。
+
+#### 生成强 JWT 密钥
 
 ```bash
-# 检查 docker-compose 网络配置
-docker-compose ps
-docker network ls
-
-# 使用服务名而不是 localhost
-# 错误: http://localhost:8181
-# 正确: http://mcp-knot-api:3000
-
-# 检查端口映射
-docker-compose port mcp-knot-api 3000
+openssl rand -base64 64
+# 或
+node -e "console.log(require('crypto').randomBytes(64).toString('base64'))"
 ```
 
-### 8. 权限问题
+写入 `system.json` 的 `auth.jwt.secret`（至少 32 字符）。
 
-#### 问题：文件权限被拒绝
+#### Nginx IP 白名单
 
-**症状**:
-
-```
-Error: EACCES: permission denied, open '/workspace/file.txt'
-```
-
-**解决方案**:
-
-```bash
-# 检查文件权限
-ls -la /workspace/
-
-# 修改权限
-chmod 644 /workspace/file.txt
-chown user:group /workspace/file.txt
-
-# Docker 环境中的权限问题
-# 在 Dockerfile 中设置正确的用户
-USER mcp-knot
-
-# 或在 docker-compose 中设置
-services:
-  mcp-knot-api:
-    user: "1001:1001"
+```nginx
+location /api/ {
+    allow 192.168.1.0/24;
+    allow 10.0.0.0/8;
+    deny all;
+    proxy_pass http://mcp_knot_backend;
+}
 ```
 
-#### 问题：环境变量访问权限
+#### 防暴力破解
 
-**症状**:
+`system.json` 的 `auth.security` 块支持 `maxLoginAttempts` 与 `lockoutDuration`；建议同时开启 `requireStrongPassword` 并设置合理的 `passwordMinLength`。
 
-```
-Error: Environment variable BRAVE_API_KEY not accessible
-```
+---
 
-**解决方案**:
+## 错误代码与端点参考
 
-```bash
-# 检查环境变量
-env | grep BRAVE_API_KEY
+### 常见错误速查
 
-# 在 docker-compose 中设置
-services:
-  mcp-knot-api:
-    environment:
-      - BRAVE_API_KEY=${BRAVE_API_KEY}
+| 错误 | 可能原因 | 处理 |
+| --- | --- | --- |
+| `EADDRINUSE :::8181` | 端口被占用 | `lsof -i :8181` 后清理，或改 `system.json` 的 `server.port` |
+| `Cannot find module '@mcp-core/...'` | 依赖未装/未构建 | `pnpm install && pnpm build` |
+| `Configuration file not found` | 配置目录/文件缺失 | 检查 `CONFIG_PATH` 与 `config/` 目录 |
+| `MCP server timeout` | 上游超时 | 增大 `mcp_server.json` 的 `timeout` |
+| `Tool 'x' not allowed in group` | 组工具过滤 | 把工具加入组的 `allowedTools` |
+| 404 on `/:groupId/mcp` | 组不存在/未启用 | 检查 `group.json`，确认 `enabled` |
+| `EACCES: permission denied` | 文件权限 | `chmod`/`chown`，或调整容器运行用户 |
 
-# 或使用 .env 文件
-echo "BRAVE_API_KEY=your-key" > .env
-```
+### 关键端点
 
-## 调试技巧
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/health` | 健康检查（根路径） |
+| POST | `/:groupId/mcp` | 唯一 MCP 入口（JSON-RPC，带 `Mcp-Method` 头） |
+| GET | `/api/groups` / `/api/groups/:groupId` | 组列表 / 组详情 |
+| PUT | `/api/groups/:groupId` | 更新组（注意是 PUT） |
+| GET | `/api/dashboard/system-info` | 系统信息（需登录） |
+| GET | `/api/dashboard/memory` | 内存信息（需登录） |
 
-### 1. 启用详细日志
+> 已移除/不存在的端点：全局 `/mcp`、`/mcp/list_tools`、`/:group/mcp/list_tools`、`/mcp/call_tool`、`/:group/mcp/call_tool`、`/api/system/metrics`、`/api/system/info`。
 
-```bash
-# 设置日志级别
-export MCP_HUB_LOG_LEVEL=debug
-
-# 启用调试模式
-export DEBUG=mcp-knot:*
-
-# 查看详细的 MCP 协议交互
-export MCP_DEBUG=true
-```
-
-### 2. 使用 MCP Inspector
-
-```bash
-# 启动 MCP Inspector
-pnpm inspector
-
-# 连接到本地 MCP 服务器
-# URL: stdio://path/to/mcp-knot-cli
-```
-
-### 3. 网络调试
-
-```bash
-# 使用 curl 测试 API
-curl -v http://localhost:8181/health
-
-# 使用 tcpdump 监控网络流量
-sudo tcpdump -i lo port 6001
-
-# 使用 netstat 检查端口
-netstat -tlnp | grep 3000
-```
-
-### 4. 性能分析
-
-```bash
-# 使用 Node.js 内置分析器
-node --prof backend/dist/src/index.js
-
-# 生成火焰图
-node --prof-process isolate-*.log > profile.txt
-
-# 使用 clinic.js
-npx clinic doctor -- node backend/dist/src/index.js
-```
+---
 
 ## 获取帮助
 
-### 1. 收集诊断信息
-
-在寻求帮助时，请提供以下信息：
+提交 Issue 前请准备：
 
 ```bash
-# 系统信息
-uname -a
-node --version
-pnpm --version
-
-# MCP Knot 版本
-curl http://localhost:8181/api/system/info
-
-# 配置文件（移除敏感信息）
-cat backend/config/mcp_server.json | jq 'del(.servers[].env)'
-
-# 错误日志
-tail -n 100 logs/mcp-knot.log
-
-# 系统资源使用
-free -h
-df -h
+uname -a && node --version && pnpm --version
+curl -s http://localhost:8181/health
+# 配置（脱敏，移除 env 与密码）
+jq 'del(.servers[].env, .users)' config/mcp_server.json
 ```
 
-### 2. 创建最小复现示例
-
-```bash
-# 创建最小配置
-cat > minimal-config.json << EOF
-{
-  "servers": {
-    "test": {
-      "command": "echo",
-      "args": ["{\"tools\": []}"],
-      "env": {}
-    }
-  }
-}
-EOF
-
-# 测试最小配置
-mcp-knot --config minimal-config.json
-```
-
-### 3. 联系支持
-
-- **GitHub Issues**: 在项目仓库中创建详细的 issue
-- **文档**: 查看其他文档获取更多信息
-- **社区**: 加入社区讨论
-
-## 预防措施
-
-### 1. 定期维护
-
-```bash
-# 定期更新依赖
-pnpm update
-
-# 清理日志文件
-find logs/ -name "*.log" -mtime +7 -delete
-
-# 检查磁盘空间
-df -h
-
-# 监控内存使用
-free -h
-```
-
-### 2. 监控和告警
-
-```bash
-# 设置健康检查
-curl -f http://localhost:8181/health || echo "Service down!"
-
-# 监控日志错误
-tail -f logs/mcp-knot.log | grep ERROR
-
-# 设置资源使用告警
-if [ $(free | grep Mem | awk '{print ($3/$2) * 100.0}') -gt 80 ]; then
-  echo "High memory usage!"
-fi
-```
-
-### 3. 备份和恢复
-
-```bash
-# 备份配置文件
-tar -czf config-backup-$(date +%Y%m%d).tar.gz backend/config/
-
-# 备份日志
-tar -czf logs-backup-$(date +%Y%m%d).tar.gz logs/
-
-# 恢复配置
-tar -xzf config-backup-20240115.tar.gz
-```
-
-## 相关文档
-
-- [CLI 使用指南](CLI_USAGE.md)
-- [组路由指南](GROUP_ROUTING.md)
-- [API 参考](API_REFERENCE.md)
-- [迁移指南](MIGRATION.md)
+- GitHub Issues：附带上述诊断信息与最小复现配置。
+- 相关文档：[CLI 使用指南](CLI_USAGE.md)、[组路由指南](GROUP_ROUTING.md)、[API 参考](API_REFERENCE.md)、[Web 界面指南](WEB_UI_GUIDE.md)。

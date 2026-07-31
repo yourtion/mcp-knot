@@ -333,13 +333,14 @@ http://localhost:8181/development/mcp
 
 ### 验证密钥
 
-如果组设置了验证密钥，访问时需要提供：
+如果组启用了验证（validation），访问 MCP 端点时需要通过 `Authorization: Bearer <validationKey>` 提供验证密钥：
 
 ```bash
-curl -X POST http://localhost:8181/development/mcp/call_tool \
-  -H "X-Validation-Key: your-validation-key" \
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Authorization: Bearer your-validation-key" \
   -H "Content-Type: application/json" \
-  -d '{"name": "read_file", "arguments": {"path": "/file.txt"}}'
+  -H "Mcp-Method: tools/call" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"filesystem_read_file","arguments":{"path":"/file.txt"}}}'
 ```
 
 ## API 到 MCP 集成

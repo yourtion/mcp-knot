@@ -5,468 +5,211 @@
 ## 目录
 
 - [部署架构](#部署架构)
+- [端口与服务](#端口与服务)
 - [环境要求](#环境要求)
 - [部署方式](#部署方式)
+  - [方式 1：Docker Compose（推荐）](#方式-1docker-compose推荐)
+  - [方式 2：传统部署（PM2）](#方式-2传统部署pm2)
 - [配置管理](#配置管理)
+- [环境变量](#环境变量)
 - [安全加固](#安全加固)
-- [监控和日志](#监控和日志)
-- [备份和恢复](#备份和恢复)
-- [性能优化](#性能优化)
+- [反向代理（Nginx）](#反向代理nginx)
+- [监控、日志与备份](#监控日志与备份)
+- [运维脚本](#运维脚本)
 - [故障排除](#故障排除)
+
+---
 
 ## 部署架构
 
-### 推荐架构
+MCP Knot 由两个服务组成：
 
 ```
-┌─────────────────┐
-│   Load Balancer │
-│    (Nginx)      │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │         │
-┌───▼───┐ ┌──▼────┐
-│ API 1 │ │ API 2 │  (后端实例)
-└───┬───┘ └──┬────┘
-    │        │
-    └────┬───┘
-         │
-┌────────▼────────┐
-│  Static Files   │  (前端静态文件)
-│    (Nginx)      │
-└─────────────────┘
+┌──────────────┐         ┌──────────────────┐
+│  浏览器/客户端 │ ──────▶ │ mcp-knot-web      │  (Nginx + 前端静态文件)
+└──────────────┘         │ 端口 8180          │
+                          └────────┬─────────┘
+                                   │ 反向代理 /api、/mcp、/sse
+                          ┌────────▼─────────┐
+                          │ mcp-knot-api      │  (Node.js 后端)
+                          │ 端口 8181          │
+                          └────────┬─────────┘
+                                   │ 读写
+                          ┌────────▼─────────┐
+                          │ config/*.json     │  (4 个 JSON 配置文件)
+                          └──────────────────┘
 ```
 
-### 组件说明
+组件说明：
 
-1. **负载均衡器**: Nginx 或其他反向代理
-2. **后端 API**: Node.js 应用（可多实例）
-3. **前端静态文件**: 构建后的 Vue.js 应用
-4. **配置存储**: JSON 文件或数据库
-5. **日志系统**: 集中式日志收集
+1. **mcp-knot-web**：Nginx 托管构建后的 Vue 前端，并将 API/MCP/SSE 请求代理到后端。
+2. **mcp-knot-api**：Node.js 应用，承载所有业务逻辑和 MCP 服务。
+3. **配置文件**：4 个 JSON 文件，见 [配置管理](#配置管理)。
+
+## 端口与服务
+
+| 服务 | 容器名 | 内部端口 | 主机映射端口 | 说明 |
+| --- | --- | --- | --- | --- |
+| 前端 | `mcp-knot-web` | 80 | **8180** | Nginx |
+| 后端 | `mcp-knot-api` | 8181 | **8181** | Node.js |
+
+> **注意**：后端监听端口由 `system.json` 的 `server.port` 控制，默认 `8181`。代码**不读** `PORT` 环境变量，若需改端口请修改 `system.json`，不要用 `PORT=xxx` 启动。
 
 ## 环境要求
 
-### 硬件要求
+### 硬件
 
-**最小配置**:
+- 最小：2 核 CPU、2GB 内存、10GB 磁盘
+- 推荐：4 核 CPU、4GB 内存、20GB SSD
 
-- CPU: 2 核心
-- 内存: 2GB RAM
-- 存储: 10GB 可用空间
+### 软件
 
-**推荐配置**:
+- Node.js 20.x+（传统部署）
+- pnpm 8.x+（传统部署）
+- Docker 20.10+ 与 Docker Compose v2（容器部署）
+- 操作系统：Linux（Ubuntu 20.04+/CentOS 8+）或 macOS
 
-- CPU: 4 核心
-- 内存: 4GB RAM
-- 存储: 20GB 可用空间（SSD）
+### 网络
 
-### 软件要求
+- 开放端口：`8180`（前端，或由前置 Nginx 暴露 80/443）、`8181`（后端，建议仅内网）
+- 建议使用域名和 SSL 证书
 
-- **Node.js**: 20.x 或更高版本
-- **pnpm**: 8.x 或更高版本
-- **操作系统**: Linux (Ubuntu 20.04+, CentOS 8+) 或 macOS
-- **反向代理**: Nginx 1.18+ 或 Apache 2.4+
-- **进程管理**: PM2 或 systemd
-
-### 网络要求
-
-- **端口**:
-  - 3000 (后端 API，内部)
-  - 80/443 (HTTP/HTTPS，外部)
-- **防火墙**: 允许必要的入站和出站连接
-- **域名**: 推荐使用域名和 SSL 证书
+---
 
 ## 部署方式
 
-### 方式 1: 传统部署
+### 方式 1：Docker Compose（推荐）
 
-#### 1. 准备服务器
+仓库已提供 `docker-compose.yml`，定义了 `mcp-knot-web`（8180）和 `mcp-knot-api`（8181）两个服务。
+
+#### 1. 准备配置文件
 
 ```bash
-# 更新系统
-sudo apt update && sudo apt upgrade -y
-
-# 安装 Node.js
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# 安装 pnpm
-npm install -g pnpm
-
-# 安装 PM2
-npm install -g pm2
+# 在仓库根目录
+mkdir -p config
+cp backend/config/*.json.example config/
+# 重命名为实际配置文件
+cd config
+for f in *.json.example; do mv "$f" "${f%.example}"; done
+cd ..
 ```
 
-#### 2. 部署应用
+四个必需文件：`mcp_server.json`、`group.json`、`system.json`、`api-tools.json`。
+
+#### 2. 构建并启动
 
 ```bash
-# 克隆代码
+# 构建镜像（或用 scripts/docker-build.sh）
+docker compose build
+
+# 启动
+docker compose up -d
+
+# 查看状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+```
+
+启动后：
+
+- 前端：<http://localhost:8180>
+- 后端 API：<http://localhost:8181>
+- 健康检查：<http://localhost:8181/health>
+
+> 仓库内的 `docker-compose.yml` 把宿主机 `./backend/config` 只读挂载到容器内。如果按上一步把配置放在仓库根的 `./config`，请把 compose 里的卷挂载改为 `./config:/app/backend/config:ro`，或设置 `CONFIG_PATH` 指向容器内对应目录。
+
+#### 3. 开发环境
+
+开发模式使用 `docker-compose.dev.yml`（服务名带 `-dev` 后缀，源码热重载）：
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+### 方式 2：传统部署（PM2）
+
+#### 1. 安装依赖
+
+```bash
+# Node.js 20.x、pnpm、PM2
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+npm install -g pnpm pm2
+```
+
+#### 2. 克隆、安装、构建
+
+```bash
 git clone https://github.com/your-org/mcp-knot.git
 cd mcp-knot
-
-# 安装依赖
 pnpm install --frozen-lockfile
-
-# 构建所有包
 pnpm build:production
 ```
 
-#### 3. 配置环境变量
+#### 3. 准备配置文件
 
-创建 `.env` 文件：
+配置文件读取规则：`getConfigDir()` 返回 `process.env.CONFIG_PATH || <cwd>/config`。因此有两种放法：
 
-```bash
-# 后端配置
-NODE_ENV=production
-PORT=3000
-HOST=0.0.0.0
+- **从仓库根启动**：配置放在 `./config/`
+  ```bash
+  mkdir -p config
+  cp backend/config/*.json.example config/
+  (cd config && for f in *.json.example; do mv "$f" "${f%.example}"; done)
+  pnpm start:api   # 读 ./config
+  ```
+- **集中存放**（如 `/etc/mcp-knot/config`）：用 `CONFIG_PATH` 指定
+  ```bash
+  sudo mkdir -p /etc/mcp-knot/config
+  sudo cp backend/config/*.json.example /etc/mcp-knot/config/
+  (cd /etc/mcp-knot/config && sudo sh -c 'for f in *.json.example; do mv "$f" "${f%.example}"; done')
+  export CONFIG_PATH=/etc/mcp-knot/config
+  ```
 
-# JWT 配置
-JWT_SECRET=your-super-secret-jwt-key-change-this
-JWT_EXPIRES_IN=1h
-JWT_REFRESH_EXPIRES_IN=7d
+> 不要直接写 `backend/config/*.json` 作为生产配置路径，除非你确实从 `backend/` 目录启动进程。从仓库根 `pnpm start:api` 时实际读的是 `./config/`。
 
-# 日志配置
-LOG_LEVEL=info
-LOG_FILE=/var/log/mcp-knot/app.log
-
-# 配置文件路径
-CONFIG_DIR=/etc/mcp-knot/config
-```
-
-#### 4. 配置生产环境
+#### 4. 用 PM2 启动
 
 ```bash
-# 创建配置目录
-sudo mkdir -p /etc/mcp-knot/config
-sudo mkdir -p /var/log/mcp-knot
+# 方式 A：从仓库根启动（读 ./config）
+pm2 start backend/dist/src/index.js --name mcp-knot-api --cwd .
 
-# 复制配置文件
-sudo cp backend/config/*.json /etc/mcp-knot/config/
+# 方式 B：用 CONFIG_PATH 指定配置目录
+CONFIG_PATH=/etc/mcp-knot/config pm2 start backend/dist/src/index.js --name mcp-knot-api
 
-# 设置权限
-sudo chown -R $USER:$USER /etc/mcp-knot
-sudo chown -R $USER:$USER /var/log/mcp-knot
-```
-
-#### 5. 启动服务
-
-使用 PM2 管理进程：
-
-```bash
-# 启动后端
-cd backend
-pm2 start dist/src/index.js --name mcp-knot-api
-
-# 保存 PM2 配置
 pm2 save
-
-# 设置开机自启
 pm2 startup
 ```
 
-#### 6. 配置 Nginx
+> `--cwd` 决定 `process.cwd()`，进而决定默认配置目录。务必让 `cwd` 与配置目录位置一致，或显式设置 `CONFIG_PATH`。
 
-创建 Nginx 配置文件 `/etc/nginx/sites-available/mcp-knot`:
-
-```nginx
-# 后端 API 上游
-upstream mcp_knot_backend {
-    server 127.0.0.1:3000;
-    # 如果有多个实例，添加更多服务器
-    # server 127.0.0.1:3001;
-    # server 127.0.0.1:3002;
-}
-
-server {
-    listen 80;
-    server_name mcp-knot.example.com;
-
-    # 重定向到 HTTPS
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name mcp-knot.example.com;
-
-    # SSL 证书配置
-    ssl_certificate /etc/ssl/certs/mcp-knot.crt;
-    ssl_certificate_key /etc/ssl/private/mcp-knot.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    # 安全头部
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # 前端静态文件
-    location / {
-        root /var/www/mcp-knot/frontend/dist;
-        try_files $uri $uri/ /index.html;
-
-        # 缓存静态资源
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-            expires 1y;
-            add_header Cache-Control "public, immutable";
-        }
-    }
-
-    # API 代理
-    location /api/ {
-        proxy_pass http://mcp_knot_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-
-        # 超时设置
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    # MCP 端点代理
-    location /mcp/ {
-        proxy_pass http://mcp_knot_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # SSE 事件流
-    location /api/events {
-        proxy_pass http://mcp_knot_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Connection '';
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding off;
-    }
-
-    # 健康检查
-    location /health {
-        proxy_pass http://mcp_knot_backend;
-        access_log off;
-    }
-}
-```
-
-启用配置：
-
-```bash
-# 创建符号链接
-sudo ln -s /etc/nginx/sites-available/mcp-knot /etc/nginx/sites-enabled/
-
-# 测试配置
-sudo nginx -t
-
-# 重启 Nginx
-sudo systemctl restart nginx
-```
-
-### 方式 2: Docker 部署
-
-#### 1. 构建 Docker 镜像
-
-项目已包含 Dockerfile，直接构建：
-
-```bash
-# 构建后端镜像
-docker build -t mcp-knot-api:latest -f backend/Dockerfile .
-
-# 构建前端镜像
-docker build -t mcp-knot-web:latest -f frontend/Dockerfile .
-```
-
-#### 2. 使用 Docker Compose
-
-创建 `docker-compose.prod.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  api:
-    image: mcp-knot-api:latest
-    container_name: mcp-knot-api
-    restart: unless-stopped
-    ports:
-      - '3000:3000'
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRES_IN=1h
-      - JWT_REFRESH_EXPIRES_IN=7d
-    volumes:
-      - ./config:/app/config
-      - ./logs:/app/logs
-    networks:
-      - mcp-knot-network
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:8181/health']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  web:
-    image: mcp-knot-web:latest
-    container_name: mcp-knot-web
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '443:443'
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/ssl:ro
-    depends_on:
-      - api
-    networks:
-      - mcp-knot-network
-
-networks:
-  mcp-knot-network:
-    driver: bridge
-```
-
-启动服务：
-
-```bash
-# 设置环境变量
-export JWT_SECRET="your-super-secret-jwt-key"
-
-# 启动服务
-docker-compose -f docker-compose.prod.yml up -d
-
-# 查看日志
-docker-compose -f docker-compose.prod.yml logs -f
-
-# 停止服务
-docker-compose -f docker-compose.prod.yml down
-```
-
-### 方式 3: Kubernetes 部署
-
-#### 1. 创建 Kubernetes 配置
-
-`k8s/deployment.yaml`:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mcp-knot-api
-  labels:
-    app: mcp-knot-api
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: mcp-knot-api
-  template:
-    metadata:
-      labels:
-        app: mcp-knot-api
-    spec:
-      containers:
-        - name: api
-          image: mcp-knot-api:latest
-          ports:
-            - containerPort: 3000
-          env:
-            - name: NODE_ENV
-              value: 'production'
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-knot-secrets
-                  key: jwt-secret
-          resources:
-            requests:
-              memory: '512Mi'
-              cpu: '250m'
-            limits:
-              memory: '1Gi'
-              cpu: '500m'
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 3000
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 3000
-            initialDelaySeconds: 5
-            periodSeconds: 5
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: mcp-knot-api-service
-spec:
-  selector:
-    app: mcp-knot-api
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 3000
-  type: LoadBalancer
-```
-
-部署到 Kubernetes：
-
-```bash
-# 创建 Secret
-kubectl create secret generic mcp-knot-secrets \
-  --from-literal=jwt-secret=your-super-secret-jwt-key
-
-# 部署应用
-kubectl apply -f k8s/deployment.yaml
-
-# 查看状态
-kubectl get pods
-kubectl get services
-
-# 查看日志
-kubectl logs -f deployment/mcp-knot-api
-```
 
 ## 配置管理
 
-### 生产环境配置
+配置目录下有 4 个 JSON 文件（示例文件后缀为 `.json.example`，**不是** `.json.default`）：
 
-#### 1. 系统配置 (`system.json`)
+| 文件 | 作用 |
+| --- | --- |
+| `mcp_server.json` | MCP 服务器定义（stdio/streaming 类型、命令、参数、env、enabled） |
+| `group.json` | MCP 服务器分组 |
+| `system.json` | 系统配置（端口、CORS、日志、监控、限流等） |
+| `api-tools.json` | API 工具配置路径 |
+
+### system.json 示例
+
+端口由 `server.port` 控制（默认 8181）：
 
 ```json
 {
   "server": {
-    "port": 3000,
+    "port": 8181,
     "host": "0.0.0.0",
     "cors": {
       "origin": ["https://mcp-knot.example.com"],
       "credentials": true
     }
-  },
-  "auth": {
-    "jwtSecret": "${JWT_SECRET}",
-    "jwtExpiresIn": "1h",
-    "jwtRefreshExpiresIn": "7d",
-    "bcryptRounds": 10,
-    "maxLoginAttempts": 5,
-    "lockoutDuration": 900000
   },
   "logging": {
     "level": "info",
@@ -486,150 +229,166 @@ kubectl logs -f deployment/mcp-knot-api
 }
 ```
 
-#### 2. 用户配置
+### 默认凭据（重要）
 
-生产环境中修改默认密码：
+开发默认登录凭据为 **admin / admin**。生产部署**必须**立即通过 Web 界面修改密码，否则存在严重安全风险。
 
-```bash
-# 生成密码哈希
-node -e "const bcrypt = require('bcryptjs'); console.log(bcrypt.hashSync('your-strong-password', 10));"
+---
 
-# 更新配置文件中的密码哈希
-```
+## 环境变量
 
-#### 3. 环境变量
+### 代码实际识别的变量
 
-使用环境变量管理敏感信息：
+| 变量 | 作用 | 说明 |
+| --- | --- | --- |
+| `CONFIG_PATH` | 配置文件目录 | 覆盖默认的 `<cwd>/config`。**这是唯一被代码识别的配置目录变量** |
+| `NODE_ENV` | 运行环境 | 设为 `production` |
 
-```bash
-# .env.production
-NODE_ENV=production
-JWT_SECRET=your-super-secret-jwt-key-change-this
-DATABASE_URL=postgresql://user:pass@localhost:5432/mcp_knot
-API_KEY=your-api-key
-```
+### 代码**不**识别的变量
 
-加载环境变量：
+以下变量出现在 `.env.production.example` 或旧文档中，但**代码并不读取**，设置它们无效：
 
-```bash
-# 使用 dotenv
-npm install dotenv
+- `PORT`、`HOST`：端口由 `system.json` 的 `server.port` 控制；host 由 `server.host` 控制。
+- `CONFIG_DIR`、`MCP_SERVER_CONFIG`、`GROUP_CONFIG`、`SYSTEM_CONFIG`：配置目录请用 `CONFIG_PATH`。
+- `JWT_SECRET`、`JWT_EXPIRES_IN` 等：JWT 密钥与有效期在 `system.json` 的 `auth` 段配置，不是环境变量。
+- `CORS_ORIGIN`、`RATE_LIMIT_*`、`MONITORING_ENABLED` 等：均在 `system.json` 中配置。
 
-# 在应用启动时加载
-require('dotenv').config({ path: '.env.production' });
-```
+> `.env.production.example` 中大部分变量仅作参考占位，实际生效需写入对应 JSON 配置。请以 `system.json` 为准。
+
+---
 
 ## 安全加固
 
-### 1. HTTPS 配置
+### 1. 修改默认密码
 
-使用 Let's Encrypt 获取免费 SSL 证书：
+部署后第一时间登录 Web 界面，把 `admin/admin` 改为强密码（≥12 位，含大小写、数字、特殊字符）。
+
+### 2. HTTPS
+
+使用 Let's Encrypt：
 
 ```bash
-# 安装 Certbot
 sudo apt install certbot python3-certbot-nginx
-
-# 获取证书
 sudo certbot --nginx -d mcp-knot.example.com
-
-# 自动续期
 sudo certbot renew --dry-run
 ```
 
-### 2. 防火墙配置
+### 3. 防火墙
+
+只暴露前端端口（或 80/443），后端 8181 仅内网可达：
 
 ```bash
-# 使用 UFW
-sudo ufw allow 22/tcp    # SSH
-sudo ufw allow 80/tcp    # HTTP
-sudo ufw allow 443/tcp   # HTTPS
+sudo ufw allow 22/tcp
+sudo ufw allow 8180/tcp   # 或 80/443
 sudo ufw enable
-
-# 或使用 iptables
-sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-sudo iptables -A INPUT -j DROP
 ```
-
-### 3. 应用安全
-
-**JWT 密钥管理**:
-
-```bash
-# 生成强随机密钥
-openssl rand -base64 64
-```
-
-**密码策略**:
-
-- 最小长度: 12 字符
-- 包含大小写字母、数字和特殊字符
-- 定期更换密码
-- 使用密码管理器
-
-**访问控制**:
-
-- 实施最小权限原则
-- 使用角色基础访问控制 (RBAC)
-- 定期审计用户权限
 
 ### 4. 安全头部
 
-在 Nginx 配置中添加安全头部：
+在前置 Nginx 中添加（见下一节示例）：
 
 ```nginx
 add_header X-Frame-Options "SAMEORIGIN" always;
 add_header X-Content-Type-Options "nosniff" always;
-add_header X-XSS-Protection "1; mode=block" always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always;
 ```
 
-### 5. 速率限制
+---
 
-在应用层实施速率限制：
+## 反向代理（Nginx）
 
-```typescript
-import rateLimit from 'express-rate-limit';
+如需用前置 Nginx 统一入口（前端 + API），可参考以下最小配置 `/etc/nginx/sites-available/mcp-knot`：
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 分钟
-  max: 100, // 限制 100 个请求
-  message: '请求过于频繁，请稍后再试',
-});
+```nginx
+upstream mcp_knot_backend {
+    server 127.0.0.1:8181;
+}
 
-app.use('/api/', limiter);
+server {
+    listen 443 ssl http2;
+    server_name mcp-knot.example.com;
+
+    ssl_certificate     /etc/ssl/certs/mcp-knot.crt;
+    ssl_certificate_key /etc/ssl/private/mcp-knot.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # 前端静态文件（如自行托管 dist）
+    location / {
+        root /var/www/mcp-knot/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API
+    location /api/ {
+        proxy_pass http://mcp_knot_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # MCP 端点（WebSocket 升级）
+    location /mcp/ {
+        proxy_pass http://mcp_knot_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    # SSE：禁用缓冲
+    location /api/events {
+        proxy_pass http://mcp_knot_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}
+
+server {
+    listen 80;
+    server_name mcp-knot.example.com;
+    return 301 https://$server_name$request_uri;
+}
 ```
 
-## 监控和日志
-
-### 1. 应用监控
-
-使用 PM2 监控：
+启用：
 
 ```bash
-# 查看进程状态
+sudo ln -s /etc/nginx/sites-available/mcp-knot /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+---
+
+## 监控、日志与备份
+
+### PM2 监控（传统部署）
+
+```bash
 pm2 status
-
-# 查看详细信息
-pm2 show mcp-knot-api
-
-# 查看实时日志
 pm2 logs mcp-knot-api
-
-# 查看监控面板
 pm2 monit
 ```
 
-### 2. 日志管理
+### 健康检查
 
-配置日志轮转：
+后端提供 `/health` 端点（端口 8181）：
 
 ```bash
-# 创建 logrotate 配置
-sudo nano /etc/logrotate.d/mcp-knot
+curl -f http://localhost:8181/health
 ```
+
+也可用仓库脚本（见下节）。
+
+### 日志轮转
+
+`/etc/logrotate.d/mcp-knot`：
 
 ```
 /var/log/mcp-knot/*.log {
@@ -638,366 +397,105 @@ sudo nano /etc/logrotate.d/mcp-knot
     compress
     delaycompress
     notifempty
-    create 0640 mcp-knot mcp-knot
+    create 0640
     sharedscripts
     postrotate
-        pm2 reloadLogs
+        pm2 reloadLogs >/dev/null 2>&1
     endscript
 }
 ```
 
-### 3. 性能监控
+### 配置备份
 
-使用 Prometheus 和 Grafana：
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'mcp-knot'
-    static_configs:
-      - targets: ['localhost:8181']
-    metrics_path: '/api/metrics'
-```
-
-### 4. 错误追踪
-
-集成 Sentry 进行错误追踪：
-
-```typescript
-import * as Sentry from '@sentry/node';
-
-Sentry.init({
-  dsn: 'your-sentry-dsn',
-  environment: 'production',
-  tracesSampleRate: 1.0,
-});
-```
-
-## 备份和恢复
-
-### 1. 配置备份
-
-自动备份脚本：
+定期打包 `config/` 目录：
 
 ```bash
-#!/bin/bash
-# backup.sh
-
-BACKUP_DIR="/backup/mcp-knot"
-DATE=$(date +%Y%m%d_%H%M%S)
-CONFIG_DIR="/etc/mcp-knot/config"
-
-# 创建备份目录
-mkdir -p $BACKUP_DIR
-
-# 备份配置文件
-tar -czf $BACKUP_DIR/config_$DATE.tar.gz $CONFIG_DIR
-
-# 保留最近 30 天的备份
-find $BACKUP_DIR -name "config_*.tar.gz" -mtime +30 -delete
-
-echo "备份完成: config_$DATE.tar.gz"
+tar -czf /backup/mcp-knot/config_$(date +%Y%m%d_%H%M%S).tar.gz \
+    "${CONFIG_PATH:-./config}"
+# 保留最近 30 天
+find /backup/mcp-knot -name "config_*.tar.gz" -mtime +30 -delete
 ```
 
-设置定时任务：
+加到 crontab：`0 2 * * * /path/to/backup.sh`
+
+---
+
+## 运维脚本
+
+`scripts/` 目录下的脚本（均从仓库根运行）：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `scripts/deploy-production.sh` | 生产环境一键部署（含备份/测试/构建/PM2 重启），支持 `--skip-backup`、`--skip-tests`、`--skip-build`、`--force` |
+| `scripts/deploy.sh` | Docker Compose 部署入口，支持 `--dev`、`--config DIR` |
+| `scripts/docker-build.sh` | 构建 API/前端镜像，支持 `--tag`、`--push`、`--platform` |
+| `scripts/build.sh` | 本地构建（依赖/检查/测试/构建全部包） |
+| `scripts/health-check.sh` | 综合健康检查（PM2 进程、HTTP 端点、内存/CPU/磁盘、日志、配置文件），支持 `--verbose`、`--json` |
+| `scripts/restore-backup.sh` | 从备份恢复配置，用法 `./scripts/restore-backup.sh <backup_file>` |
+
+示例：
 
 ```bash
-# 编辑 crontab
-crontab -e
-
-# 每天凌晨 2 点执行备份
-0 2 * * * /path/to/backup.sh
-```
-
-### 2. 数据恢复
-
-从备份恢复：
-
-```bash
-#!/bin/bash
-# restore.sh
-
-BACKUP_FILE=$1
-CONFIG_DIR="/etc/mcp-knot/config"
-
-if [ -z "$BACKUP_FILE" ]; then
-    echo "用法: ./restore.sh <backup_file>"
-    exit 1
-fi
-
-# 停止服务
-pm2 stop mcp-knot-api
-
-# 备份当前配置
-cp -r $CONFIG_DIR ${CONFIG_DIR}.backup
+# 健康检查（JSON 输出便于接入告警）
+./scripts/health-check.sh --json
 
 # 恢复配置
-tar -xzf $BACKUP_FILE -C /
-
-# 重启服务
-pm2 start mcp-knot-api
-
-echo "恢复完成"
+./scripts/restore-backup.sh /backup/mcp-knot/config_20260101_020000.tar.gz
 ```
 
-## 性能优化
+> 注意：部分脚本（`deploy-production.sh`、`health-check.sh`、`restore-backup.sh`）默认检查 `/etc/mcp-knot/config` 和健康端口 3000，与代码默认值（`<cwd>/config`、端口 8181）不完全一致。使用这些脚本前请根据实际部署路径和端口调整，或在脚本中设置 `CONFIG_PATH`。
 
-### 1. Node.js 优化
-
-```bash
-# 增加内存限制
-NODE_OPTIONS="--max-old-space-size=4096" pm2 start dist/src/index.js
-
-# 启用集群模式
-pm2 start dist/src/index.js -i max
-```
-
-### 2. Nginx 优化
-
-```nginx
-# 启用 gzip 压缩
-gzip on;
-gzip_vary on;
-gzip_min_length 1024;
-gzip_types text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss;
-
-# 启用缓存
-proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=mcp_cache:10m max_size=1g inactive=60m;
-proxy_cache mcp_cache;
-proxy_cache_valid 200 60m;
-proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
-
-# 连接优化
-keepalive_timeout 65;
-keepalive_requests 100;
-```
-
-### 3. 数据库优化
-
-如果使用数据库：
-
-```sql
--- 创建索引
-CREATE INDEX idx_server_status ON servers(status);
-CREATE INDEX idx_tool_name ON tools(name);
-CREATE INDEX idx_execution_timestamp ON executions(timestamp);
-
--- 定期清理旧数据
-DELETE FROM executions WHERE timestamp < NOW() - INTERVAL '30 days';
-```
-
-### 4. 缓存策略
-
-实施多层缓存：
-
-```typescript
-// 内存缓存
-import NodeCache from 'node-cache';
-const cache = new NodeCache({ stdTTL: 600 });
-
-// Redis 缓存
-import Redis from 'ioredis';
-const redis = new Redis({
-  host: 'localhost',
-  port: 6379,
-});
-```
+---
 
 ## 故障排除
 
-### 常见问题
-
-#### 1. 服务无法启动
-
-检查日志：
+### 服务无法启动
 
 ```bash
-pm2 logs mcp-knot-api --lines 100
+pm2 logs mcp-knot-api --lines 100   # 传统部署
+docker compose logs mcp-knot-api    # Docker 部署
 ```
 
-常见原因：
+常见原因：端口被占用、配置文件 JSON 格式错误、配置目录路径不对。
 
-- 端口被占用
-- 配置文件错误
-- 权限问题
-- 依赖缺失
+### 配置目录路径不对
 
-#### 2. 内存泄漏
-
-监控内存使用：
+代码读 `process.env.CONFIG_PATH || <cwd>/config`。排查：
 
 ```bash
-pm2 monit
+# 确认 cwd 和 CONFIG_PATH
+pm2 describe mcp-knot-api | grep -E "cwd|script path"
+echo "$CONFIG_PATH"
+ls -la "${CONFIG_PATH:-./config}"
 ```
 
-解决方案：
+确保 4 个 JSON 文件都在该目录下。
 
-- 定期重启服务
-- 检查代码中的内存泄漏
-- 增加内存限制
-
-#### 3. 性能下降
-
-分析性能：
+### 端口被占用
 
 ```bash
-# 使用 Node.js 性能分析
-node --prof dist/src/index.js
-
-# 生成报告
-node --prof-process isolate-*.log > profile.txt
+# 查 8181 占用
+ss -lntp | grep 8181
 ```
 
-#### 4. SSL 证书问题
+改端口请编辑 `system.json` 的 `server.port`，**不要**用 `PORT=xxx`（代码不读）。
 
-检查证书：
+### 从备份恢复
 
 ```bash
-# 查看证书信息
-openssl x509 -in /etc/ssl/certs/mcp-knot.crt -text -noout
-
-# 测试 SSL 配置
-openssl s_client -connect mcp-knot.example.com:443
+./scripts/restore-backup.sh /backup/mcp-knot/config_latest.tar.gz
 ```
 
-### 紧急恢复
-
-如果系统出现严重问题：
-
-1. **回滚到上一个版本**:
-
-   ```bash
-   git checkout <previous-version>
-   pnpm install
-   pnpm build
-   pm2 restart mcp-knot-api
-   ```
-
-2. **从备份恢复**:
-
-   ```bash
-   ./restore.sh /backup/mcp-knot/config_latest.tar.gz
-   ```
-
-3. **重置到默认配置**:
-   ```bash
-   cp backend/config/*.json.default /etc/mcp-knot/config/
-   pm2 restart mcp-knot-api
-   ```
-
-## 维护计划
-
-### 日常维护
-
-- 检查服务状态
-- 查看错误日志
-- 监控资源使用
-- 验证备份完成
-
-### 每周维护
-
-- 审查安全日志
-- 更新依赖包
-- 清理旧日志
-- 性能分析
-
-### 每月维护
-
-- 系统更新
-- 安全审计
-- 备份测试
-- 容量规划
-
-### 季度维护
-
-- 全面安全评估
-- 灾难恢复演练
-- 性能优化
-- 架构审查
-
-## 扩展和升级
-
-### 水平扩展
-
-添加更多后端实例：
+### 重置为示例配置
 
 ```bash
-# 启动多个实例
-pm2 start dist/src/index.js -i 4 --name mcp-knot-api
-
-# 或使用不同端口
-PORT=3001 pm2 start dist/src/index.js --name mcp-knot-api-2
-PORT=3002 pm2 start dist/src/index.js --name mcp-knot-api-3
+# 注意后缀是 .json.example，不是 .json.default
+cp backend/config/*.json.example "${CONFIG_PATH:-./config}/"
+(cd "${CONFIG_PATH:-./config}" && for f in *.json.example; do mv "$f" "${f%.example}"; done)
+pm2 restart mcp-knot-api
 ```
 
-更新 Nginx 配置：
-
-```nginx
-upstream mcp_knot_backend {
-    least_conn;
-    server 127.0.0.1:3000;
-    server 127.0.0.1:3001;
-    server 127.0.0.1:3002;
-}
-```
-
-### 垂直扩展
-
-增加服务器资源：
-
-- 升级 CPU
-- 增加内存
-- 使用 SSD 存储
-- 优化网络带宽
-
-### 版本升级
-
-安全升级流程：
-
-1. **准备阶段**:
-
-   ```bash
-   # 备份当前版本
-   ./backup.sh
-
-   # 在测试环境验证新版本
-   ```
-
-2. **升级阶段**:
-
-   ```bash
-   # 拉取新版本
-   git pull origin main
-
-   # 安装依赖
-   pnpm install
-
-   # 构建
-   pnpm build
-   ```
-
-3. **部署阶段**:
-
-   ```bash
-   # 滚动更新（零停机）
-   pm2 reload mcp-knot-api
-
-   # 或重启
-   pm2 restart mcp-knot-api
-   ```
-
-4. **验证阶段**:
-
-   ```bash
-   # 检查服务状态
-   pm2 status
-
-   # 查看日志
-   pm2 logs mcp-knot-api --lines 50
-
-   # 测试关键功能
-   curl https://mcp-knot.example.com/health
-   ```
+---
 
 ## 相关文档
 

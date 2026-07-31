@@ -1,872 +1,238 @@
 # MCP Knot 开发指南
 
-本指南介绍如何设置开发环境并参与 MCP Knot 的开发。
+本指南介绍如何设置开发环境并参与 MCP Knot 的开发。完整的架构说明参见 [CLAUDE.md](../CLAUDE.md)，本文只覆盖开发相关的内容。
 
 ## 目录
 
 - [开发环境设置](#开发环境设置)
 - [项目结构](#项目结构)
 - [开发工作流](#开发工作流)
-- [代码规范](#代码规范)
-- [测试指南](#测试指南)
-- [调试技巧](#调试技巧)
-- [贡献指南](#贡献指南)
+- [测试](#测试)
+- [配置文件](#配置文件)
+- [贡献流程](#贡献流程)
 - [发布流程](#发布流程)
+- [相关文档](#相关文档)
 
 ## 开发环境设置
 
 ### 前置要求
 
-确保已安装以下软件：
+- **Node.js**: 20 或更高版本（`package.json` 中 `engines.node` 要求 `>=20`）
+- **pnpm**: 10.x（仓库指定 `packageManager: pnpm@10.6.4`，启用 corepack 即可自动切换）
+- **Git**: 2.x
 
-- **Node.js**: 18.x 或更高版本
-- **pnpm**: 8.x 或更高版本
-- **Git**: 2.x 或更高版本
-- **代码编辑器**: VS Code（推荐）或其他
-
-### 安装 Node.js
-
-**macOS**:
-
-```bash
-# 使用 Homebrew
-brew install node@18
-
-# 或使用 nvm
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-nvm install 18
-nvm use 18
-```
-
-**Linux**:
-
-```bash
-# 使用 nvm
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-nvm install 18
-nvm use 18
-
-# 或使用包管理器
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-**Windows**:
-
-- 从 [Node.js 官网](https://nodejs.org/) 下载安装器
-- 或使用 [nvm-windows](https://github.com/coreybutler/nvm-windows)
-
-### 安装 pnpm
-
-```bash
-npm install -g pnpm
-
-# 验证安装
-pnpm --version
-```
-
-### 克隆项目
+### 安装步骤
 
 ```bash
 # 克隆仓库
 git clone https://github.com/your-org/mcp-knot.git
 cd mcp-knot
 
+# 启用 corepack 以使用仓库指定的 pnpm 版本（可选但推荐）
+corepack enable
+
 # 安装依赖
 pnpm install
 
-# 构建所有包
+# 首次构建所有包（内部包之间有依赖顺序）
 pnpm build
 ```
 
-### VS Code 设置
+### 代码规范工具
 
-推荐的 VS Code 扩展：
-
-```json
-{
-  "recommendations": [
-    "oxc.oxc-vscode",
-    "vue.volar",
-    "bradlc.vscode-tailwindcss",
-    "ms-vscode.vscode-typescript-next"
-  ]
-}
-```
-
-工作区设置 (`.vscode/settings.json`):
-
-```json
-{
-  "editor.formatOnSave": true,
-  "editor.defaultFormatter": "oxc.oxc-vscode",
-  "editor.codeActionsOnSave": {
-    "source.fixAll": true,
-    "source.organizeImports": true
-  },
-  "[typescript]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
-  },
-  "[vue]": {
-    "editor.defaultFormatter": "Vue.volar"
-  },
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "typescript.enablePromptUseWorkspaceTsdk": true
-}
-```
+项目使用 [oxlint](https://oxc.rs/) + [oxfmt](https://oxc.rs/) 进行 lint 和格式化，无需额外配置 Prettier/ESLint。推荐的编辑器扩展：`oxc.oxc-vscode`、`vue.volar`（前端开发时）。
 
 ## 项目结构
 
-### Monorepo 架构
+MCP Knot 是一个 pnpm monorepo，包之间有明确的依赖边界：
 
 ```
 mcp-knot/
-├── backend/              # API 服务器
-│   ├── src/
-│   │   ├── api/         # API 路由处理器
-│   │   ├── services/    # 业务逻辑服务
-│   │   ├── types/       # TypeScript 类型定义
-│   │   ├── utils/       # 工具函数
-│   │   ├── middleware/  # 中间件
-│   │   └── validation/  # 输入验证
-│   ├── config/          # 配置文件
-│   └── dist/            # 编译输出
-├── frontend/            # Vue.js Web 界面
-│   ├── src/
-│   │   ├── components/  # Vue 组件
-│   │   ├── views/       # 页面组件
-│   │   ├── stores/      # Pinia 状态管理
-│   │   ├── services/    # API 服务
-│   │   ├── router/      # 路由配置
-│   │   └── types/       # TypeScript 类型
-│   └── dist/            # 构建输出
 ├── packages/
-│   ├── core/            # 核心 MCP 逻辑
-│   ├── cli/             # CLI 工具
-│   └── share/           # 共享类型和工具
-├── docs/                # 文档
-└── scripts/             # 构建和部署脚本
+│   ├── core/     # @mcp-core/mcp-knot-core  核心 MCP 逻辑（服务管理、连接、工具执行）
+│   ├── cli/      # @mcp-core/mcp-knot-cli    通过 stdin/stdout 通信的独立 MCP 服务器
+│   └── share/    # @mcp-core/mcp-knot-share  共享类型和工具
+├── backend/      # @mcp-core/mcp-knot-api    基于 Hono 的 API 服务器（HTTP/SSE）
+├── frontend/     # @mcp-core/mcp-knot-web    Vue.js + Rsbuild 管理界面
+├── config/       # 运行时配置文件（见「配置文件」）
+├── docs/         # 文档
+└── scripts/      # 构建、覆盖率等辅助脚本
 ```
 
-### 包依赖关系
+**包依赖关系**（避免循环依赖）：
 
-```
-backend (API)
-  ├── @mcp-core/mcp-knot-core
-  └── @mcp-core/mcp-knot-share
-
-frontend (Web)
-  └── @mcp-core/mcp-knot-share
-
-packages/cli
-  ├── @mcp-core/mcp-knot-core
-  └── @mcp-core/mcp-knot-share
-
-packages/core
-  └── @mcp-core/mcp-knot-share
-```
+- `core` 依赖 `share`
+- `cli` 依赖 `core`、`share`
+- `backend`（api）依赖 `core`、`share`
+- `frontend`（web）依赖 `share`
 
 ## 开发工作流
 
-### 启动开发服务器
+### 命令速查
 
-**后端开发**:
+所有命令均从仓库根目录执行（实际通过 `pnpm --filter` 转发到对应包）。
 
-```bash
-# 启动后端开发服务器（带热重载）
-pnpm dev:api
+| 场景 | 命令 |
+| --- | --- |
+| 启动后端开发（热重载） | `pnpm dev:api` |
+| 启动前端开发 | `pnpm dev:fe` |
+| 启动 CLI 开发 | `pnpm dev:cli` |
+| 构建所有包 | `pnpm build` |
+| 生产构建（按依赖顺序） | `pnpm build:production` |
+| 单包构建 | `pnpm build:core` / `build:api` / `build:cli` / `build:fe` |
+| Lint + 格式化（含 `--fix`，会改写文件） | `pnpm check` |
+| CI 门禁（readonly，仅检查不改写） | `pnpm check:ci` |
+| 全量 lint + 格式化（`--fix`） | `pnpm check:all` |
+| 运行所有测试 | `pnpm test` |
+| 生产启动后端 | `pnpm start:api` |
+| 生产启动 CLI | `pnpm start:cli` |
+| 清理所有包的 dist/coverage | `pnpm clean` |
+| 连带清理所有 node_modules | `pnpm clean:all` |
+| MCP Inspector | `pnpm inspector` |
 
-# 或在 backend 目录中
-cd backend
-pnpm dev
-```
+### 开发端口
 
-后端将在 `http://localhost:8181` 运行。
+- 后端默认监听 **8181**（由 `config/system.json` 的 `server.port` 控制；该字段缺省时回退到 8181）。
+- 前端开发服务器监听 **8180**（`frontend/rsbuild.config.ts`），并把 `/api` 代理到 `http://localhost:8181`。
 
-**前端开发**:
+如需同时调试前后端，开两个终端分别跑 `pnpm dev:api` 和 `pnpm dev:fe`。要改后端端口请编辑 `config/system.json` 的 `server.port`（代码不读 `process.env.PORT`）。
 
-```bash
-# 启动前端开发服务器
-pnpm dev:fe
+### 开发核心 / CLI 包
 
-# 或在 frontend 目录中
-cd frontend
-pnpm dev
-```
-
-前端将在 `http://localhost:8180` 运行。
-
-**同时启动前后端**:
-
-```bash
-# 在两个终端窗口中分别运行
-# 终端 1
-pnpm dev:api
-
-# 终端 2
-pnpm dev:fe
-```
-
-### 开发核心包
+核心包和 CLI 包没有独立的 `pnpm dev`（在根目录用 filter 调用）：
 
 ```bash
-cd packages/core
+# 核心包监视模式编译
+pnpm --filter @mcp-core/mcp-knot-core dev
 
-# 监视模式编译
-pnpm dev
-
-# 运行测试（监视模式）
-pnpm test:watch
+# CLI 包测试
+pnpm --filter @mcp-core/mcp-knot-cli test:e2e
 ```
 
-### 开发 CLI 包
+### 代码检查注意事项
 
-```bash
-cd packages/cli
+`pnpm check` 会自动修复 lint 和格式问题（改写文件）；`pnpm check:ci` 是只读的 CI 门禁，**提交/合并前务必再跑一次 `pnpm check:ci`** 复验，确保没有遗漏问题进入主干。
 
-# 监视模式编译
-pnpm dev
+## 测试
 
-# 测试 CLI
-node dist/cli.js
-```
+项目使用 Vitest 4.x，采用集中的 projects 配置（`vitest.config.ts`），按粒度划分多个 project：
 
-### 构建项目
+- `share` / `core` / `cli`：包内单元测试
+- `api-unit` / `api-integration`：后端单元与集成测试
+- `api-e2e`：完整 MCP 协议端到端测试（使用 mock server，位于 `backend/src/e2e/`）
+- `frontend`：前端组件测试
 
-```bash
-# 构建所有包
-pnpm build
+测试文件按后缀区分：`.unit.test.ts` 为单元测试。
 
-# 构建特定包
-pnpm build:core    # 核心包
-pnpm build:api     # 后端
-pnpm build:cli     # CLI
-pnpm build:fe      # 前端
+### 测试命令
 
-# 生产构建（所有包）
-pnpm build:production
-```
+| 场景 | 命令 |
+| --- | --- |
+| 运行所有测试 | `pnpm test` |
+| 监视模式 | `pnpm test:watch` |
+| 仅 E2E | `pnpm test:e2e` |
+| 带覆盖率 | `pnpm test:coverage` |
+| 调试模式（`VITEST_DEBUG=true`） | `pnpm test:debug` |
+| 运行单个文件 | `pnpm test path/to/file.test.ts` |
 
-### 代码检查和格式化
+### 测试约定
 
-```bash
-# 检查和修复所有包
-pnpm check
+摘自 [CLAUDE.md](../CLAUDE.md)，编写测试时必须遵循：
 
-# 检查特定包
-cd backend
-pnpm check
+- 为 `vi.fn().mockImplementation()` 使用 `function` 关键字（非箭头函数），以支持 `new` 调用
+- 使用 `useTestContext()`（`test/context/test-context.ts`）管理需要清理的测试资源
+- 不要写 `expect(true).toBe(true)` 这类空断言，必须断言真实行为
+- 测试文件中禁止使用 `any` 类型
 
-# 只检查不修复
-pnpm check --apply=off
-```
+## 配置文件
 
-## 代码规范
-
-### TypeScript 规范
-
-**类型定义**:
+代码运行时从配置目录读取 JSON 配置，默认为 `<cwd>/config`，可用 `CONFIG_PATH` 环境变量覆盖：
 
 ```typescript
-// ✅ 好的做法
-interface User {
-  id: string;
-  username: string;
-  role: 'admin' | 'user';
-}
-
-function getUser(id: string): Promise<User> {
-  // ...
-}
-
-// ❌ 避免使用 any
-function processData(data: any) {
-  // 不推荐
-  // ...
-}
-
-// ✅ 使用泛型或具体类型
-function processData<T>(data: T): T {
-  // ...
-}
+// backend/src/utils/config.ts
+return process.env.CONFIG_PATH || path.resolve(process.cwd(), 'config');
 ```
 
-**命名约定**:
+从仓库根目录启动时读取 `./config/`，包含以下文件：
 
-- **接口**: PascalCase (`UserInfo`, `ServerConfig`)
-- **类型**: PascalCase (`ToolResult`, `ApiResponse`)
-- **函数**: camelCase (`getUserById`, `connectServer`)
-- **变量**: camelCase (`userId`, `serverList`)
-- **常量**: UPPER_SNAKE_CASE (`MAX_RETRIES`, `DEFAULT_TIMEOUT`)
-- **文件**: kebab-case (`user-service.ts`, `api-client.ts`)
+| 文件 | 作用 |
+| --- | --- |
+| `mcp_server.json` | MCP 服务器定义（命令、参数、环境变量等） |
+| `group.json` | 服务器分组与访问规则（allow/deny、验证密钥等） |
+| `system.json` | 系统设置（如 `server.port`，缺省回退 8181） |
+| `api-tools.json` | 可选，将外部 HTTP API 转为 MCP 工具的集成配置 |
 
-### Vue 组件规范
+首次启动若配置缺失，核心包的 `DefaultConfigGenerator` 会生成初始模板。
 
-**组件命名**:
+## 贡献流程
 
-```vue
-<!-- ✅ 多词组件名 -->
-<template>
-  <div class="server-list">
-    <!-- ... -->
-  </div>
-</template>
-
-<script setup lang="ts">
-// 组件逻辑
-</script>
-```
-
-**Props 定义**:
-
-```typescript
-// ✅ 使用 TypeScript 定义 props
-interface Props {
-  serverId: string;
-  status: 'connected' | 'disconnected';
-  onConnect?: () => void;
-}
-
-const props = defineProps<Props>();
-```
-
-**事件定义**:
-
-```typescript
-// ✅ 定义事件类型
-const emit = defineEmits<{
-  update: [value: string];
-  delete: [id: string];
-}>();
-```
-
-### 注释规范
-
-**函数注释**:
-
-```typescript
-/**
- * 连接到 MCP 服务器
- * @param serverId - 服务器唯一标识符
- * @param config - 服务器配置对象
- * @returns Promise，解析为连接结果
- * @throws {ConnectionError} 当连接失败时抛出
- */
-async function connectServer(serverId: string, config: ServerConfig): Promise<ConnectionResult> {
-  // 实现...
-}
-```
-
-**代码注释**:
-
-```typescript
-// ✅ 解释为什么，而不是做什么
-// 使用指数退避策略重试，避免服务器过载
-const retryDelay = Math.pow(2, attempt) * 1000;
-
-// ❌ 避免显而易见的注释
-// 设置 userId 为 123
-const userId = 123;
-```
-
-### Git 提交规范
-
-使用 [Conventional Commits](https://www.conventionalcommits.org/) 格式：
-
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-**类型 (type)**:
-
-- `feat`: 新功能
-- `fix`: 错误修复
-- `docs`: 文档更新
-- `style`: 代码格式（不影响功能）
-- `refactor`: 重构
-- `perf`: 性能优化
-- `test`: 测试相关
-- `chore`: 构建/工具相关
-
-**示例**:
+### 基本流程
 
 ```bash
-# 新功能
+# 1. Fork 并克隆
+git clone https://github.com/<your-username>/mcp-knot.git
+cd mcp-knot
+
+# 2. 创建功能分支
+git checkout -b feature/your-feature
+
+# 3. 开发、写测试、更新文档
+
+# 4. 本地验证（按顺序）
+pnpm check            # 修复 lint/格式
+pnpm check:ci         # readonly 复验，必须通过
+pnpm test             # 所有测试通过
+pnpm build            # 构建通过
+
+# 5. 如果改动了发布包，追加一个 changeset（见「发布流程」）
+pnpm changeset
+
+# 6. 提交并推送，使用 Conventional Commits 格式
+git add .
 git commit -m "feat(api): 添加服务器健康检查端点"
+git push origin feature/your-feature
 
-# 错误修复
-git commit -m "fix(frontend): 修复工具列表分页问题"
-
-# 文档更新
-git commit -m "docs: 更新部署指南"
-
-# 重构
-git commit -m "refactor(core): 优化 MCP 连接管理器"
+# 7. 在 GitHub 上向 main 分支发起 Pull Request
 ```
 
-## 测试指南
-
-### 运行测试
-
-```bash
-# 运行所有测试
-pnpm test
-
-# 运行特定包的测试
-cd backend
-pnpm test
-
-# 监视模式
-pnpm test:watch
-
-# 生成覆盖率报告
-pnpm test:coverage
-
-# 运行 E2E 测试
-pnpm test:e2e
-```
-
-### 编写单元测试
-
-**后端测试示例**:
-
-```typescript
-import { describe, it, expect, beforeEach } from 'vitest';
-import { ServerManager } from './server-manager';
-
-describe('ServerManager', () => {
-  let manager: ServerManager;
-
-  beforeEach(() => {
-    manager = new ServerManager();
-  });
-
-  it('应该成功添加服务器', async () => {
-    const config = {
-      id: 'test-server',
-      command: 'node',
-      args: ['server.js'],
-    };
-
-    await manager.addServer(config);
-    const server = manager.getServer('test-server');
-
-    expect(server).toBeDefined();
-    expect(server?.id).toBe('test-server');
-  });
-
-  it('添加重复服务器应该抛出错误', async () => {
-    const config = {
-      id: 'test-server',
-      command: 'node',
-      args: ['server.js'],
-    };
-
-    await manager.addServer(config);
-
-    await expect(manager.addServer(config)).rejects.toThrow('服务器已存在');
-  });
-});
-```
-
-**前端测试示例**:
-
-```typescript
-import { describe, it, expect } from 'vitest';
-import { mount } from '@vue/test-utils';
-import ServerList from './ServerList.vue';
-
-describe('ServerList', () => {
-  it('应该渲染服务器列表', () => {
-    const servers = [
-      { id: 'server1', name: '服务器 1', status: 'connected' },
-      { id: 'server2', name: '服务器 2', status: 'disconnected' },
-    ];
-
-    const wrapper = mount(ServerList, {
-      props: { servers },
-    });
-
-    expect(wrapper.findAll('.server-item')).toHaveLength(2);
-  });
-
-  it('点击连接按钮应该触发事件', async () => {
-    const wrapper = mount(ServerList, {
-      props: {
-        servers: [{ id: 'server1', name: '服务器 1', status: 'disconnected' }],
-      },
-    });
-
-    await wrapper.find('.connect-button').trigger('click');
-
-    expect(wrapper.emitted('connect')).toBeTruthy();
-    expect(wrapper.emitted('connect')?.[0]).toEqual(['server1']);
-  });
-});
-```
-
-### 测试覆盖率
-
-目标覆盖率：
-
-- **语句覆盖率**: > 80%
-- **分支覆盖率**: > 75%
-- **函数覆盖率**: > 80%
-- **行覆盖率**: > 80%
-
-查看覆盖率报告：
-
-```bash
-pnpm test:coverage
-open coverage/index.html
-```
-
-## 调试技巧
-
-### 后端调试
-
-**使用 VS Code 调试器**:
-
-创建 `.vscode/launch.json`:
-
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "node",
-      "request": "launch",
-      "name": "调试后端",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev:api"],
-      "skipFiles": ["<node_internals>/**"],
-      "console": "integratedTerminal"
-    }
-  ]
-}
-```
-
-**使用 Node.js 调试器**:
-
-```bash
-# 启动调试模式
-node --inspect dist/src/index.js
-
-# 在 Chrome 中打开
-chrome://inspect
-```
-
-**日志调试**:
-
-```typescript
-import { logger } from './utils/logger';
-
-// 不同级别的日志
-logger.debug('调试信息', { data });
-logger.info('信息日志', { userId });
-logger.warn('警告信息', { error });
-logger.error('错误信息', { error, stack });
-```
-
-### 前端调试
-
-**Vue DevTools**:
-
-- 安装 [Vue DevTools](https://devtools.vuejs.org/) 浏览器扩展
-- 在开发模式下自动启用
-
-**浏览器调试**:
-
-```typescript
-// 使用 console
-console.log('调试信息', data);
-console.table(arrayData);
-console.group('分组日志');
-console.log('项目 1');
-console.log('项目 2');
-console.groupEnd();
-
-// 使用 debugger
-function processData(data: unknown) {
-  debugger; // 断点
-  // 处理逻辑
-}
-```
-
-**网络请求调试**:
-
-```typescript
-// 在 Axios 拦截器中添加日志
-axios.interceptors.request.use((config) => {
-  console.log('请求:', config.method, config.url, config.data);
-  return config;
-});
-
-axios.interceptors.response.use(
-  (response) => {
-    console.log('响应:', response.status, response.data);
-    return response;
-  },
-  (error) => {
-    console.error('错误:', error.response?.status, error.message);
-    return Promise.reject(error);
-  },
-);
-```
-
-### MCP 协议调试
-
-**使用 MCP Inspector**:
-
-```bash
-# 启动 MCP Inspector
-pnpm inspector
-
-# 连接到 MCP 服务器
-# 在浏览器中打开 http://localhost:5173
-```
-
-**查看 MCP 消息**:
-
-```typescript
-// 在代码中记录 MCP 消息
-mcpClient.on('message', (message) => {
-  logger.debug('MCP 消息', {
-    type: message.type,
-    method: message.method,
-    content: message.content,
-  });
-});
-```
-
-## 贡献指南
-
-### 贡献流程
-
-1. **Fork 仓库**
-
-   ```bash
-   # 在 GitHub 上 Fork 仓库
-   # 克隆你的 Fork
-   git clone https://github.com/your-username/mcp-knot.git
-   ```
-
-2. **创建功能分支**
-
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-3. **进行更改**
-   - 编写代码
-   - 添加测试
-   - 更新文档
-
-4. **提交更改**
-
-   ```bash
-   git add .
-   git commit -m "feat: 添加新功能"
-   ```
-
-5. **推送到 Fork**
-
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-
-6. **创建 Pull Request**
-   - 在 GitHub 上创建 PR
-   - 填写 PR 模板
-   - 等待代码审查
-
-### Pull Request 检查清单
-
-在提交 PR 前，确保：
-
-- [ ] 代码通过所有测试 (`pnpm test`)
-- [ ] 代码通过 lint 检查 (`pnpm check`)
-- [ ] 添加了必要的测试
-- [ ] 更新了相关文档
-- [ ] 提交消息遵循规范
-- [ ] 没有合并冲突
-- [ ] PR 描述清晰完整
-
-### 代码审查
-
-代码审查关注点：
-
-1. **功能正确性**: 代码是否实现了预期功能
-2. **代码质量**: 代码是否清晰、可维护
-3. **测试覆盖**: 是否有足够的测试
-4. **性能**: 是否有性能问题
-5. **安全性**: 是否有安全隐患
-6. **文档**: 是否更新了文档
-
-### 问题报告
-
-报告问题时，请包含：
-
-1. **问题描述**: 清晰描述问题
-2. **重现步骤**: 如何重现问题
-3. **预期行为**: 应该发生什么
-4. **实际行为**: 实际发生了什么
-5. **环境信息**:
-   - Node.js 版本
-   - 操作系统
-   - 浏览器（如果相关）
-6. **错误日志**: 相关的错误信息
-7. **截图**: 如果有帮助
+### 提交信息格式
+
+遵循 [Conventional Commits](https://www.conventionalcommits.org/)：`<type>(<scope>): <subject>`，常用 type 包括 `feat`、`fix`、`docs`、`refactor`、`perf`、`test`、`chore`。
+
+### PR 检查清单
+
+- [ ] `pnpm check:ci` 通过（CI 实际门禁）
+- [ ] `pnpm test` 全部通过
+- [ ] `pnpm build` 构建成功
+- [ ] 新代码有对应测试，且未破坏原有测试
+- [ ] 相关文档已同步更新
+- [ ] 若改动发布包，已附 changeset
+- [ ] 提交信息遵循 Conventional Commits
+- [ ] 无合并冲突
 
 ## 发布流程
 
-### 版本号规范
+本项目使用 [Changesets](https://github.com/changesets/changesets) 管理版本与发布，**CHANGELOG 由 changesets 自动生成，不要手写维护**。完整流程参见 [README 的 Release Process 章节](../README.md#release-process)。
 
-遵循 [Semantic Versioning](https://semver.org/):
-
-- **主版本号 (MAJOR)**: 不兼容的 API 变更
-- **次版本号 (MINOR)**: 向后兼容的功能新增
-- **修订号 (PATCH)**: 向后兼容的问题修复
-
-### 发布步骤
-
-1. **更新版本号**
-
-   ```bash
-   # 更新所有包的版本号
-   pnpm version:bump
-
-   # 或手动更新 package.json
-   ```
-
-2. **更新 CHANGELOG**
-
-   ```bash
-   # 记录版本变更
-   echo "## [1.2.0] - 2024-01-15" >> CHANGELOG.md
-   echo "### Added" >> CHANGELOG.md
-   echo "- 新功能描述" >> CHANGELOG.md
-   ```
-
-3. **运行测试**
-
-   ```bash
-   pnpm test
-   pnpm test:e2e
-   ```
-
-4. **构建**
-
-   ```bash
-   pnpm build:production
-   ```
-
-5. **提交变更**
-
-   ```bash
-   git add .
-   git commit -m "chore: 发布 v1.2.0"
-   git tag v1.2.0
-   ```
-
-6. **推送到远程**
-
-   ```bash
-   git push origin main
-   git push origin v1.2.0
-   ```
-
-7. **发布到 npm**
-   ```bash
-   pnpm publish:packages
-   ```
-
-### 发布检查清单
-
-- [ ] 所有测试通过
-- [ ] 文档已更新
-- [ ] CHANGELOG 已更新
-- [ ] 版本号已更新
-- [ ] 创建了 Git 标签
-- [ ] 发布说明已准备
-
-## 常见开发问题
-
-### 依赖安装失败
+关键命令：
 
 ```bash
-# 清理缓存
-pnpm store prune
-
-# 删除 node_modules
-rm -rf node_modules packages/*/node_modules backend/node_modules frontend/node_modules
-
-# 重新安装
-pnpm install
+pnpm changeset         # 在开发时为本次改动生成一个 changeset
+pnpm version           # 消费 changesets，更新版本号与 CHANGELOG
+pnpm changeset:check   # 检查 changeset 状态（CI 用）
+pnpm release           # 发布到 npm（通常由 GitHub Actions 自动完成）
 ```
 
-### 构建失败
-
-```bash
-# 清理构建输出
-pnpm clean
-
-# 重新构建
-pnpm build
-```
-
-### 测试失败
-
-```bash
-# 运行单个测试文件
-pnpm test path/to/test.ts
-
-# 使用调试模式
-pnpm test:debug
-```
-
-### 端口冲突
-
-```bash
-# 查找占用端口的进程
-lsof -i :3000
-
-# 杀死进程
-kill -9 <PID>
-
-# 或使用不同端口
-PORT=3001 pnpm dev:api
-```
-
-## 有用的资源
-
-### 文档
-
-- [MCP 协议规范](https://modelcontextprotocol.io/)
-- [Vue 3 文档](https://vuejs.org/)
-- [TDesign 文档](https://tdesign.tencent.com/)
-- [Hono 文档](https://hono.dev/)
-
-### 工具
-
-- [MCP Inspector](https://github.com/modelcontextprotocol/inspector)
-- [Vue DevTools](https://devtools.vuejs.org/)
-- [Postman](https://www.postman.com/) - API 测试
-- [Insomnia](https://insomnia.rest/) - API 测试
-
-### 社区
-
-- GitHub Issues
-- GitHub Discussions
-- Discord 服务器（如果有）
+通常的协作方式：开发者在 PR 中带上 changeset；PR 合入 `main` 后，CI 自动生成「Version Packages」PR；该 PR 合入后触发自动发布到 npm、创建 GitHub Release 并构建 Docker 镜像。
 
 ## 相关文档
 
+- [CLAUDE.md](../CLAUDE.md) — 架构总览、包结构与开发约定（必读）
+- [README](../README.md) — 项目介绍、快速上手与发布流程
+- [API 参考](API_REFERENCE.md)
+- [分组路由](GROUP_ROUTING.md)
 - [Web 界面使用指南](WEB_UI_GUIDE.md)
-- [API 参考文档](API_REFERENCE.md)
 - [部署指南](DEPLOYMENT.md)
-- [故障排除指南](TROUBLESHOOTING.md)
+- [故障排除](TROUBLESHOOTING.md)
+- [CLI 用法](CLI_USAGE.md)
+- [发布日志](RELEASE_NOTES.md)

@@ -1,39 +1,46 @@
 # MCP Knot API 参考
 
-本文档提供 MCP Knot API 的完整参考，包括所有端点、请求/响应格式和使用示例。
+本文档提供 MCP Knot API 的完整参考。所有端点均以代码实际挂载为准（`backend/src/app.ts`）。
 
 ## 基础信息
 
 - **基础 URL**: `http://localhost:8181`
-- **API 版本**: v1
-- **内容类型**: `application/json`
+- **内容类型**: `application/json`（OAuth token 端点除外，使用 `application/x-www-form-urlencoded`）
 - **字符编码**: UTF-8
+
+## 路由总览
+
+| 前缀 | 说明 | 认证 |
+| --- | --- | --- |
+| `/api/auth` | 认证（登录/登出/刷新/当前用户） | 部分需要 |
+| `/api/config` | 系统配置管理（查询/更新/验证/历史/备份/恢复） | JWT |
+| `/api/dashboard` | 仪表板（统计、系统信息、内存、日志、SSE 等） | JWT |
+| `/api/debug` | 调试（MCP 协议消息、工具测试、性能/错误分析） | 无 |
+| `/api/servers` | MCP 服务器 CRUD 与连接控制 | JWT |
+| `/api/tools` | 工具查询与执行（基础） | JWT |
+| `/api/tools-admin` | 工具管理（历史/监控/健康/性能/错误/统计） | JWT |
+| `/api/groups` | 组管理（路径参数统一为 `:groupId`） | JWT |
+| `/api/performance` | 全局性能监控 | 无 |
+| `/api/api-to-mcp` | API 转 MCP 配置管理 | JWT |
+| `/api/oauth` | 内置 OAuth AS（`/token`、`/jwks`） | 无 |
+| `/.well-known/*` | OAuth Protected Resource / AS metadata | 无 |
+| `/:group/mcp` | **组级 MCP JSON-RPC 入口（唯一）** | OAuth RS |
+| `/:group/status`、`/:group/tools` | 组状态/工具（REST） | 组校验 |
+
+> 说明：2026-07-28 协议升级后，全局 `/mcp` 端点已移除。所有 MCP 调用统一走组路由 `/:group/mcp`。
 
 ## 认证
 
 MCP Knot 支持两种认证方式：
 
-### 1. JWT 认证（推荐）
+1. **JWT 认证**（Web UI 与管理 API）：`Authorization: Bearer <access-token>`
+2. **验证密钥认证**（组级工具访问控制）：`X-Validation-Key: <key>`
 
-用于Web界面和需要用户身份验证的API端点：
-
-```http
-Authorization: Bearer <access-token>
-```
-
-### 2. 验证密钥认证
-
-用于组级别的工具访问控制：
-
-```http
-X-Validation-Key: your-validation-key
-```
+MCP 端点（`/:group/mcp`）走 OAuth Resource Server 校验，详见 `/.well-known/oauth-protected-resource`。
 
 ## 认证 API
 
-### 用户登录
-
-用户登录获取访问令牌。
+### 登录
 
 ```http
 POST /api/auth/login
@@ -42,10 +49,7 @@ POST /api/auth/login
 **请求体**:
 
 ```json
-{
-  "username": "admin",
-  "password": "password123"
-}
+{ "username": "admin", "password": "password123" }
 ```
 
 **响应**:
@@ -54,262 +58,117 @@ POST /api/auth/login
 {
   "success": true,
   "data": {
-    "user": {
-      "id": "admin",
-      "username": "admin",
-      "role": "admin"
-    },
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "user": { "id": "admin", "username": "admin", "role": "admin" },
+    "accessToken": "eyJ...",
+    "refreshToken": "eyJ..."
   },
-  "timestamp": "2024-01-15T10:30:00Z"
+  "timestamp": "2026-07-31T10:30:00Z"
 }
 ```
 
-### 刷新访问令牌
-
-使用刷新令牌获取新的访问令牌。
+### 刷新令牌
 
 ```http
 POST /api/auth/refresh
 ```
 
-**请求体**:
+**请求体**: `{ "refreshToken": "eyJ..." }`
 
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
+**响应**: `{ "success": true, "data": { "accessToken": "...", "refreshToken": "..." } }`
 
-**响应**:
-
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 用户登出
-
-撤销当前访问令牌。
+### 登出
 
 ```http
 POST /api/auth/logout
-```
-
-**请求头**:
-
-```http
 Authorization: Bearer <access-token>
 ```
 
-**响应**:
-
-```json
-{
-  "success": true,
-  "message": "登出成功",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 获取当前用户信息
-
-获取当前登录用户的详细信息。
+### 获取当前用户
 
 ```http
 GET /api/auth/me
-```
-
-**请求头**:
-
-```http
 Authorization: Bearer <access-token>
 ```
 
-**响应**:
+**响应**: 返回 `data.user`（含 `id`、`username`、`role`、`groups`、`createdAt`、`lastLogin`）。
 
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": "admin",
-      "username": "admin",
-      "role": "admin",
-      "groups": ["admin-group"],
-      "createdAt": "2024-01-01T00:00:00Z",
-      "lastLogin": "2024-01-15T10:30:00Z"
-    }
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
+## MCP 端点（JSON-RPC）
 
-## 全局 MCP 端点
+MCP 协议通过 `POST /:group/mcp` 暴露。这是唯一的 MCP 入口，**不存在** `/mcp/list_tools`、`/mcp/call_tool`、`/:group/mcp/list_tools` 等子路径端点。
 
-### 列出所有工具
+请求通过 JSON-RPC 2.0 body 携带方法与参数，配合 `Mcp-Method` 头（方便代理/中间件路由）。
 
-获取所有可用的 MCP 工具列表。
+### 列出工具
 
-```http
-GET /mcp/list_tools
-```
-
-**响应**:
-
-```json
-{
-  "tools": [
-    {
-      "name": "read_file",
-      "description": "读取文件内容",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "文件路径"
-          }
-        },
-        "required": ["path"]
-      }
-    }
-  ]
-}
+```bash
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
 ### 调用工具
 
-执行指定的 MCP 工具。
+工具名使用命名空间 `<serverId>_<toolName>`。另有内置元工具 `group_status`、`list_group_tools`。
 
-```http
-POST /mcp/call_tool
+```bash
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -d '{
+    "jsonrpc":"2.0","id":2,"method":"tools/call",
+    "params":{"name":"filesystem_read_file","arguments":{"path":"/workspace/README.md"}}
+  }'
 ```
 
-**请求体**:
+**响应**（JSON-RPC 结果）:
 
 ```json
 {
-  "name": "read_file",
-  "arguments": {
-    "path": "/path/to/file.txt"
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "content": [
+      { "type": "text", "text": "# My Project\n\n..." }
+    ],
+    "isError": false
   }
 }
 ```
 
-**响应**:
+### 组状态与工具（REST）
 
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "文件内容..."
-    }
-  ]
-}
-```
+非 JSON-RPC 的便捷 REST 端点：
 
-## 组路由端点
+- `GET /:group/status` — 组状态信息
+- `GET /:group/tools` — 组可用工具列表
 
-### 列出组的工具
-
-获取指定组的可用工具列表。
-
-```http
-GET /:group/mcp/list_tools
-```
-
-**路径参数**:
-
-- `group` (string): 组标识符
-
-**响应**:
-
-```json
-{
-  "tools": [
-    {
-      "name": "read_file",
-      "description": "读取文件内容",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "文件路径"
-          }
-        },
-        "required": ["path"]
-      }
-    }
-  ],
-  "group": "development",
-  "serverCount": 2,
-  "toolCount": 5
-}
-```
-
-### 调用组内工具
-
-在指定组内执行工具。
-
-```http
-POST /:group/mcp/call_tool
-```
-
-**路径参数**:
-
-- `group` (string): 组标识符
-
-**请求头**:
-
-```http
-Content-Type: application/json
-X-Validation-Key: group-validation-key  # 如果组需要验证
-```
-
-**请求体**:
-
-```json
-{
-  "name": "read_file",
-  "arguments": {
-    "path": "/workspace/README.md"
-  }
-}
-```
-
-**响应**:
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "# My Project\n\nThis is a README file..."
-    }
-  ],
-  "metadata": {
-    "group": "development",
-    "server": "filesystem",
-    "executionTime": 45
-  }
-}
-```
+路径参数为 `group`（组标识符），组不存在时返回 JSON-RPC 错误体（`code: -32602`，HTTP 404）。
 
 ## 组管理 API
 
-### 列出所有组
+路径参数统一为 `:groupId`。
 
-获取所有配置的组列表。
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/groups` | 列出所有组 |
+| POST | `/api/groups` | 创建组 |
+| GET | `/api/groups/:groupId` | 组详情 |
+| PUT | `/api/groups/:groupId` | 更新组（注意是 PUT，非 PATCH） |
+| DELETE | `/api/groups/:groupId` | 删除组 |
+| GET | `/api/groups/:groupId/health` | 组健康检查 |
+| GET | `/api/groups/:groupId/tools` | 组已配置工具 |
+| GET | `/api/groups/:groupId/available-tools` | 组可用工具（含过滤） |
+| GET | `/api/groups/:groupId/servers` | 组的服务器列表 |
+| POST | `/api/groups/:groupId/tools` | 配置组工具过滤 |
+| POST | `/api/groups/:groupId/validate-tool-access` | 验证工具访问权限 |
+| POST/GET/DELETE | `/api/groups/:groupId/validation-key` | 设置/查询/删除验证密钥 |
+| POST | `/api/groups/:groupId/validate-key` | 验证密钥有效性 |
+| POST | `/api/groups/:groupId/generate-validation-key` | 生成新验证密钥 |
+
+> **不存在** `/api/groups/:groupId/stats`、`/api/groups/:groupId/logs`。组级统计/日志请用 `/api/performance`、`/api/dashboard/logs` 或 `/api/tools-admin/*`。
+
+### 列出所有组
 
 ```http
 GET /api/groups
@@ -328,319 +187,70 @@ GET /api/groups
       "toolCount": 6,
       "serverCount": 3,
       "requireAuth": false
-    },
-    {
-      "id": "research",
-      "name": "研究工具组",
-      "description": "信息收集和研究工具",
-      "enabled": true,
-      "toolCount": 4,
-      "serverCount": 2,
-      "requireAuth": false
     }
   ],
-  "total": 2
+  "total": 1
 }
 ```
 
-### 获取组详情
-
-获取指定组的详细信息。
+### 组详情
 
 ```http
-GET /api/groups/:group
+GET /api/groups/:groupId
 ```
 
-**路径参数**:
+**响应**（含 `id`、`name`、`description`、`servers`、`allowedTools`、`enabled`、`requireAuth`、`stats`）。
 
-- `group` (string): 组标识符
+### 创建/更新组
 
-**响应**:
+```http
+POST /api/groups
+PUT  /api/groups/:groupId
+```
+
+**请求体**（创建）:
 
 ```json
 {
-  "id": "development",
-  "name": "开发工具组",
-  "description": "软件开发相关工具",
-  "servers": ["filesystem", "git", "npm"],
-  "allowedTools": ["read_file", "write_file", "list_directory", "git_status", "git_commit"],
-  "enabled": true,
-  "requireAuth": false,
-  "stats": {
-    "toolCount": 5,
-    "serverCount": 3,
-    "lastUsed": "2024-01-15T10:30:00Z",
-    "totalRequests": 156,
-    "successRate": 0.95
-  }
+  "id": "research",
+  "name": "研究工具组",
+  "description": "信息收集和研究工具",
+  "servers": ["search-server"],
+  "tools": ["search"]
 }
 ```
 
-### 检查组健康状态
-
-检查指定组及其服务器的健康状态。
+### 组健康检查
 
 ```http
-GET /api/groups/:group/health
+GET /api/groups/:groupId/health
 ```
 
-**路径参数**:
+**响应**: 各服务器的连接状态、响应时间、整体健康度、可用/总工具数。
 
-- `group` (string): 组标识符
-
-**响应**:
-
-```json
-{
-  "group": "development",
-  "status": "healthy",
-  "servers": {
-    "filesystem": {
-      "status": "connected",
-      "responseTime": 45,
-      "lastCheck": "2024-01-15T10:30:00Z"
-    },
-    "git": {
-      "status": "connected",
-      "responseTime": 32,
-      "lastCheck": "2024-01-15T10:30:00Z"
-    },
-    "npm": {
-      "status": "error",
-      "error": "Connection timeout",
-      "lastCheck": "2024-01-15T10:29:45Z"
-    }
-  },
-  "overallHealth": "degraded",
-  "availableTools": 4,
-  "totalTools": 6
-}
-```
-
-### 获取组统计信息
-
-获取指定组的使用统计信息。
+### 验证密钥管理
 
 ```http
-GET /api/groups/:group/stats
-```
-
-**查询参数**:
-
-- `period` (string, 可选): 统计周期 (`1h`, `24h`, `7d`, `30d`)，默认 `24h`
-
-**响应**:
-
-```json
-{
-  "group": "development",
-  "period": "24h",
-  "stats": {
-    "totalRequests": 156,
-    "successfulRequests": 148,
-    "failedRequests": 8,
-    "averageResponseTime": 234,
-    "topTools": [
-      {
-        "name": "read_file",
-        "count": 89,
-        "successRate": 0.98
-      },
-      {
-        "name": "write_file",
-        "count": 34,
-        "successRate": 0.94
-      },
-      {
-        "name": "git_status",
-        "count": 19,
-        "successRate": 1.0
-      }
-    ],
-    "errorBreakdown": {
-      "TOOL_NOT_FOUND": 3,
-      "INVALID_ARGUMENTS": 2,
-      "SERVER_ERROR": 3
-    }
-  }
-}
-```
-
-### 获取组活动日志
-
-获取指定组的活动日志。
-
-```http
-GET /api/groups/:group/logs
-```
-
-**查询参数**:
-
-- `limit` (number, 可选): 返回的日志条数，默认 50，最大 1000
-- `offset` (number, 可选): 偏移量，默认 0
-- `level` (string, 可选): 日志级别过滤 (`debug`, `info`, `warn`, `error`)
-- `since` (string, 可选): 起始时间 (ISO 8601 格式)
-
-**响应**:
-
-```json
-{
-  "logs": [
-    {
-      "timestamp": "2024-01-15T10:30:15Z",
-      "level": "info",
-      "message": "工具调用成功",
-      "tool": "read_file",
-      "duration": 45,
-      "success": true,
-      "metadata": {
-        "server": "filesystem",
-        "arguments": {
-          "path": "/workspace/README.md"
-        }
-      }
-    },
-    {
-      "timestamp": "2024-01-15T10:29:32Z",
-      "level": "error",
-      "message": "工具调用失败",
-      "tool": "write_file",
-      "error": "权限被拒绝",
-      "success": false,
-      "metadata": {
-        "server": "filesystem",
-        "errorCode": "PERMISSION_DENIED"
-      }
-    }
-  ],
-  "total": 156,
-  "hasMore": true
-}
-```
-
-## 系统管理 API
-
-### 系统健康检查
-
-检查整个系统的健康状态。
-
-```http
-GET /health
-```
-
-**响应**:
-
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "version": "1.0.0",
-  "uptime": 86400,
-  "services": {
-    "api": "healthy",
-    "mcp": "healthy",
-    "database": "healthy"
-  },
-  "metrics": {
-    "totalRequests": 1234,
-    "activeConnections": 5,
-    "memoryUsage": "45.2MB",
-    "cpuUsage": "12.5%"
-  }
-}
-```
-
-### 系统信息
-
-获取系统信息和配置。
-
-```http
-GET /api/system/info
-```
-
-**响应**:
-
-```json
-{
-  "version": "1.0.0",
-  "nodeVersion": "18.17.0",
-  "platform": "darwin",
-  "architecture": "x64",
-  "uptime": 86400,
-  "environment": "production",
-  "features": {
-    "groupRouting": true,
-    "cliSupport": true,
-    "metricsCollection": true
-  },
-  "limits": {
-    "maxConnections": 100,
-    "requestTimeout": 30000,
-    "maxRequestSize": "10MB"
-  }
-}
-```
-
-### 系统指标
-
-获取系统性能指标。
-
-```http
-GET /api/system/metrics
-```
-
-**查询参数**:
-
-- `period` (string, 可选): 指标周期 (`1m`, `5m`, `1h`, `24h`)，默认 `5m`
-
-**响应**:
-
-```json
-{
-  "period": "5m",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "metrics": {
-    "requests": {
-      "total": 1234,
-      "rate": 4.1,
-      "successRate": 0.95
-    },
-    "response": {
-      "averageTime": 234,
-      "p50": 180,
-      "p95": 450,
-      "p99": 800
-    },
-    "system": {
-      "memoryUsage": 47185920,
-      "cpuUsage": 12.5,
-      "activeConnections": 5,
-      "openFiles": 23
-    },
-    "mcp": {
-      "activeServers": 8,
-      "totalTools": 45,
-      "connectionPool": {
-        "active": 5,
-        "idle": 3,
-        "pending": 0
-      }
-    }
-  }
-}
+POST   /api/groups/:groupId/validation-key       # 设置
+GET    /api/groups/:groupId/validation-key       # 查询状态
+DELETE /api/groups/:groupId/validation-key       # 删除
+POST   /api/groups/:groupId/generate-validation-key  # 生成新密钥
+POST   /api/groups/:groupId/validate-key         # 验证密钥
 ```
 
 ## 服务器管理 API
 
-服务器管理 API 提供了 MCP 服务器的完整 CRUD 操作和连接控制功能。
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/servers` | 服务器列表 |
+| POST | `/api/servers` | 创建服务器 |
+| PUT | `/api/servers/:id` | 更新服务器 |
+| DELETE | `/api/servers/:id` | 删除服务器 |
+| POST | `/api/servers/:id/connect` | 连接服务器 |
+| POST | `/api/servers/:id/disconnect` | 断开服务器 |
+| POST | `/api/servers/test` | 测试配置有效性 |
 
-### 获取服务器列表
-
-**GET** `/api/servers`
-
-获取所有已配置的 MCP 服务器列表。
-
-**响应示例:**
+### 列表响应示例
 
 ```json
 {
@@ -657,21 +267,15 @@ GET /api/system/metrics
           "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
         },
         "tools": ["read_file", "write_file", "list_directory"],
-        "lastConnected": "2024-01-15T10:30:00Z"
+        "lastConnected": "2026-07-31T10:30:00Z"
       }
     ]
   },
-  "timestamp": "2024-01-15T10:30:00Z"
+  "timestamp": "2026-07-31T10:30:00Z"
 }
 ```
 
 ### 创建服务器
-
-**POST** `/api/servers`
-
-创建新的 MCP 服务器配置。
-
-**请求体:**
 
 ```json
 {
@@ -686,121 +290,11 @@ GET /api/system/metrics
 }
 ```
 
-**响应示例:**
+### 测试服务器配置
 
-```json
-{
-  "success": true,
-  "data": {
-    "server": {
-      "id": "git-server",
-      "name": "Git 服务器",
-      "type": "stdio",
-      "status": "disconnected",
-      "config": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-git"]
-      }
-    }
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
+```http
+POST /api/servers/test
 ```
-
-### 更新服务器
-
-**PUT** `/api/servers/:id`
-
-更新现有服务器的配置。
-
-**路径参数:**
-
-- `id` (字符串): 服务器 ID
-
-**请求体:**
-
-```json
-{
-  "name": "Git 服务器（更新）",
-  "config": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-git", "--verbose"]
-  }
-}
-```
-
-### 删除服务器
-
-**DELETE** `/api/servers/:id`
-
-删除服务器配置。
-
-**路径参数:**
-
-- `id` (字符串): 服务器 ID
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "message": "服务器已删除",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 连接服务器
-
-**POST** `/api/servers/:id/connect`
-
-连接到指定的 MCP 服务器。
-
-**路径参数:**
-
-- `id` (字符串): 服务器 ID
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "status": "connected",
-    "tools": ["read_file", "write_file", "list_directory"]
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 断开服务器
-
-**POST** `/api/servers/:id/disconnect`
-
-断开与 MCP 服务器的连接。
-
-**路径参数:**
-
-- `id` (字符串): 服务器 ID
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "status": "disconnected"
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 测试服务器连接
-
-**POST** `/api/servers/test`
-
-测试服务器配置是否有效。
-
-**请求体:**
 
 ```json
 {
@@ -811,796 +305,294 @@ GET /api/system/metrics
 }
 ```
 
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "valid": true,
-    "tools": ["read_file", "write_file"],
-    "testDuration": 1234
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
+**响应**: `{ "data": { "valid": true, "tools": [...], "testDuration": 1234 } }`
 
 ## 工具管理 API
 
-工具管理 API 提供了工具查询、执行和监控功能。
+### 基础（`/api/tools`）
 
-### 获取工具列表
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/tools` | 工具列表（`serverId`、`groupId` 可选过滤） |
+| GET | `/api/tools/:toolName` | 工具详情 |
+| POST | `/api/tools/:toolName/execute` | 执行工具 |
 
-**GET** `/api/tools`
+### 高级（`/api/tools-admin`）
 
-获取所有可用的 MCP 工具列表。
+提供工具监控、性能分析、健康检查等管理功能，均基于内存中的执行历史。
 
-**查询参数:**
-
-- `serverId` (可选, 字符串): 按服务器 ID 过滤
-- `groupId` (可选, 字符串): 按组 ID 过滤
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "tools": [
-      {
-        "name": "read_file",
-        "description": "读取文件内容",
-        "serverId": "filesystem",
-        "serverName": "文件系统服务器",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "path": {
-              "type": "string",
-              "description": "文件路径"
-            }
-          },
-          "required": ["path"]
-        },
-        "status": "available"
-      }
-    ]
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 获取工具详情
-
-**GET** `/api/tools/:toolName`
-
-获取指定工具的详细信息。
-
-**路径参数:**
-
-- `toolName` (字符串): 工具名称
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "tool": {
-      "name": "read_file",
-      "description": "读取文件内容",
-      "serverId": "filesystem",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "文件路径"
-          }
-        },
-        "required": ["path"]
-      },
-      "examples": [
-        {
-          "description": "读取 README 文件",
-          "arguments": {
-            "path": "/workspace/README.md"
-          }
-        }
-      ]
-    }
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/tools-admin/history` | 执行历史（`limit`/`offset`/`toolName`/`serverId`/`groupId`） |
+| GET | `/api/tools-admin/monitoring` | 工具状态监控（按服务器分组） |
+| GET | `/api/tools-admin/health` | 工具健康检查（含错误率、最近错误） |
+| GET | `/api/tools-admin/performance` | 性能分析（`timeRange`：`1h`/`6h`/`24h`/`7d`，含 p50/p95/p99） |
+| GET | `/api/tools-admin/errors` | 错误日志与汇总（Top 20 错误） |
+| GET | `/api/tools-admin/stats` | 执行统计（Top 10 工具） |
 
 ### 执行工具
 
-**POST** `/api/tools/:toolName/execute`
-
-执行指定的 MCP 工具。
-
-**路径参数:**
-
-- `toolName` (字符串): 工具名称
-
-**请求体:**
+```http
+POST /api/tools/:toolName/execute
+```
 
 ```json
 {
   "serverId": "filesystem",
-  "arguments": {
-    "path": "/workspace/README.md"
-  }
+  "arguments": { "path": "/workspace/README.md" }
 }
 ```
 
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "result": {
-      "content": [
-        {
-          "type": "text",
-          "text": "# MCP Knot\n\n..."
-        }
-      ],
-      "isError": false
-    },
-    "executionTime": 45
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
+**响应**: `data.result.content[]`、`data.executionTime`。
 
 ## 配置管理 API
 
-配置管理 API 提供了系统配置的查询、更新、验证和备份功能。
-
-### 获取配置
-
-**GET** `/api/config`
-
-获取当前系统配置。
-
-**查询参数:**
-
-- `category` (可选, 字符串): 配置分类 (`system`, `servers`, `groups`, `auth`)
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "config": {
-      "system": {
-        "server": {
-          "port": 3000,
-          "host": "0.0.0.0"
-        },
-        "logging": {
-          "level": "info"
-        }
-      }
-    }
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/config` | 获取配置（`category`：`system`/`servers`/`groups`/`auth`） |
+| PUT | `/api/config` | 更新配置 |
+| POST | `/api/config/validate` | 验证配置 |
+| GET | `/api/config/history` | 配置变更历史（`limit`） |
+| POST | `/api/config/backup` | 创建备份 |
+| POST | `/api/config/restore` | 从备份恢复 |
 
 ### 更新配置
 
-**PUT** `/api/config`
+```http
+PUT /api/config
+```
 
-更新系统配置。
+```json
+{ "category": "system", "config": { "logging": { "level": "debug" } } }
+```
 
-**请求体:**
+### 备份/恢复
+
+```json
+// POST /api/config/backup
+{ "description": "部署前备份" }
+// 响应: data.backup { id, timestamp, description, path }
+
+// POST /api/config/restore
+{ "backupId": "backup_123" }
+```
+
+## 仪表板 API（`/api/dashboard`）
+
+主要端点（均需 JWT）：
+
+| 路径 | 说明 |
+| --- | --- |
+| `/api/dashboard/stats` | 系统概览统计 |
+| `/api/dashboard/health`、`/health-detailed` | 系统健康 |
+| `/api/dashboard/logs`（GET/DELETE） | 系统日志（`limit`/`level`/`since`） |
+| `/api/dashboard/activities` | 最近活动 |
+| `/api/dashboard/performance` | 性能概览 |
+| `/api/dashboard/system-info` | **系统信息**（版本、平台、运行时、特性、限制） |
+| `/api/dashboard/memory`、`/memory/trend`、`/memory/snapshot`、`/memory/gc` | 内存监控与管理 |
+| `/api/dashboard/resources` | 资源使用 |
+| `/api/dashboard/events`、`/sse-stats` | 事件与 SSE 统计 |
+| `/api/dashboard/test-alert`、`/test-tool-execution`、`/test-server-status`、`/add-log` | 测试/注入端点 |
+
+> 旧文档的 `/api/system/info`、`/api/system/metrics` **不存在**，实际为 `/api/dashboard/system-info` 等。
+
+### 系统信息
+
+```http
+GET /api/dashboard/system-info
+```
+
+**响应**:
 
 ```json
 {
-  "category": "system",
-  "config": {
-    "logging": {
-      "level": "debug"
-    }
-  }
+  "version": "1.0.0",
+  "nodeVersion": "20.0.0",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "uptime": 86400,
+  "environment": "production",
+  "features": { "groupRouting": true, "cliSupport": true, "metricsCollection": true },
+  "limits": { "maxConnections": 100, "requestTimeout": 30000, "maxRequestSize": "10MB" }
 }
 ```
 
-**响应示例:**
+### 内存
 
-```json
-{
-  "success": true,
-  "message": "配置已更新",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
+```http
+GET /api/dashboard/memory       # 当前内存
+GET /api/dashboard/memory/trend # 内存趋势
+POST /api/dashboard/memory/gc   # 触发 GC
+POST /api/dashboard/memory/snapshot  # 保存快照
 ```
 
-### 验证配置
+## 调试 API（`/api/debug`）
 
-**POST** `/api/config/validate`
-
-验证配置的有效性。
-
-**请求体:**
-
-```json
-{
-  "category": "servers",
-  "config": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
-    }
-  }
-}
-```
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "valid": true,
-    "errors": [],
-    "warnings": []
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 获取配置历史
-
-**GET** `/api/config/history`
-
-获取配置变更历史。
-
-**查询参数:**
-
-- `limit` (可选, 数字): 返回的历史记录数量，默认 50
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "history": [
-      {
-        "id": "hist_123",
-        "timestamp": "2024-01-15T10:30:00Z",
-        "user": "admin",
-        "category": "system",
-        "action": "update",
-        "changes": {
-          "logging.level": {
-            "from": "info",
-            "to": "debug"
-          }
-        }
-      }
-    ]
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 创建配置备份
-
-**POST** `/api/config/backup`
-
-创建配置备份。
-
-**请求体:**
-
-```json
-{
-  "description": "部署前备份"
-}
-```
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "backup": {
-      "id": "backup_123",
-      "timestamp": "2024-01-15T10:30:00Z",
-      "description": "部署前备份",
-      "path": "/config/.backups/backup_20240115_103000.json"
-    }
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### 恢复配置
-
-**POST** `/api/config/restore`
-
-从备份恢复配置。
-
-**请求体:**
-
-```json
-{
-  "backupId": "backup_123"
-}
-```
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "message": "配置已恢复",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-## 仪表板 API
-
-仪表板 API 提供系统概览、统计信息和实时监控功能。
-
-### 获取仪表板统计
-
-**GET** `/api/dashboard/stats`
-
-获取系统概览统计信息。
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "overview": {
-      "totalServers": 5,
-      "connectedServers": 4,
-      "totalTools": 23,
-      "totalGroups": 3
-    },
-    "recentActivity": [
-      {
-        "id": "act_123",
-        "type": "server_connected",
-        "message": "服务器 filesystem 已连接",
-        "timestamp": "2024-01-15T10:30:00Z",
-        "severity": "info"
-      }
-    ],
-    "systemHealth": {
-      "status": "healthy",
-      "issues": []
-    }
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-### SSE 事件流
-
-**GET** `/api/events`
-
-建立 Server-Sent Events 连接以接收实时事件。
-
-**事件类型:**
-
-- `server_status`: 服务器状态变更
-- `tool_execution`: 工具执行事件
-- `system_alert`: 系统告警
-
-**事件示例:**
-
-```
-event: server_status
-data: {"serverId":"filesystem","status":"connected","timestamp":"2024-01-15T10:30:00Z"}
-
-event: tool_execution
-data: {"toolName":"read_file","serverId":"filesystem","success":true,"executionTime":45}
-```
-
-### 获取系统日志
-
-**GET** `/api/dashboard/logs`
-
-获取系统日志。
-
-**查询参数:**
-
-- `limit` (可选, 数字): 返回的日志条数，默认 100
-- `level` (可选, 字符串): 日志级别过滤 (`debug`, `info`, `warn`, `error`)
-- `since` (可选, 字符串): 起始时间 (ISO 8601 格式)
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "logs": [
-      {
-        "timestamp": "2024-01-15T10:30:00Z",
-        "level": "info",
-        "message": "服务器已连接",
-        "serverId": "filesystem",
-        "metadata": {}
-      }
-    ],
-    "total": 1234,
-    "hasMore": true
-  },
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-## 调试工具 API
-
-调试工具 API 提供了 MCP 协议监控、工具测试、性能分析和错误诊断功能，帮助开发者和系统管理员调试和优化 MCP 服务。
-
-### 获取 MCP 协议消息
-
-**GET** `/api/debug/mcp-messages`
-
-获取跟踪的 MCP 协议消息列表，用于调试和监控 MCP 协议交互。
-
-**查询参数:**
-
-- `limit` (可选, 数字): 返回消息的最大数量，默认为 50
-- `serverId` (可选, 字符串): 按服务器 ID 过滤消息
-- `type` (可选, 字符串): 按消息类型过滤 ('request', 'response', 'notification')
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "messages": [
-      {
-        "id": "1640995200000-abc123",
-        "timestamp": "2024-01-01T00:00:00.000Z",
-        "serverId": "time-mcp",
-        "type": "request",
-        "method": "callTool",
-        "content": {
-          "name": "get_current_time",
-          "arguments": {}
-        }
-      }
-    ]
-  },
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
-```
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/debug/mcp-messages` | MCP 协议消息（`limit`/`serverId`/`type`） |
+| POST | `/api/debug/tool-test` | 测试工具执行 |
+| GET | `/api/debug/performance-stats` | 性能统计 |
+| GET | `/api/debug/error-analysis` | 错误模式分析 |
 
 ### 测试工具执行
 
-**POST** `/api/debug/tool-test`
-
-测试工具执行并获取详细的执行结果和性能指标。
-
-**请求体:**
+```http
+POST /api/debug/tool-test
+```
 
 ```json
 {
   "toolName": "get_current_time",
-  "serverId": "time-mcp", // 可选
-  "groupId": "default", // 可选
-  "arguments": {
-    // 可选
-    "format": "ISO"
-  }
+  "serverId": "time-mcp",
+  "groupId": "default",
+  "arguments": { "format": "ISO" }
 }
 ```
 
-**响应示例:**
+**响应**: `data.result.content[]`、`data.executionTime`。
 
-```json
-{
-  "success": true,
-  "data": {
-    "toolName": "get_current_time",
-    "serverId": "time-mcp",
-    "groupId": "default",
-    "arguments": {
-      "format": "ISO"
-    },
-    "result": {
-      "content": [
-        {
-          "type": "text",
-          "text": "2024-01-01T00:00:00.000Z"
-        }
-      ],
-      "isError": false
-    },
-    "executionTime": 45
-  },
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
+## 性能监控 API（`/api/performance`）
+
+全局性能指标（由性能中间件采集）。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/performance/stats` | 统计（`timeWindow`） |
+| GET | `/api/performance/stats/by-endpoint` | 按端点分组统计 |
+| GET | `/api/performance/slow-requests` | 慢请求（`threshold`，默认 1000ms） |
+| GET | `/api/performance/recent-errors` | 最近错误（`limit`，默认 10） |
+| GET | `/api/performance/metrics` | 所有指标 |
+| DELETE | `/api/performance/metrics` | 清除指标 |
+| GET | `/api/performance/report` | 综合报告（聚合上述） |
+
+## API 转 MCP（`/api/api-to-mcp`）
+
+将外部 HTTP API 配置为 MCP 工具。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/api-to-mcp/configs` | 配置列表 |
+| POST | `/api/api-to-mcp/configs` | 创建配置 |
+| GET | `/api/api-to-mcp/configs/:id` | 配置详情 |
+| PUT | `/api/api-to-mcp/configs/:id` | 更新配置 |
+| DELETE | `/api/api-to-mcp/configs/:id` | 删除配置 |
+| POST | `/api/api-to-mcp/configs/:id/test` | 测试配置（触发出站调用） |
+
+## OAuth（`/api/oauth` 与 `/.well-known/*`）
+
+内置授权服务器（AS）与资源服务器（RS）元数据。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/oauth/token` | Token 端点（`grant_type=client_credentials`，form 编码） |
+| GET | `/api/oauth/jwks` | JWK Set 公钥（RFC7517） |
+| GET | `/.well-known/oauth-protected-resource` | Protected Resource metadata（RFC9728） |
+| GET | `/.well-known/oauth-authorization-server` | AS metadata（RFC8414） |
+| GET | `/.well-known/oauth-protected-resource/:group/mcp` | 组级 RS metadata |
+
+### 获取 Token
+
+```bash
+curl -X POST http://localhost:8181/api/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials&client_id=CLIENT_ID&client_secret=SECRET&scope=tools&resource=development"
 ```
 
-### 获取性能统计
+## 系统健康检查
 
-**GET** `/api/debug/performance-stats`
-
-获取系统性能统计信息，包括请求量、响应时间和错误率。
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "stats": {
-      "totalRequests": 127,
-      "averageResponseTime": 52,
-      "errorRate": 2.3,
-      "topTools": [
-        {
-          "name": "get_current_time",
-          "calls": 45,
-          "avgTime": 48
-        },
-        {
-          "name": "calculate_sum",
-          "calls": 32,
-          "avgTime": 65
-        }
-      ]
-    }
-  },
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
+```http
+GET /health
 ```
 
-### 错误分析
-
-**GET** `/api/debug/error-analysis`
-
-分析系统中的错误模式，识别常见的错误类型和问题。
-
-**响应示例:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "errors": [
-      {
-        "id": "1640995200000-def456",
-        "timestamp": "2024-01-01T00:00:00.000Z",
-        "serverId": "calculator-mcp",
-        "type": "response",
-        "method": "callTool",
-        "content": {
-          "isError": true,
-          "error": "Invalid input: expected number, got string"
-        }
-      }
-    ],
-    "analysis": {
-      "totalErrors": 3,
-      "errorRate": 2.3,
-      "mostCommonErrors": {
-        "Invalid input: expected number, got string": 2,
-        "Server timeout": 1
-      },
-      "recentErrors": [
-        // 最近的错误消息数组
-      ]
-    }
-  },
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
-```
+**响应**: `status`、`timestamp`、`version`、`uptime`、各服务健康度、基础指标。
 
 ## 错误响应
 
-所有 API 端点在出错时返回标准错误格式：
+所有 API 出错时返回标准格式：
 
 ```json
 {
-  "error": "ERROR_CODE",
-  "message": "人类可读的错误信息",
-  "code": 400,
-  "details": {
-    "field": "具体的错误详情"
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "人类可读的错误信息",
+    "details": ["具体错误详情"]
   },
-  "timestamp": "2024-01-15T10:30:00Z",
   "requestId": "req_123456789"
 }
 ```
 
+> JSON-RPC 端点（`/:group/mcp`）的错误使用 JSON-RPC 错误体：`{ "jsonrpc": "2.0", "error": { "code": -32602, ... }, "id": null }`。
+
 ### 常见错误代码
 
-| 错误代码                     | HTTP 状态码 | 描述                   |
-| ---------------------------- | ----------- | ---------------------- |
-| `AUTH_LOGIN_FAILED`          | 401         | 登录失败               |
-| `AUTH_INVALID_CREDENTIALS`   | 401         | 用户名或密码错误       |
-| `AUTH_ACCOUNT_LOCKED`        | 423         | 账户被锁定             |
-| `AUTH_MISSING_TOKEN`         | 401         | 缺少认证令牌           |
-| `AUTH_INVALID_TOKEN`         | 401         | 无效的认证令牌         |
-| `AUTH_TOKEN_EXPIRED`         | 401         | 认证令牌已过期         |
-| `AUTH_TOKEN_REVOKED`         | 401         | 认证令牌已被撤销       |
-| `AUTH_INVALID_REFRESH_TOKEN` | 401         | 无效的刷新令牌         |
-| `AUTH_USER_NOT_FOUND`        | 404         | 用户不存在             |
-| `GROUP_NOT_FOUND`            | 404         | 指定的组不存在         |
-| `TOOL_NOT_FOUND`             | 404         | 指定的工具不存在       |
-| `TOOL_NOT_ALLOWED`           | 403         | 工具不在组的允许列表中 |
-| `INVALID_VALIDATION_KEY`     | 401         | 验证密钥无效或缺失     |
-| `INVALID_ARGUMENTS`          | 400         | 工具参数无效           |
-| `SERVER_ERROR`               | 500         | MCP 服务器内部错误     |
-| `SERVICE_UNAVAILABLE`        | 503         | 服务不可用             |
-| `TIMEOUT`                    | 408         | 请求超时               |
-| `RATE_LIMIT_EXCEEDED`        | 429         | 请求频率超限           |
+| 错误代码 | HTTP | 描述 |
+| --- | --- | --- |
+| `AUTH_LOGIN_FAILED` | 401 | 登录失败 |
+| `AUTH_INVALID_CREDENTIALS` | 401 | 用户名或密码错误 |
+| `AUTH_MISSING_TOKEN` / `AUTH_INVALID_TOKEN` / `AUTH_TOKEN_EXPIRED` | 401 | 令牌相关 |
+| `AUTH_ACCOUNT_LOCKED` | 423 | 账户被锁定 |
+| `GROUP_NOT_FOUND` | 404 | 指定的组不存在 |
+| `TOOL_NOT_FOUND` | 404 | 指定的工具不存在 |
+| `TOOL_NOT_ALLOWED` | 403 | 工具不在组的允许列表中 |
+| `INVALID_VALIDATION_KEY` | 401 | 验证密钥无效或缺失 |
+| `INVALID_ARGUMENTS` | 400 | 工具参数无效 |
+| `SERVER_ERROR` | 500 | MCP 服务器内部错误 |
+| `SERVICE_UNAVAILABLE` | 503 | 服务不可用 |
+| `TIMEOUT` | 408 | 请求超时 |
+| `RATE_LIMIT_EXCEEDED` | 429 | 请求频率超限 |
 
 ## 速率限制
 
-API 实施速率限制以防止滥用：
+- 全局：每分钟 1000 请求
+- 组：每组每分钟 100 请求
+- 工具调用：每工具每分钟 50 次
 
-- **全局限制**: 每分钟 1000 请求
-- **组限制**: 每个组每分钟 100 请求
-- **工具调用限制**: 每个工具每分钟 50 次调用
-
-速率限制信息在响应头中返回：
-
-```http
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 999
-X-RateLimit-Reset: 1642248000
-```
+响应头：`X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`。
 
 ## 分页
 
-支持分页的端点使用以下参数：
-
-- `limit` (number): 每页项目数，默认 50，最大 1000
-- `offset` (number): 偏移量，默认 0
-
-分页信息在响应中返回：
-
-```json
-{
-  "data": [...],
-  "pagination": {
-    "limit": 50,
-    "offset": 0,
-    "total": 156,
-    "hasMore": true
-  }
-}
-```
-
-## WebSocket 支持
-
-某些端点支持 WebSocket 连接以获取实时更新：
-
-### 实时日志流
-
-```javascript
-const ws = new WebSocket('ws://localhost:8181/api/groups/development/logs/stream');
-
-ws.onmessage = function (event) {
-  const log = JSON.parse(event.data);
-  console.log('新日志:', log);
-};
-```
-
-### 实时指标流
-
-```javascript
-const ws = new WebSocket('ws://localhost:8181/api/system/metrics/stream');
-
-ws.onmessage = function (event) {
-  const metrics = JSON.parse(event.data);
-  console.log('系统指标:', metrics);
-};
-```
-
-## SDK 和客户端库
-
-### JavaScript/TypeScript
-
-```bash
-npm install @mcp-core/mcp-knot-client
-```
-
-```typescript
-import { McpKnotClient } from '@mcp-core/mcp-knot-client';
-
-const client = new McpKnotClient('http://localhost:8181');
-
-// 列出工具
-const tools = await client.listTools('development');
-
-// 调用工具
-const result = await client.callTool('development', 'read_file', {
-  path: '/workspace/README.md',
-});
-```
-
-### Python
-
-```bash
-pip install mcp-knot-client
-```
-
-```python
-from mcp_knot_client import McpKnotClient
-
-client = McpKnotClient('http://localhost:8181')
-
-# 列出工具
-tools = client.list_tools('development')
-
-# 调用工具
-result = client.call_tool('development', 'read_file', {
-    'path': '/workspace/README.md'
-})
-```
+支持分页的端点使用 `limit`（默认 50，最大 1000）与 `offset`（默认 0）。响应中包含 `pagination: { total, limit, offset, hasMore }`。
 
 ## 示例用法
 
-### 基本工具调用
+### MCP 工具调用
 
 ```bash
-# 列出所有工具
-curl http://localhost:8181/mcp/list_tools
-
-# 调用文件读取工具
-curl -X POST http://localhost:8181/mcp/call_tool \
+# 列出工具
+curl -X POST http://localhost:8181/development/mcp \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "read_file",
-    "arguments": {
-      "path": "/workspace/package.json"
-    }
-  }'
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+
+# 调用工具（命名空间 <serverId>_<toolName>）
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"filesystem_read_file","arguments":{"path":"/workspace/README.md"}}}'
 ```
 
-### 组路由使用
+### 管理与监控
 
 ```bash
-# 列出开发组的工具
-curl http://localhost:8181/development/mcp/list_tools
-
-# 在研究组中搜索
-curl -X POST http://localhost:8181/research/mcp/call_tool \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "search",
-    "arguments": {
-      "query": "MCP protocol documentation"
-    }
-  }'
-```
-
-### 管理和监控
-
-```bash
-# 检查系统健康
+# 系统健康
 curl http://localhost:8181/health
 
-# 获取组统计
-curl http://localhost:8181/api/groups/development/stats
+# 系统信息
+curl http://localhost:8181/api/dashboard/system-info
 
-# 查看组日志
-curl "http://localhost:8181/api/groups/development/logs?limit=10&level=error"
+# 性能报告
+curl http://localhost:8181/api/performance/report
+
+# 组健康检查
+curl http://localhost:8181/api/groups/development/health
 ```
 
 ## 相关文档
 
 - [CLI 使用指南](CLI_USAGE.md)
 - [组路由指南](GROUP_ROUTING.md)
-- [迁移指南](MIGRATION.md)
 - [故障排除指南](TROUBLESHOOTING.md)
+- [Web UI 指南](WEB_UI_GUIDE.md)
+- [部署指南](DEPLOYMENT.md)
