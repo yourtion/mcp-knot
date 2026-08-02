@@ -30,3 +30,11 @@ export {
 } from './model/normalized.js';
 
 export { normalizeError, toJsonRpcError, UnifiedErrorNormalizer } from './errors/normalizer.js';
+
+export {
+  InboundProtocolAdapter,
+  resolveInboundLegacyMode,
+  toNormalizedRequest,
+} from './inbound/adapter.js';
+export type { TransportKind } from './inbound/adapter.js';
+export { createLegacyFallback } from './inbound/legacy-fallback.js';
