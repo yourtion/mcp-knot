@@ -22,7 +22,7 @@
 | 决策           | 选择                                                                                          | 理由                                                  |
 | -------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | 迭代主线       | 全量跟进 MCP 2026-07-28，分解为 P1-P6 分阶段交付                                              | 一次性做会失控；分解后每个子项目可独立 spec/计划/实现 |
-| 总体兼容性策略 | 激进升级，只支持新协议（入站方向）                                                            | 项目 0.0.1，趁早切干净                                |
+| 总体兼容性策略 | 默认全开（modern + legacy），可配置收窄                                                        | 修订自 P1 的"激进升级"；P7 引入协议兼容层，趁早切干净的同时不丢存量客户端 |
 | 出站方向策略   | 保留兼容（`auto` 模式 + 保留 SSE 连接）                                                       | 外部 server 生态参差不齐，网关价值在于能连各种 server |
 | OAuth 范围     | 不自建完整 IAM；入站做 Protected Resource，出站接 `AuthenticationStrategy`，Web 登录可接 OIDC | 审计报告建议接 Keycloak/Entra/OIDC，不自造            |
 | 社交登录       | 纳入考虑（属 Web UI 范畴，与 MCP 协议解耦）                                                   | 偏用户体验                                            |
@@ -39,8 +39,9 @@
 | **P4** | `ttlMs`/`cacheScope` 缓存语义        | ✅ 完成                   | ✅ **实现完成**（已合并 main，merge `a03f430`）                       | `2026-07-26-p4-cache-semantics-design.md`   |
 | P5     | `subscriptions/listen` + MRTR        | ✅ 完成                   | ✅ **实现完成**（分支 `feat/p5-subscriptions-mrtr`，待合并 main）       | `2026-07-30-p5-subscriptions-mrtr-design.md` |
 | **P6** | OTel trace context + 弃用项清理      | ✅ 完成                   | ✅ **实现完成**（已合并 main，merge `6a2f11b`）                       | `2026-07-28-p6-otel-deprecation-design.md`  |
+| **P7** | 协议兼容层（双向 era 翻译 + 入站默认全开） | ✅ 完成                   | ✅ **实现完成**（分支 `feat/p7-protocol-compat-layer`，待合并 main）   | `2026-08-02-protocol-compat-layer-design.md` |
 
-**推荐主线顺序**：P1 → P4 → P2 → P3 → P6 → P5
+**推荐主线顺序**：P1 → P4 → P2 → P3 → P6 → P5 → P7
 
 > **2026-07-25 协议特性审查结论**：对照 2026-07-28 完整特性集，P1-P6 覆盖了协议主干（传输无状态化、Authorization、缓存语义、可观测性、弃用清理）。有 2 个新特性经评估**显式不纳入本轮范围**（见 [§未采纳/待评估协议特性](#未采纳待评估协议特性)）：MCP Apps（server-rendered UI）与 `x-mcp-header`/`Mcp-Param-` 透传（需确认 SDK 是否自动处理）。其余特性层面的覆盖补充已并入对应子项目（P3/P4/P6）。
 
@@ -50,7 +51,8 @@
 P1（传输层）────────┬──→ P2（入站 OAuth）
                    ├──→ P4（缓存语义，弱依赖：结果字段）
                    ├──→ P5（subscriptions/listen，强依赖）
-                   └──→ P6（OTel/弃用清理，无依赖可穿插）
+                   ├──→ P6（OTel/弃用清理，无依赖可穿插）
+                   └──→ P7（协议兼容层，叠加于 P1 之上：修订入站策略）
 
 P3（出站 OAuth）──── 无依赖，可独立做
 ```
@@ -58,6 +60,7 @@ P3（出站 OAuth）──── 无依赖，可独立做
 - P1 是地基，解锁 P2/P4/P5。
 - P3 与 P1 解耦（改的是 `api-to-mcp` 子系统，不碰传输层），可独立做。
 - P6 无依赖，任何时候可穿插。
+- P7 叠加于 P1 之上（不推翻）：P1 的激进入站策略由 P7 修订为"默认全开可配置"，并新增双向 era 翻译、归一化模型与统一错误。
 
 ---
 
@@ -316,8 +319,9 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 ## 跟踪机制
 
 - 每个子项目完成后，回本 spec 更新"实现进度"列和"详细 spec"链接。
-- 主线顺序（P1 → P4 → P2 → P3 → P6 → P5）是推荐，可根据实际情况调整。
+- 主线顺序（P1 → P4 → P2 → P3 → P6 → P5 → P7）是推荐，可根据实际情况调整。
 - P5 已实现完成（分支 `feat/p5-subscriptions-mrtr`，待合并 main）。原推迟理由与复查触发条件见上文「推迟理由（已作废）」/「复查触发条件」。
+- P7 已实现完成（分支 `feat/p7-protocol-compat-layer`，待合并 main）。P7 叠加于 P1 之上：把 P1 的"激进入站"修订为"默认全开可配置"，并新增协议兼容层（双向 era 翻译、归一化模型、统一错误）。详见 [`2026-08-02-protocol-compat-layer-design.md`](./2026-08-02-protocol-compat-layer-design.md)。
 
 ## 实现进度跟踪
 
@@ -344,6 +348,7 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 | P3     | 已合并 main（merge `5865277`） | `ff482e3` OAuthStrategy 实现（client_credentials + refresh + cache）；`f98d7c5` AuthenticationManager 注册；`5194ed2` e2e 骨架；`6de3416` e2e 全链路激活 | ✅ **实现完成**（typecheck + 1783 tests 全绿；e2e 已激活，经 `/api/api-to-mcp/configs/:id/test` 触发，fixture schema 已修） |
 | P6     | 已合并 main（merge `6a2f11b`） | `75c2b4e` TraceContextStore；`3cbb207` 出站 callTool 注入 \_meta；`c94d68c` 入站 handler 提取（mcpReq.\_meta）；`a7d125b` 集成测试                       | ✅ **实现完成**（typecheck + 542 unit tests 全绿，含 22 个 P6 新测试；弃用项/日志已核实干净）                               |
 | P5     | `feat/p5-subscriptions-mrtr`（待合并 main） | `a3ccb26` SDK beta.5→2.0.0 GA 升级；`cf20273`/`1b41a45` UpstreamChangeDetector + listChanged handler；`09098fd`/`8274335` Fanout + subscriptions/listen 接线 + e2e；`1c332d8` MrtrRelayService；`8724ab3`/`13fde56` 重试上下文透传 + handler 中转；`6953ab4` factory 注入 verify；`be6eeb5` MRTR e2e；Task 10 配置集成 + 文档 | ✅ **实现完成**（分支待合并；typecheck + 603 unit/152 share/33+16 e2e 全绿，含 2 个 P5 e2e：subscriptions + MRTR） |
+| P7     | `feat/p7-protocol-compat-layer`（待合并 main） | `def2240` 包脚手架；`d1a81a0` CompatibilityOptions；`633c5d6` 归一化模型；`e80a900` UnifiedErrorNormalizer；`e3c4b96` InboundProtocolAdapter；`5487179` OutboundProtocolAdapter；`fbfc5df` HubMrtrCodec；`033fd71` SystemConfig 接入；`8bcff1d` backend 入站 legacy shim + 出站 era 探测；`7c31257` CLI flag；`3e36b48` fixture；`499d9cd` 跨 era 桥接 + legacy 入站 e2e；`7f94cf0`/`a73b0ac` conformance TCK 接入 | ✅ **实现完成**（分支待合并；typecheck + 全量测试全绿，含跨 era 桥接 + legacy 入站 e2e + conformance TCK 自包含） |
 
 ## 跨子项目共享待办
 
@@ -373,7 +378,7 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SDK v2 还在 beta，可能有 breaking change | 跟踪 GA；版本用 codemod 输出而非手钉。**复查节点**：每次启动新子项目前查 `@modelcontextprotocol/sdk` releases；GA 发布后在 changeset 里把 `2.0.0-beta.5` 升正式版（当前锁版本，下次复查默认 2026-08-25） |
 | 子项目间隐性依赖未识别                   | 每个子项目 brainstorming 时复查与本 spec 的依赖声明 + [跨子项目共享待办](#跨子项目共享待办) 表                                                                                                           |
-| 激进升级导致与主流客户端不兼容           | P1 验证 Claude Desktop 等对新协议的支持情况；必要时回退某项决策                                                                                                                                          |
+| 协议演进导致与主流客户端不兼容           | ~~P1 激进入站~~ **已由 P7 修订**：入站默认全开（modern + legacy），可配置收窄；P1 验证 Claude Desktop 等对新协议的支持情况，必要时再调整 CompatibilityOptions                                                                                                                                          |
 | 范围蔓延（子项目越做越大）               | 每个子项目独立 spec，严格按 spec 范围控制；相邻问题归入 [跨子项目共享待办](#跨子项目共享待办) 而非塞进当前子项目                                                                                         |
 | 出站保留 SSE 连接成为长期维护负担        | **退出条件**：当 Hub 接入的外部 MCP server 普遍只支持 Streamable HTTP（可统计配置中 SSE 型 server 占比），且主流 SDK 客户端弃用 `SSEClientTransport` 时，移除出站 SSE 支持。未达条件前保留               |
 

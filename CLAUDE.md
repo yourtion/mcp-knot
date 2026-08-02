@@ -44,8 +44,9 @@ The project follows a modular architecture with clear separation of concerns:
 1. **Core Package** (`packages/core/`) - Provides the foundational MCP service management, connection handling, and tool execution capabilities
 2. **API Package** (`backend/`) - Web API server built with Hono that exposes HTTP/SSE endpoints
 3. **CLI Package** (`packages/cli/`) - Standalone MCP server that communicates via stdin/stdout
-4. **Share Package** (`packages/share/`) - Shared types and utilities
-5. **Frontend** (`frontend/`) - Vue.js web interface for management
+4. **Protocol Package** (`packages/protocol/`) - Protocol compatibility layer (`@mcp-core/mcp-knot-protocol`): dual-era (modern 2026-07-28 / legacy) translation, normalized request/call/result models, unified error normalizer, and MRTR state codec
+5. **Share Package** (`packages/share/`) - Shared types and utilities
+6. **Frontend** (`frontend/`) - Vue.js web interface for management
 
 ### Key Design Patterns
 
@@ -80,6 +81,14 @@ packages/
 │   │   ├── services/       # Core services (MCP, tools, connections)
 │   │   ├── types/          # Type definitions
 │   │   └── utils/          # Utility functions
+├── protocol/               # @mcp-core/mcp-knot-protocol
+│   └── src/
+│       ├── config.ts       # CompatibilityOptions schema + defaults
+│       ├── inbound/        # InboundProtocolAdapter (legacy mode resolution)
+│       ├── outbound/       # OutboundProtocolAdapter (era translation)
+│       ├── model/          # Normalized request/call/result models
+│       ├── mrtr/           # HubMrtrCodec (cross-era requestState mint/verify)
+│       └── errors/         # UnifiedErrorNormalizer
 ├── cli/                     # @mcp-core/mcp-knot-cli
 │   ├── src/
 │   │   ├── config/         # CLI-specific configuration
@@ -163,8 +172,9 @@ Testing conventions:
 The project uses workspace dependencies with clear boundaries:
 
 - **core** depends on **share**
-- **cli** depends on **core** and **share**
-- **api** depends on **core** and **share**
+- **protocol** (`@mcp-core/mcp-knot-protocol`) depends on **share**; provides dual-era (modern 2026-07-28 / legacy) protocol translation consumed by **api** and **cli**
+- **cli** depends on **core**, **protocol**, and **share**
+- **api** depends on **core**, **protocol**, and **share**
 - **frontend** depends on **share**
 
 This ensures proper dependency management and avoids circular dependencies.

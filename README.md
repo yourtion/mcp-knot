@@ -27,6 +27,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 - **`@mcp-core/mcp-knot-core`** - Core MCP service management, connection handling, and tool execution
 - **`@mcp-core/mcp-knot-api`** - Web API server with group-based routing and HTTP endpoints
 - **`@mcp-core/mcp-knot-cli`** - Command-line MCP server for standalone tool aggregation
+- **`@mcp-core/mcp-knot-protocol`** - Protocol compatibility layer: dual-era (modern/legacy) translation, normalized models, unified errors
 - **`@mcp-core/mcp-knot-share`** - Shared types and utilities across packages
 - **`@mcp-core/mcp-knot-web`** - Vue.js frontend interface (optional)
 
@@ -38,6 +39,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 ├── packages/
 │   ├── core/            # Core MCP logic (@mcp-core/mcp-knot-core)
 │   ├── cli/             # CLI package (@mcp-core/mcp-knot-cli)
+│   ├── protocol/        # Protocol compatibility layer (@mcp-core/mcp-knot-protocol)
 │   └── share/           # Shared types (@mcp-core/mcp-knot-share)
 └── docs/                # Documentation
 ```
@@ -372,11 +374,16 @@ curl -X POST http://localhost:8181/research/mcp \
 
 #### Connecting with the official MCP SDK (Node)
 
-The `/:group/mcp` endpoint enforces the modern **2026-07-28** protocol version and
-rejects legacy 2025-era handshakes (`legacy: 'reject'`). The official
-`@modelcontextprotocol/client` therefore needs **`versionNegotiation: { mode: 'auto' }`**
-to auto-negotiate the version — without it, the client defaults to `2025-11-25` and
-the handshake fails with `Unsupported protocol version`.
+The `/:group/mcp` endpoint serves the modern **2026-07-28** protocol by default,
+and — since the protocol compatibility layer (P7) — **also accepts legacy 2025-era
+clients**. Inbound compatibility defaults to **全开 (modern + legacy)**: a modern
+client negotiates via `server/discover`, while a legacy client's bare `initialize`
+handshake is still served. This is configurable (see
+[Protocol Compatibility](#protocol-compatibility)).
+
+For a modern client, the official `@modelcontextprotocol/client` should use
+**`versionNegotiation: { mode: 'auto' }`** so the SDK probes and adopts the
+server's 2026-07-28 version.
 
 ```ts
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -386,7 +393,7 @@ const client = new Client(
   { name: 'my-client', version: '1.0.0' },
   {
     capabilities: { tools: {} },
-    // Required: lets the SDK probe and adopt the server's 2026-07-28 version.
+    // Recommended: lets the SDK probe and adopt the server's 2026-07-28 version.
     versionNegotiation: { mode: 'auto' },
   },
 );
@@ -399,6 +406,26 @@ await client.callTool({ name: 'fetch_fetch', arguments: { url: 'https://example.
 Tools are namespaced as `<serverId>_<toolName>` (e.g. `fetch_fetch`,
 `context7_query-docs`) to avoid collisions across servers. Two built-in meta-tools
 (`group_status`, `list_group_tools`) are also exposed on every group endpoint.
+
+##### Protocol Compatibility
+
+Hub ships a protocol compatibility layer (`@mcp-core/mcp-knot-protocol`) that
+bridges the modern **2026-07-28** era and legacy 2025-era MCP on both directions:
+
+- **Inbound** (client → Hub): defaults to **modern + legacy** simultaneously — a
+  modern client negotiates via `server/discover`, a legacy client's bare
+  `initialize` is still served. Set `compatibility.inbound.enabled: false` (or CLI
+  `--no-legacy-inbound`) to reject legacy clients and accept only modern.
+- **Outbound** (Hub → upstream server): era is auto-probed per server; Hub
+  transparently bridges modern requests to legacy upstreams. Set
+  `compatibility.outbound.modernOnly: true` (or CLI `--modern-only-upstream`) to
+  connect only to modern upstreams.
+- **MRTR & errors**: cross-era `InputRequiredResult` (MRTR) state and protocol
+  errors are normalized into a unified shape regardless of upstream era.
+
+Defaults are intentionally permissive so existing clients keep working. The
+`compatibility` block in `system.json` is optional and partially overridable;
+omit it entirely for the default all-open behavior.
 
 ### CLI MCP Server Integration
 

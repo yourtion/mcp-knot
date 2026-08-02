@@ -1,16 +1,20 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 /**
- * MCP 协议合规端到端测试（Task 13）
+ * MCP 协议合规端到端测试（Task 12 / Task 13）
  *
- * 验证 Hub 在升级到 MCP 2026-07-28（v2）后的 4 个核心协议合规点：
+ * 验证 Hub 在升级到 MCP 2026-07-28（v2）后的 5 个核心协议合规点：
  *   1. server/discover 返回 capabilities（modern 握手真的能跑通）
  *   2. 入站激进升级（legacy: 'reject'）拒绝 2025-era initialize
- *   3. 协议转换 / 桥接（Hub 对外 StreamableHTTP，后端 mock 老 server）
- *      —— 见用例内 TODO：当前基础设施不足，标注 skip
+ *   3. 出站 era 桥接（Hub 对外 modern StreamableHTTP，后端接 2025-era legacy
+ *      upstream）—— 已实现（确定性 legacy-upstream-server.ts fixture）
  *   4. 无状态：两个互不相关的请求被独立处理（无 session 粘连）
+ *   5. 入站 legacy 客户端能连默认全开（legacy:'stateless'）的 Hub（P7 Task 9）
  *
- * 配置 / 服务器生命周期由 api-e2e 全局 setup（vitest.e2e.setup.ts）统一管理，
- * 本文件只做 console 静默等本地环境准备，不在 afterAll 清理共享状态。
+ * 用例 1/2/4 复用 api-e2e 全局 setup（vitest.e2e.setup.ts）的 HubService 单例，
+ * 仅做 console 静默等本地环境准备。用例 3 / 用例 5 因需切换 CONFIG_PATH 并拉起
+ * 专用端口 + 独立 HubService 单例，在各自 describe 的 afterAll 中完整管理共享状态
+ * （停服、还原 CONFIG_PATH、resetConfigInstances、重建原 HubService 单例），避免
+ * 污染同 worker 后续测试文件。
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
