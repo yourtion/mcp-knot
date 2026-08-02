@@ -38,3 +38,16 @@ export {
 } from './inbound/adapter.js';
 export type { TransportKind } from './inbound/adapter.js';
 export { createLegacyFallback } from './inbound/legacy-fallback.js';
+
+export {
+  OutboundProtocolAdapter,
+  translateCallForUpstream,
+  translateUpstreamResult,
+} from './outbound/adapter.js';
+export type { WireCall, ModernWireCall, LegacyWireCall } from './outbound/adapter.js';
+export { translateCallForModern, translateModernResult } from './outbound/modern-translator.js';
+export {
+  translateCallForLegacy,
+  translateLegacyResult,
+  legacyMrtrUnsupportedError,
+} from './outbound/legacy-translator.js';
