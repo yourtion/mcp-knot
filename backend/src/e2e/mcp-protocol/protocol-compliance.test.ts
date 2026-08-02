@@ -1,3 +1,4 @@
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 /**
  * MCP 协议合规端到端测试（Task 13）
  *
@@ -11,9 +12,21 @@
  * 配置 / 服务器生命周期由 api-e2e 全局 setup（vitest.e2e.setup.ts）统一管理，
  * 本文件只做 console 静默等本地环境准备，不在 afterAll 清理共享状态。
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { app } from '../../app.js';
+import {
+  createHubService,
+  setHubService,
+  shutdownCoreServiceManager,
+  shutdownHubService,
+} from '../../services/service-registry.js';
+import { getAllConfig, resetConfigInstances } from '../../utils/config.js';
+import { TestServer } from '../test-server.js';
 import {
   cleanupTestEnvironment,
   safeJsonParse,
@@ -26,6 +39,14 @@ import {
   defaultMcpTestConfig,
   ensureTestServerRunning,
 } from './mcp-test-config.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Task 11 fixture 脚本绝对路径（相对本测试文件的 fixtures 目录）
+const LEGACY_UPSTREAM_SCRIPT = join(__dirname, '..', 'fixtures', 'legacy-upstream-server.ts');
+
+// 专用端口（避开全局 api-e2e 的 3000、subscriptions 的 3060、mrtr 的 3061）
+const BRIDGE_E2E_PORT = 3062; // 用例 3：出站 era 桥接（Hub → legacy upstream）
+const INBOUND_LEGACY_PORT = 3063; // 用例 5：入站 legacy 客户端连默认全开 Hub
 
 describe('MCP 协议合规（2026-07-28 / v2）', () => {
   let restoreConsole: () => void;
@@ -169,28 +190,182 @@ describe('MCP 协议合规（2026-07-28 / v2）', () => {
   });
 
   // ------------------------------------------------------------------
-  // 用例 3：协议转换 / 桥接
+  // 用例 3：出站 era 桥接（modern 客户端 → Hub → legacy 2025-era upstream）
   //
-  // 目标：Hub 对外暴露 StreamableHTTP（2026-07-28），后端接一个只说 2025-era
-  // legacy initialize 的 mock MCP server，验证 Hub 的出站 versionNegotiation
-  // 能回退并对外仍提供 modern 协议。
+  // 目标：Hub 对外暴露 modern StreamableHTTP（2026-07-28），后端接一个确定性
+  // legacy-era 上游（Task 11 的 legacy-upstream-server.ts，serveStdio legacy:'serve'
+  // → 只跑 2025-era initialize 握手）。验证：
+  //   1. Hub 出站 versionNegotiation:{mode:'auto'} 回退到 legacy initialize，
+  //      server_manager.connectServer 成功、上游工具被发现并聚合到 default 组。
+  //   2. modern 客户端连 Hub /default/mcp，走 server/discover（modern era）。
+  //   3. 客户端 tools/list 能看到上游 echo 工具（注册名 `legacy-upstream_echo`）。
+  //   4. 客户端 tools/call 该工具，Hub 把 modern 请求桥接到 legacy 上游，
+  //      上游回执回显 content[0].text === 入参 message。
   //
-  // TODO：当前测试基础设施缺少「在 e2e 内拉起一个独立 mock MCP server 进程」
-  // 的工具（test-utils 仅支持 Hub 自身的 TestServer）。要做桥接测试需要：
-  //   1. 起一个 http server，对 initialize 返回 2024-11-05 的 InitializeResult
-  //   2. 把它写进测试 config 的 servers（指向 mock URL）
-  //   3. 用 modern 客户端连 Hub，断言能聚合到 mock 的工具
-  // 这块依赖 Task 14（出站兼容实现）完成后才有意义，先 skip 不阻塞。
+  // 自包含子进程拉起骨架（复用 mrtr.test.ts:62-138 权威模板）：mkdtempSync 建临时
+  // config 目录 → 写 group.json + mcp_server.json（command: process.execPath，
+  // args: ['--import','tsx', LEGACY_UPSTREAM_SCRIPT]）→ CONFIG_PATH + resetConfigInstances
+  // → shutdown 全局 HubService → new TestServer(DEDICATED_PORT) → start → sleep(3000)
+  // 等上游 stdio 连接 + 工具发现。afterAll 还原 CONFIG_PATH 并重建原 HubService 单例。
   // ------------------------------------------------------------------
-  describe('用例 3：协议转换 / 桥接（StreamableHTTP ↔ legacy backend）', () => {
-    it.skip('Hub 应把 legacy backend 的工具桥接成 modern 协议暴露', async () => {
-      // 占位：见上方 TODO。待 Task 14（出站兼容）落地后补全：
-      //   - 起 mock legacy MCP server（只回 initialize，版本 2024-11-05）
-      //   - 写入测试 config，让 default 组指向该 mock
-      //   - modern 客户端连 Hub /default/mcp
-      //   - 断言 listTools 能拿到 mock 注册的工具
-      expect(true).toBe(true);
+  describe('用例 3：出站 era 桥接（StreamableHTTP ↔ legacy backend）', () => {
+    // 本 describe 独立管理生命周期：专用端口 + 独立 CONFIG_PATH + HubService 单例切换。
+    // 这些字段在 beforeAll 填充，afterAll 清理。
+    let bridgeServer: TestServer | null = null;
+    let savedConfigPath3: string | undefined;
+    let tempDir3: string | null = null;
+
+    beforeAll(async () => {
+      savedConfigPath3 = process.env.CONFIG_PATH;
+
+      // shutdown 全局 HubService（api-e2e 全局 setup 在 3000 跑，单例需让位给本测试）。
+      // 同时清空 coreServiceManager 单例（service-registry 的模块级缓存）：它包装的是
+      // 旧 hub 的 ServerManager，若不清，ensureGroupMcpService → getCoreServiceManager
+      // 会复用旧 adapter（指向已关闭的旧 SM），导致 GroupMcpService 看到空连接/空工具，
+      // 即使新 hub 的 ServerManager 已正常连上 legacy 上游。新 hub 启动后
+      // getCoreServiceManager 会按当前 setHubService 单例重建 adapter。
+      const globalHub = await shutdownHubService();
+      await globalHub?.shutdown().catch(() => {});
+      await shutdownCoreServiceManager();
+
+      tempDir3 = mkdtempSync(join(tmpdir(), `mcp-knot-bridge-e2e-${process.pid}-`));
+      process.env.CONFIG_PATH = tempDir3;
+
+      writeFileSync(
+        join(tempDir3, 'group.json'),
+        JSON.stringify(
+          {
+            default: {
+              id: 'default',
+              name: '默认组',
+              description: '出站 era 桥接 e2e',
+              servers: ['legacy-upstream'],
+              tools: [],
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      // stdio 上游 = node --import tsx 运行 legacy-upstream-server.ts（确定性 2025-era）
+      writeFileSync(
+        join(tempDir3, 'mcp_server.json'),
+        JSON.stringify(
+          {
+            servers: {
+              'legacy-upstream': {
+                type: 'stdio',
+                command: process.execPath,
+                args: ['--import', 'tsx', LEGACY_UPSTREAM_SCRIPT],
+                env: {},
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      writeFileSync(
+        join(tempDir3, 'api_tools.json'),
+        JSON.stringify({ version: '1.0', tools: [] }),
+      );
+
+      resetConfigInstances();
+
+      // 关键：失效 mcp-handler-factory 模块级缓存（groupServices / groupHandlers）。
+      // 这些缓存复用旧 hub 的 GroupMcpService（绑定旧 coreServiceManager/旧上游）。
+      // 本测试复用同名 default 组，若不清缓存，请求会拿到旧 service（带旧上游工具/空连接），
+      // 即使新 hub 已连上 legacy 上游。失效后 createGroupMcpHandler 按 new config 重建。
+      const { invalidateAllGroupMcpServices } =
+        await import('../../api/mcp/mcp-handler-factory.js');
+      await invalidateAllGroupMcpServices();
+
+      bridgeServer = new TestServer(BRIDGE_E2E_PORT);
+      await bridgeServer.start();
+      // 等上游 stdio server 连接 + 工具发现（server_manager.initialize 并发连上游）
+      await sleep(3000);
+    }, 120000);
+
+    afterAll(async () => {
+      try {
+        await bridgeServer?.stop();
+      } catch {
+        // ignore
+      }
+      const myHub = await shutdownHubService();
+      await myHub?.shutdown().catch(() => {});
+
+      if (savedConfigPath3 !== undefined) {
+        process.env.CONFIG_PATH = savedConfigPath3;
+      }
+      resetConfigInstances();
+      // 重建原 HubService 单例，避免污染同 worker 后续文件（与 mrtr e2e afterAll 对称）
+      try {
+        const origConfig = await getAllConfig();
+        const restored = await createHubService({
+          servers: origConfig.mcps.servers as never,
+          groups: origConfig.groups as never,
+          apiToolsConfigPath: origConfig.apiToolsConfigPath,
+        });
+        await restored.initialize();
+        setHubService(restored);
+      } catch (error) {
+        console.warn('[bridge e2e afterAll] 重建原 HubService 失败:', error);
+      }
+
+      if (tempDir3) {
+        try {
+          rmSync(tempDir3, { recursive: true, force: true });
+        } catch {
+          // ignore
+        }
+      }
     });
+
+    it('Hub 能连 legacy upstream 并把 modern 请求桥接到其 echo 工具', async () => {
+      // modern 客户端连 Hub：走 server/discover（modern era），暴露 legacy 上游聚合的工具
+      const connection = await createMcpTestClient('bridge-e2e-client', {
+        serverPort: BRIDGE_E2E_PORT,
+        baseUrl: `http://localhost:${BRIDGE_E2E_PORT}`,
+        group: 'default',
+        mcpEndpoint: '/default/mcp',
+        timeout: 30000,
+        retries: 3,
+      });
+      const { client, transport } = connection;
+
+      try {
+        // Hub 出站走 modern（discover 成功）
+        expect(client.getProtocolEra()).toBe('modern');
+
+        // 上游 echo 工具应被聚合到 default 组（注册名 `${serverId}_${toolName}`）
+        const tools = await client.listTools();
+        const names = tools.tools.map((t) => t.name);
+        expect(names).toContain('legacy-upstream_echo');
+
+        // modern 客户端 tools/call → Hub 桥接到 legacy 上游 → 回声
+        const result = await client.callTool({
+          name: 'legacy-upstream_echo',
+          arguments: { message: 'hello-from-modern-client' },
+        });
+        const r = result as {
+          content?: Array<{ type: string; text: string }>;
+          isError?: boolean;
+        };
+        expect(r.content).toBeDefined();
+        expect(Array.isArray(r.content)).toBe(true);
+        expect(r.content!.length).toBeGreaterThan(0);
+        expect(r.content![0]!.text).toBe('hello-from-modern-client');
+        expect(r.isError).toBeFalsy();
+
+        console.log(
+          `✅ 出站 era 桥接通过：modern 客户端 → Hub(modern) → legacy upstream，` +
+            `echo 回声="${r.content![0]!.text}"`,
+        );
+      } finally {
+        await closeMcpClient(client, transport);
+      }
+    }, 60000);
   });
 
   // ------------------------------------------------------------------
@@ -275,5 +450,181 @@ describe('MCP 协议合规（2026-07-28 / v2）', () => {
         globalThis.fetch = origFetch;
       }
     }, 30000);
+  });
+
+  // ------------------------------------------------------------------
+  // 用例 5：入站 legacy 客户端能连默认全开（legacy:'stateless'）的 Hub
+  //
+  // P7 入站策略（Task 9）：默认 CompatibilityOptions（全开）经
+  // InboundProtocolAdapter.resolveLegacyMode('http') 解析为 'stateless'。
+  // SDK 文档（createMcpHandler options.legacy）明确：'stateless'（默认）下
+  // 「每个 legacy 请求由同一 factory 的 fresh 实例经 sessionIdGenerator:undefined
+  //  的 streamable HTTP transport 服务」——即 2025-era 裸 initialize 握手会被服务。
+  //
+  // 验证：legacy 客户端（versionNegotiation:{mode:'legacy'}，纯 2025-era initialize
+  // 握手，不发 server/discover）连默认全开 Hub：
+  //   1. 连接成功且 era === 'legacy'（裸 initialize 被服务，而非 4xx 拒绝）
+  //   2. tools/list 能拿到上游聚合工具
+  //   3. tools/call 能调用并拿到回声结果
+  //
+  // 用专用端口 + 真实 modern upstream fixture，使 default 组有可调用工具。
+  // ------------------------------------------------------------------
+  describe('用例 5：入站 legacy 客户端能连默认全开（stateless）Hub', () => {
+    let inboundServer: TestServer | null = null;
+    let savedConfigPath5: string | undefined;
+    let tempDir5: string | null = null;
+
+    beforeAll(async () => {
+      savedConfigPath5 = process.env.CONFIG_PATH;
+
+      const globalHub = await shutdownHubService();
+      await globalHub?.shutdown().catch(() => {});
+      // 清空 coreServiceManager 单例，避免它复用旧 hub 的 ServerManager（同用例 3）。
+      await shutdownCoreServiceManager();
+
+      tempDir5 = mkdtempSync(join(tmpdir(), `mcp-knot-inbound-legacy-${process.pid}-`));
+      process.env.CONFIG_PATH = tempDir5;
+
+      // default 组指向 modern upstream fixture（提供可调用的 echo 工具）。
+      // 不写 system.json 的 compatibility 段 → getCompatibilityOptions 回退默认全开 →
+      // InboundProtocolAdapter.resolveLegacyMode('http') === 'stateless'。
+      writeFileSync(
+        join(tempDir5, 'group.json'),
+        JSON.stringify(
+          {
+            default: {
+              id: 'default',
+              name: '默认组',
+              description: '入站 legacy 客户端 e2e',
+              servers: ['modern-upstream'],
+              tools: [],
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      writeFileSync(
+        join(tempDir5, 'mcp_server.json'),
+        JSON.stringify(
+          {
+            servers: {
+              'modern-upstream': {
+                type: 'stdio',
+                command: process.execPath,
+                args: [
+                  '--import',
+                  'tsx',
+                  join(__dirname, '..', 'fixtures', 'modern-upstream-server.ts'),
+                ],
+                env: {},
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      writeFileSync(
+        join(tempDir5, 'api_tools.json'),
+        JSON.stringify({ version: '1.0', tools: [] }),
+      );
+
+      resetConfigInstances();
+
+      // 失效 mcp-handler-factory 缓存（同用例 3）：default 组的 GroupMcpService
+      // 必须按 new config 重建，否则复用旧 hub 的 service。
+      const { invalidateAllGroupMcpServices } =
+        await import('../../api/mcp/mcp-handler-factory.js');
+      await invalidateAllGroupMcpServices();
+
+      inboundServer = new TestServer(INBOUND_LEGACY_PORT);
+      await inboundServer.start();
+      await sleep(3000);
+    }, 120000);
+
+    afterAll(async () => {
+      try {
+        await inboundServer?.stop();
+      } catch {
+        // ignore
+      }
+      const myHub = await shutdownHubService();
+      await myHub?.shutdown().catch(() => {});
+
+      if (savedConfigPath5 !== undefined) {
+        process.env.CONFIG_PATH = savedConfigPath5;
+      }
+      resetConfigInstances();
+      try {
+        const origConfig = await getAllConfig();
+        const restored = await createHubService({
+          servers: origConfig.mcps.servers as never,
+          groups: origConfig.groups as never,
+          apiToolsConfigPath: origConfig.apiToolsConfigPath,
+        });
+        await restored.initialize();
+        setHubService(restored);
+      } catch (error) {
+        console.warn('[inbound-legacy e2e afterAll] 重建原 HubService 失败:', error);
+      }
+
+      if (tempDir5) {
+        try {
+          rmSync(tempDir5, { recursive: true, force: true });
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    it('legacy 客户端（裸 2025-era initialize）能连默认全开 Hub 并调工具', async () => {
+      // legacy 客户端：versionNegotiation:{mode:'legacy'} 强制纯 2025-era initialize
+      // 握手（不发 server/discover probe）。SDK 默认 mode 就是 'legacy'，显式写出以
+      // 明确测试意图：这是确定性 legacy 客户端，而非 auto 探测的现代客户端。
+      const mcpUrl = `http://localhost:${INBOUND_LEGACY_PORT}/default/mcp`;
+      const transport = new StreamableHTTPClientTransport(new URL(mcpUrl));
+      const client = new Client(
+        { name: 'legacy-inbound-client', version: '1.0.0' },
+        {
+          capabilities: { tools: {} },
+          versionNegotiation: { mode: 'legacy' },
+        },
+      );
+      await client.connect(transport);
+
+      try {
+        // 核心断言：legacy 握手被服务（stateless 模式），era 落在 'legacy' 而非被拒。
+        // 若 SDK stateless 实际拒绝裸 initialize，client.connect 会抛错，到不了这里。
+        expect(client.getProtocolEra()).toBe('legacy');
+
+        // tools/list：legacy 路径仍应聚合到上游工具
+        const tools = await client.listTools();
+        const names = tools.tools.map((t) => t.name);
+        expect(names).toContain('modern-upstream_echo');
+
+        // tools/call：legacy 客户端调用 → Hub 处理 → 上游回声
+        const result = await client.callTool({
+          name: 'modern-upstream_echo',
+          arguments: { message: 'legacy-client-hello' },
+        });
+        const r = result as {
+          content?: Array<{ type: string; text: string }>;
+          isError?: boolean;
+        };
+        expect(r.content).toBeDefined();
+        expect(Array.isArray(r.content)).toBe(true);
+        expect(r.content!.length).toBeGreaterThan(0);
+        expect(r.content![0]!.text).toBe('legacy-client-hello');
+        expect(r.isError).toBeFalsy();
+
+        console.log(
+          `✅ 入站 legacy 客户端通过：era=${client.getProtocolEra()}，` +
+            `tools=${names.length}，echo 回声="${r.content![0]!.text}"`,
+        );
+      } finally {
+        await closeMcpClient(client, transport);
+      }
+    }, 60000);
   });
 });
