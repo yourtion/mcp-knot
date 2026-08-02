@@ -145,6 +145,8 @@ describe('SystemConfigSchema P5 subscriptions/mrtr 字段', () => {
     expect(() =>
       SystemConfigSchema.parse({ ...baseValid, subscriptions: { pollBackoffMs: -1 } }),
     ).toThrow();
-    expect(() => SystemConfigSchema.parse({ ...baseValid, mrtr: { stateTtlSeconds: 0 } })).toThrow();
+    expect(() =>
+      SystemConfigSchema.parse({ ...baseValid, mrtr: { stateTtlSeconds: 0 } }),
+    ).toThrow();
   });
 });

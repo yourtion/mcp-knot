@@ -1,30 +1,14 @@
-import { z } from 'zod';
-
-export const InboundOptionsSchema = z.object({
-  enabled: z.boolean().default(true),
-  legacyMode: z.enum(['reject', 'shim']).default('shim'),
-});
-
-export const OutboundOptionsSchema = z.object({
-  enabled: z.boolean().default(true),
-  modernOnly: z.boolean().default(false),
-  mrtrLegacyDegradation: z.enum(['shim', 'reject']).default('shim'),
-});
-
-export const ErrorOptionsSchema = z.object({
-  unified: z.boolean().default(true),
-});
-
-export const CompatibilityOptionsSchema = z.object({
-  // zod v4：容器级 `.default({})` 直接落值、不再走子 schema 填充字段默认值；
-  // 改用 `.prefault({})`，缺省时以空对象过一遍子 schema，从而触发字段级 default。
-  inbound: InboundOptionsSchema.prefault({}),
-  outbound: OutboundOptionsSchema.prefault({}),
-  errors: ErrorOptionsSchema.prefault({}),
-});
-
-export type CompatibilityOptions = z.infer<typeof CompatibilityOptionsSchema>;
-
-export const defaultCompatibilityOptions: CompatibilityOptions = CompatibilityOptionsSchema.parse(
-  {},
-);
+/**
+ * 协议兼容层配置（re-export）。
+ *
+ * schema 单一来源在 share 包（避免 protocol↔share 循环依赖）。
+ * 本文件仅 re-export schema、类型与默认实例，保证消费者从本包引入时 API 不变。
+ *
+ * defaultCompatibilityOptions 直接从 share re-export 同一引用，
+ * 不在 protocol 里重新 parse 一遍，确保 share 与 protocol 共用同一份实例。
+ */
+export {
+  CompatibilityOptionsSchema,
+  defaultCompatibilityOptions,
+} from '@mcp-core/mcp-knot-share/config';
+export type { CompatibilityOptions } from '@mcp-core/mcp-knot-share/config';

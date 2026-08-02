@@ -8,13 +8,19 @@ import {
   McpConfigSchema,
   type SchemaValidationResult,
   SystemConfigSchema,
+  CompatibilityOptionsSchema,
   validateCrossReferences,
   validateWithSchema,
 } from '@mcp-core/mcp-knot-share/config';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { GroupConfig, McpConfig, SystemConfig } from '@mcp-core/mcp-knot-share/config';
+import type {
+  CompatibilityConfig,
+  GroupConfig,
+  McpConfig,
+  SystemConfig,
+} from '@mcp-core/mcp-knot-share/config';
 
 /**
  * 所有配置的加载结果
@@ -102,6 +108,21 @@ export class ConfigManager {
   async saveSystemConfig(config: SystemConfig): Promise<void> {
     const filePath = path.resolve(this.configDir, 'system.json');
     await this.saveConfigFile(filePath, config);
+  }
+
+  /**
+   * 读取并解析 P7 协议兼容层配置段。
+   *
+   * SystemConfigSchema 已用 `.prefault({})` 保证 compatibility 字段缺失/为空时
+   * 解析为「默认全开」的 CompatibilityConfig；此处对未经 schema 解析的 system
+   * （如 loadSystemConfig 返回的原始 JSON）兜底再走一遍 schema，确保字段完整。
+   */
+  getCompatibility(system?: SystemConfig): CompatibilityConfig {
+    const compat = system?.compatibility;
+    if (compat) {
+      return CompatibilityOptionsSchema.parse(compat);
+    }
+    return CompatibilityOptionsSchema.parse({});
   }
 
   /**

@@ -14,6 +14,7 @@ import type {
   CliServerConfigSchema,
   CliTransportSchema,
 } from '../schemas/cli.schema.js';
+import type { CompatibilityOptionsSchema } from '../schemas/compatibility.schema.js';
 import type {
   GroupConfigSchema,
   GroupSchema,
@@ -55,6 +56,9 @@ export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 // System types
 export type SystemConfig = z.infer<typeof SystemConfigSchema>;
+
+// P7 协议兼容层配置类型（与 protocol 包共用同一份 schema）
+export type CompatibilityConfig = z.infer<typeof CompatibilityOptionsSchema>;
 
 // API Tools types
 export type HttpMethod = z.infer<typeof HttpMethodSchema>;
