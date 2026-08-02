@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "@mcp-core/mcp-knot-core": "workspace:*",
+    "@mcp-core/mcp-knot-protocol": "workspace:*",
     "@mcp-core/mcp-knot-share": "workspace:*",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",

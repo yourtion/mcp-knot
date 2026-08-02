@@ -5,6 +5,10 @@
  * 处理命令行参数并启动MCP服务器
  */
 
+import { CompatibilityOptionsSchema } from '@mcp-core/mcp-knot-protocol';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { CliConfigManager } from './config/cli-config-manager';
 import { CliMcpServer } from './server/cli-mcp-server';
 
@@ -14,7 +18,7 @@ import type { CliError } from './types';
 /**
  * 命令行选项接口
  */
-interface CliOptions {
+export interface CliOptions {
   configPath: string;
   verbose: boolean;
   help: boolean;
@@ -27,12 +31,20 @@ interface CliOptions {
   init: boolean;
   initAll: boolean;
   overwrite: boolean;
+  /**
+   * `--no-legacy-inbound`：关闭入站 legacy shim（inbound.enabled=false）。
+   */
+  noLegacyInbound?: boolean;
+  /**
+   * `--modern-only-upstream`：上游仅走现代协议（outbound.modernOnly=true）。
+   */
+  modernOnlyUpstream?: boolean;
 }
 
 /**
  * 解析命令行参数
  */
-function parseArgs(args: string[]): CliOptions {
+export function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     configPath: './mcp_server.json',
     verbose: false,
@@ -104,6 +116,12 @@ function parseArgs(args: string[]): CliOptions {
       case '--overwrite':
         options.overwrite = true;
         break;
+      case '--no-legacy-inbound':
+        options.noLegacyInbound = true;
+        break;
+      case '--modern-only-upstream':
+        options.modernOnlyUpstream = true;
+        break;
       default:
         // 如果不是选项，则作为配置文件路径
         if (!arg.startsWith('-') && options.configPath === './mcp_server.json') {
@@ -139,6 +157,8 @@ MCP Knot CLI - 聚合多个MCP服务的命令行界面
   --init                  快速初始化配置文件（包含常用服务器示例）
   --init-all              初始化所有配置文件（包含组配置）
   --overwrite             覆盖已存在的配置文件
+  --no-legacy-inbound     关闭入站 legacy 协议 shim（仅接受现代协议客户端）
+  --modern-only-upstream  上游 MCP 服务仅走现代协议（不做 modern→legacy 翻译）
 
 示例:
   mcp-knot                                    # 使用默认配置文件
@@ -432,8 +452,16 @@ async function main() {
     }
 
     // 创建并启动CLI MCP服务器
+    // 将启动 flag 映射到协议兼容层配置：--no-legacy-inbound 关闭入站 legacy
+    // shim；--modern-only-upstream 限定上游仅走现代协议。经 schema 回填默认值
+    // 后交给 cli-mcp-server，由 InboundProtocolAdapter 据此解析 stdio 的 legacy
+    // 取值。
+    const compat = CompatibilityOptionsSchema.parse({
+      inbound: { enabled: !options.noLegacyInbound },
+      outbound: { modernOnly: options.modernOnlyUpstream ?? false },
+    });
     const server = new CliMcpServer();
-    await server.initialize(config);
+    await server.initialize(config, compat);
     await server.start();
 
     console.log('MCP Knot CLI服务器启动成功');
@@ -471,9 +499,14 @@ async function main() {
   }
 }
 
-// 如果直接运行此文件，则执行主函数
-// 在 ESM 中，直接运行即可，不需要检查
-main().catch((error) => {
-  handleCliError(error);
-  process.exit(1);
-});
+// 仅当本模块作为入口（直接运行 dist/cli.js 或经 bin 动态导入）时才启动；
+// 被测试 import 时（既不直接运行也未由 bin 设置标记）不触发 main()。
+const isMainEntry =
+  import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href ||
+  process.env.MCP_KNOT_CLI_RUN === '1';
+if (isMainEntry) {
+  main().catch((error) => {
+    handleCliError(error);
+    process.exit(1);
+  });
+}
