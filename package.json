@@ -28,6 +28,7 @@
     "test:e2e": "vitest --run --project api-e2e",
     "test:coverage": "vitest --run --coverage",
     "test:debug": "VITEST_DEBUG=true vitest --run",
+    "test:conformance": "bash scripts/conformance/run.sh",
     "coverage:report": "tsx scripts/check-coverage.ts",
     "coverage:merge": "tsx scripts/merge-coverage.ts",
     "coverage:full": "pnpm test:coverage && pnpm coverage:merge && pnpm coverage:report",

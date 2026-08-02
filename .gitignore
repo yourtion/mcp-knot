@@ -13,3 +13,6 @@ backend/config/*
 
 # ZCode 工具会话产物（非项目文档）
 .zcode/
+
+# Conformance TCK 运行结果产物（run.sh 写入，不入库）
+.conformance-results/
