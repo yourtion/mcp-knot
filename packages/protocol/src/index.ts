@@ -8,3 +8,23 @@ export const PROTOCOL_VERSION = '0.0.1';
 
 export { CompatibilityOptionsSchema, defaultCompatibilityOptions } from './config.js';
 export type { CompatibilityOptions } from './config.js';
+
+export type { Era, InboundEra, UpstreamEra, UpstreamEraProbe } from './model/era.js';
+export type {
+  NormalizedRequest,
+  NormalizedMeta,
+  NormalizedCall,
+  NormalizedMrtrState,
+  NormalizedResult,
+  NormalizedSuccess,
+  NormalizedInputRequired,
+  NormalizedError,
+  NormalizedErrorResult,
+} from './model/normalized.js';
+export {
+  normalizeInboundRequest,
+  normalizeCall,
+  okResult,
+  inputRequiredResult,
+  errorResult,
+} from './model/normalized.js';
