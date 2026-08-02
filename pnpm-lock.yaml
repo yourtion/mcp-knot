@@ -41,6 +41,9 @@ importers:
       '@mcp-core/mcp-knot-core':
         specifier: workspace:*
         version: link:../packages/core
+      '@mcp-core/mcp-knot-protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
       '@mcp-core/mcp-knot-share':
         specifier: workspace:*
         version: link:../packages/share

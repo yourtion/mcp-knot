@@ -1,6 +1,10 @@
 import type { ServerConfig } from '@mcp-core/mcp-knot-share';
 import type { Client } from '@modelcontextprotocol/client';
 
+// P7 出站 era：与 protocol 包 UpstreamEra 对齐的本地别名（'modern' | 'legacy'）。
+// 由 ServerManager 在 client.connect 后调 SDK client.getProtocolEra() 探测并缓存。
+export type UpstreamEra = 'modern' | 'legacy';
+
 // Server Management Types
 export enum ServerStatus {
   CONNECTING = 'connecting',
@@ -25,6 +29,12 @@ export interface ServerConnection {
   lastError?: Error;
   tools: Tool[];
   reconnectAttempts: number;
+  /**
+   * P7：探测到的上游协议 era。
+   * connect 成功后由 SDK client.getProtocolEra() 设置（'modern' | 'legacy'）；
+   * 探测失败/未完成时为 undefined（按 modern 假设处理，保持现有链路无回归）。
+   */
+  era?: UpstreamEra;
 }
 
 export interface ServerManager {

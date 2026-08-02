@@ -23,6 +23,7 @@
     "@hono/node-server": "^1.14.1",
     "@hono/zod-validator": "^0.7.2",
     "@mcp-core/mcp-knot-core": "workspace:*",
+    "@mcp-core/mcp-knot-protocol": "workspace:*",
     "@mcp-core/mcp-knot-share": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/core": "2.0.0",

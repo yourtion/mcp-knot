@@ -1,10 +1,13 @@
+import { UnifiedErrorNormalizer } from '@mcp-core/mcp-knot-protocol';
 /**
  * 组特定MCP路由处理器
  * 处理 /:group/mcp 路由，提供基于组的MCP服务访问
  *
- * v2（协议 2026-07-28）：POST /:group/mcp 使用 @modelcontextprotocol/server
- * 的 createMcpHandler（无状态、legacy:reject），handler.fetch 桥接 Hono 的
- * c.req.raw。groupServices 缓存与 handler 缓存由 mcp-handler-factory 统一管理。
+ * v2（协议 2026-07-28）+ P7：POST /:group/mcp 使用 @modelcontextprotocol/server
+ * 的 createMcpHandler（legacy 开关由 InboundProtocolAdapter 据 CompatibilityOptions
+ * 解析，默认 'stateless'），handler.fetch 桥接 Hono 的 c.req.raw。groupServices 缓存
+ * 与 handler 缓存由 mcp-handler-factory 统一管理。错误经 UnifiedErrorNormalizer 归一化
+ * code/message（保留 domain-specific 的 data.error 嵌套结构以向后兼容）。
  */
 import { Hono } from 'hono';
 
@@ -49,6 +52,44 @@ const mcpAuthMiddleware = createMcpAuthMiddleware({
   resourceMetadataUrlPath: '/.well-known/oauth-protected-resource',
 });
 
+// P7：统一错误归一化单例（进程级无状态，单例避免每请求重建）。
+// 用于把 JSON-RPC 错误的 code/message 经统一 normalizer 处理，保留 domain-specific
+// 的 data.error 嵌套结构以向后兼容（e2e 测试断言 data.error.data.error.code）。
+const errorNormalizer = new UnifiedErrorNormalizer();
+
+/**
+ * 构造 JSON-RPC 错误响应体。
+ *
+ * P7：code/message 经 UnifiedErrorNormalizer 归一化（统一 -32602/-32603 等语义），
+ * 同时保留 domain-specific 的 data.error 嵌套结构（{ code, message, ... }）以向后兼容。
+ *
+ * @param rpcCode JSON-RPC 错误码（normalizer 校验/兜底为 -32603）
+ * @param message 错误消息（normalizer 兜底为 'Internal error'）
+ * @param domainError 嵌入 data.error 的 domain-specific 错误对象（向后兼容）
+ * @param id JSON-RPC id（错误响应统一 null）
+ */
+function buildJsonRpcError(
+  rpcCode: number,
+  message: string,
+  domainError: { code: string; message: string; [k: string]: unknown },
+): {
+  jsonrpc: '2.0';
+  error: { code: number; message: string; data: { error: typeof domainError } };
+  id: null;
+} {
+  // 经 normalizer 归一化 code/message（兜底非法值为 -32603/'Internal error'）
+  const normalized = errorNormalizer.normalize({ code: rpcCode, message });
+  return {
+    jsonrpc: '2.0',
+    error: {
+      code: normalized.code,
+      message: normalized.message,
+      data: { error: domainError },
+    },
+    id: null,
+  };
+}
+
 // 复用 mcp-handler-factory 中模块级单例缓存（保持原导出名不变）
 const groupServices = getGroupServicesCache();
 
@@ -81,20 +122,10 @@ async function groupValidationMiddleware(c: Context, next: () => Promise<void>) 
   if (!groupId) {
     logger.warn('组路由请求缺少组ID参数');
     return c.json(
-      {
-        jsonrpc: '2.0',
-        error: {
-          code: -32602,
-          message: '无效参数：缺少组ID',
-          data: {
-            error: {
-              code: 'MISSING_GROUP_ID',
-              message: '请求路径中必须包含组ID',
-            },
-          },
-        },
-        id: null,
-      },
+      buildJsonRpcError(-32602, '无效参数：缺少组ID', {
+        code: 'MISSING_GROUP_ID',
+        message: '请求路径中必须包含组ID',
+      }),
       { status: 400 },
     );
   }
@@ -104,20 +135,10 @@ async function groupValidationMiddleware(c: Context, next: () => Promise<void>) 
   if (!groupExists) {
     logger.warn('请求的组不存在', { groupId });
     return c.json(
-      {
-        jsonrpc: '2.0',
-        error: {
-          code: -32602,
-          message: `组 '${groupId}' 不存在`,
-          data: {
-            error: {
-              code: 'GROUP_NOT_FOUND',
-              message: `指定的组 '${groupId}' 在配置中不存在`,
-            },
-          },
-        },
-        id: null,
-      },
+      buildJsonRpcError(-32602, `组 '${groupId}' 不存在`, {
+        code: 'GROUP_NOT_FOUND',
+        message: `指定的组 '${groupId}' 在配置中不存在`,
+      }),
       { status: 404 },
     );
   }
@@ -130,7 +151,8 @@ async function groupValidationMiddleware(c: Context, next: () => Promise<void>) 
 /**
  * 处理组特定的MCP请求
  *
- * 使用 createMcpHandler 构造的无状态 handler（legacy: 'reject'）：
+ * 使用 createMcpHandler 构造的 handler（P7：legacy 开关由 InboundProtocolAdapter 据
+ * CompatibilityOptions 解析，默认 'stateless'；inbound.enabled=false 时 'reject'）：
  *   handler.fetch(c.req.raw) 直接返回 Web-standard Response。
  * 直接透传 c.req.raw，由 handler 内部 clone+读取请求体，避免在 Hono 中
  * 预先消耗请求流。
@@ -150,22 +172,15 @@ groupMcpRouter.post('/:group/mcp', groupValidationMiddleware, mcpAuthMiddleware,
     return response;
   } catch (error) {
     logger.error('组MCP端点错误', error as Error, { groupId });
+    // P7：经 UnifiedErrorNormalizer 归一化 code/message（Error 实例 → -32603 + message），
+    // 保留 domain-specific 的 INTERNAL_ERROR 嵌套结构以向后兼容。
+    const normalized = errorNormalizer.toJsonRpc(error);
     return c.json(
-      {
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: '内部服务器错误',
-          data: {
-            error: {
-              code: 'INTERNAL_ERROR',
-              message: (error as Error).message,
-              groupId,
-            },
-          },
-        },
-        id: null,
-      },
+      buildJsonRpcError(normalized.code, normalized.message, {
+        code: 'INTERNAL_ERROR',
+        message: (error as Error).message,
+        groupId,
+      }),
       { status: 500 },
     );
   }

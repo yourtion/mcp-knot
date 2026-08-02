@@ -93,35 +93,40 @@ describe('MrtrRelayService', () => {
     });
   });
 
-  describe('exp 用配置 ttlSeconds（P5 修复 I1）', () => {
-    it('relay mint 的 state.exp = now + ttlSeconds（非硬编码 600）', async () => {
-      // 用非默认 ttl（300）验证 exp 与 codec ttl 一致、非硬编码 600
-      const ttlSeconds = 300;
-      const before = Math.floor(Date.now() / 1000);
-      const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds });
-      const r = await relay.relay('s1', 't', {}, 1);
-      const after = Math.floor(Date.now() / 1000);
-      const hubState = await relay.verify(r.requestState!, MOCK_CTX);
+  describe('TTL 用配置 ttlSeconds（P7 迁移后 exp 在 codec envelope，非 payload）', () => {
+    // P7 迁移：底层 codec 换成 protocol 包 HubMrtrCodec，exp 由 codec 按 ttlSeconds
+    // 写入 HMAC envelope（不再放入 payload 字段）。故 verify 还原的 HubState.exp
+    // 是占位值（0），不反映真实过期时间。真实过期由 codec envelope TTL 强制——
+    // 此处验证「过期时间跟随配置 ttlSeconds」这一行为契约（而非 payload 的 exp 字段）：
+    // ttlSeconds=1 时短延时即过期，ttlSeconds=600 时长延时不过期。
 
-      // exp 应落在 [before+ttl, after+ttl] 区间（mint 在 before..after 之间执行）
-      expect(hubState.exp).toBeGreaterThanOrEqual(before + ttlSeconds);
-      expect(hubState.exp).toBeLessThanOrEqual(after + ttlSeconds);
-      // 显式断言非硬编码 600：用 ttl=300 时 exp 不应在 now+600 附近
-      expect(hubState.exp).toBeLessThan(before + 600);
+    it('ttlSeconds=1 时 mint 的 state 在 2.5s 后 verify 抛错（过期跟随配置 ttl）', async () => {
+      const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 1 });
+      const r = await relay.relay('s1', 't', {}, 1);
+      // 跨越 2 个整数秒边界保证 codec envelope 过期
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      await expect(relay.verify(r.requestState!, MOCK_CTX)).rejects.toThrow();
     });
 
-    it('不同 ttlSeconds 产生不同 exp（确认读了配置值）', async () => {
-      const make = async (ttlSeconds: number) => {
-        const before = Math.floor(Date.now() / 1000);
-        const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds });
-        const r = await relay.relay('s1', 't', {}, 1);
-        const hubState = await relay.verify(r.requestState!, MOCK_CTX);
-        return hubState.exp - before;
-      };
-      const deltaShort = await make(60);
-      const deltaLong = await make(1200);
-      // 两者 exp-now 差值应明显反映 ttl 差异（short≈60，long≈1200）
-      expect(deltaLong - deltaShort).toBeGreaterThan(1000);
+    it('ttlSeconds=600 时 mint 的 state 短延时内 verify 成功（未过期）', async () => {
+      const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 600 });
+      const r = await relay.relay('s1', 't', {}, 1);
+      // 短延时（远小于 600s）应仍可 verify
+      const hubState = await relay.verify(r.requestState!, MOCK_CTX);
+      expect(hubState.serverId).toBe('s1');
+      expect(hubState.step).toBe(1);
+    });
+
+    it('verify 还原的 HubState 字段正确（exp 为占位 0，非过期来源）', async () => {
+      const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 600 });
+      const r = await relay.relay('s1', 't', { requestState: 'up' }, 3);
+      const hubState = await relay.verify(r.requestState!, MOCK_CTX);
+      expect(hubState.serverId).toBe('s1');
+      expect(hubState.toolName).toBe('t');
+      expect(hubState.upstreamRequestState).toBe('up');
+      expect(hubState.step).toBe(3);
+      // P7：exp 是占位值（真实过期在 codec envelope），不再反映 ttlSeconds
+      expect(hubState.exp).toBe(0);
     });
   });
 });
