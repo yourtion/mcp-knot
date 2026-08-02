@@ -14,12 +14,20 @@
 #
 # 对照报告：.superpowers/sdd/2026-08-02-protocol-compat-layer/task-13-report.md
 # 首次填充依据：2026-08-02 跑 active suite @ spec 2025-11-25。
+#
+# ⚠️ 覆盖范围限制（TCK v0.1.16 上游能力）：
+#   - server 模式**无 2026-07-28（modern）场景**，--spec-version 是累积过滤器
+#     （非 era 切换开关），故本 baseline 只覆盖 legacy era（2025-11-25）。
+#   - server 模式**无 backcompat suite**（只 active/all/pending），故用 active。
+#   - modern era（2026-07-28）合规目前只靠项目自有 e2e（protocol-compliance.test.ts）
+#     覆盖，未经官方 TCK 对拍。待 TCK 后续版本补 modern server 场景后，在 run.sh
+#     循环追加该 spec-version 即可启用。
+#
 # Fix round 1（2026-08-02）：run.sh 改为自包含配置（空 default 组，不连外部上游）。
-#   tools-list 根因**重新核实**：失败并非来自转发上游工具（首次报告归类错误），
-#   而是来自 Hub 自注册的两个组管理工具 group_status / list_group_tools —— 它们
-#   注册时只传了 { inputSchema }，缺 description 字段，TCK 要求每个工具都有 description。
-#   故 tools-list 仍在 baseline（保留），但根因注释已更正。当前 27 条已知失败。
+# Fix round 2（2026-08-02）：group_status/list_group_tools 补 description，tools-list
+#   场景通过、移出 baseline（真 bug 不再被 baseline 掩盖）。当前 25 条已知失败。
 # =============================================================================
+
 server:
   # ---- 一、参考实现专有工具（test_*）：Hub 是路由/代理，不提供这些 conformance
   # ----     测试桩工具，故所有 tools-call/* 场景缺失被测工具 → -32602。

@@ -419,13 +419,25 @@ bridges the modern **2026-07-28** era and legacy 2025-era MCP on both directions
 - **Outbound** (Hub → upstream server): era is auto-probed per server; Hub
   transparently bridges modern requests to legacy upstreams. Set
   `compatibility.outbound.modernOnly: true` (or CLI `--modern-only-upstream`) to
-  connect only to modern upstreams.
+  connect only to modern upstreams. _(Note: this flag is currently reserved —
+  the outbound path always uses the probed era; wiring `modernOnly` to force
+  modern-only is tracked as a follow-up.)_
 - **MRTR & errors**: cross-era `InputRequiredResult` (MRTR) state and protocol
-  errors are normalized into a unified shape regardless of upstream era.
+  errors are normalized into a unified shape regardless of upstream era. A
+  legacy upstream that cannot honor `input_required` degrades to a clear
+  `-32601` error rather than failing silently.
 
 Defaults are intentionally permissive so existing clients keep working. The
 `compatibility` block in `system.json` is optional and partially overridable;
 omit it entirely for the default all-open behavior.
+
+**Testing coverage**: cross-era bridging is covered by project-owned e2e
+(`protocol-compliance.test.ts`: outbound modern→legacy, inbound legacy→modern)
+plus unit tests for the adapter/codec/normalizer layers. The official
+`@modelcontextprotocol/conformance` TCK is wired as a regression gate
+(`pnpm test:conformance`) but, as of TCK v0.1.16, only covers the legacy
+(2025-11-25) era in server mode — modern-era (2026-07-28) conformance is
+pending upstream TCK support.
 
 ### CLI MCP Server Integration
 

@@ -321,7 +321,7 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 - 每个子项目完成后，回本 spec 更新"实现进度"列和"详细 spec"链接。
 - 主线顺序（P1 → P4 → P2 → P3 → P6 → P5 → P7）是推荐，可根据实际情况调整。
 - P5 已实现完成（分支 `feat/p5-subscriptions-mrtr`，待合并 main）。原推迟理由与复查触发条件见上文「推迟理由（已作废）」/「复查触发条件」。
-- P7 已实现完成（分支 `feat/p7-protocol-compat-layer`，待合并 main）。P7 叠加于 P1 之上：把 P1 的"激进入站"修订为"默认全开可配置"，并新增协议兼容层（双向 era 翻译、归一化模型、统一错误）。详见 [`2026-08-02-protocol-compat-layer-design.md`](./2026-08-02-protocol-compat-layer-design.md)。
+- P7 已实现完成（分支 `feat/p7-protocol-compat-layer`，待合并 main）。P7 叠加于 P1 之上：把 P1 的"激进入站"修订为"默认全开可配置"，并新增协议兼容层（双向 era 翻译、归一化模型、统一错误）。详见 [`2026-08-02-protocol-compat-layer-design.md`](./2026-08-02-protocol-compat-layer-design.md)。**验收订正**：设计阶段预期的"TCK 双 era 对拍"因 TCK v0.1.16 上游限制（server 模式无 2026-07-28 场景、无 backcompat suite）未完全达成——TCK 当前只作 legacy era（2025-11-25）回归 gate（active suite，5 passed / 25 baseline），modern era 合规靠项目自有 e2e 覆盖，待 TCK 后续版本支持。详见 spec 的"验收"章节订正。
 
 ## 实现进度跟踪
 

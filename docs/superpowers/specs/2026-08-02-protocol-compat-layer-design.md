@@ -38,7 +38,7 @@ Hub 的兼容机制是**非对称**的，全部委托给 SDK 的两个开关：
 
 **官方生态已提供本 spec 所需的全部零件，不需要从零造**：
 
-- **TCK 存在**：[`@modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance) v0.1.16，`server` 模式支持 `--spec-version 2025-11-25 / 2026-07-28` 分别校验 + `--suite backcompat`。验收门槛"官方合规对拍"有现成工具。
+- **TCK 存在**：[`@modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance) v0.1.16。设计阶段预期其 `server` 模式支持双 era 对拍 + backcompat suite，**落地时发现实际不支持**（server 模式无 2026-07-28 场景、无 backcompat suite）——详见下方"验收"章节的订正。仍可作为 legacy era（2025-11-25）的回归 gate。
 - **SDK v2 已导出 era 翻译原语**（`@modelcontextprotocol/server@2.0.0`）：
   - `classifyInboundRequest()` / `isLegacyRequest` — 官方 era 探测器
   - `legacyStatelessFallback()` — 内置 legacy-side shim
@@ -264,19 +264,27 @@ interface NormalizedResult {
 - `--suite backcompat`
 - `--expected-failures` YAML baseline 化已知差异
 
+> **⚠️ 实现后订正（2026-08-02，Task 13 落地时发现）：** 上述"双 era 对拍 + backcompat"是**设计阶段的预期**，落地时发现 TCK v0.1.16 上游能力不足，**该预期未完全达成**：
+> - TCK `server` 模式**无 2026-07-28（modern）场景**，只有 `2025-06-18` / `2025-11-25`。`--spec-version` 是**累积过滤器**（选该日期及之前引入的场景），**不是按 era 切协议的开关**。因此 modern era 对拍**当前不可行**。
+> - `server` 模式**无 `backcompat` suite**（只有 `active`/`all`/`pending`；`backcompat` 是 client 模式专属）。实际用 `--suite active`。
+> - 实际接入：`active` suite @ `2025-11-25`，30 个 scenario 中 **5 passed / 25 failed**，25 条失败全部 baseline 化（约 22 条是 Hub 作为路由/代理不提供 reference server 专有桩工具/资源的架构性不匹配；3 条是真实 Hub 缺陷或架构限制：dns-rebinding、SSE 多流、~~tools-list 已修复移出 baseline~~）。
+> - **modern era（2026-07-28）的协议合规目前只靠项目自有 e2e（`protocol-compliance.test.ts`）覆盖，未经官方 TCK 对拍。** 待 TCK 后续版本补充 modern server 场景后，在 `scripts/conformance/run.sh` 循环里追加该 spec-version 即可启用。
+> - 详见 `docs/superpowers/plans/2026-08-02-protocol-compat-layer.md` Task 13 报告与 `scripts/conformance/expected-failures.yaml` 注释。
+
 ### 出站 e2e（填上 it.skip）
 
 - fixture 拉起 legacy/modern 两种 upstream
-- 跨 era 组合（4 种）跑 `tools/list`、`tools/call`、MRTR
+- 跨 era 组合跑 `tools/list`、`tools/call`（用例 3 出站桥接、用例 5 入站 legacy 已实现）
+- MRTR 跨 era 降级：`OutboundProtocolAdapter.handleLegacyMrtr` / `effectiveEra` 经单元测试覆盖（`packages/protocol/src/outbound/adapter.test.ts`）；legacy upstream 真发 input_required 的端到端场景待 legacy fixture 支持 MRTR 后补
 
 ## 风险与缓解
 
 | 风险 | 缓解 |
 |------|------|
 | 归一化模型设计不当导致二次重构 | MVP 先覆盖 tools/*，模型字段最小化；P2 扩展时再补 |
-| `legacyStatelessFallback` 的 shim 行为与 modern 客户端看到的 server 行为有细微差异（capabilities 表面、session 语义） | TCK 双 era 对拍会捕获；差异点在文档中显式标注 |
+| `legacyStatelessFallback` 的 shim 行为与 modern 客户端看到的 server 行为有细微差异（capabilities 表面、session 语义） | 项目自有 e2e（`protocol-compliance.test.ts` 用例 5）覆盖；差异点在文档中显式标注。注：TCK 双 era 对拍因上游限制暂不可行（见上方验收订正） |
 | SDK v2 仍是 alpha/刚 GA，API 可能变 | 锁定 `2.0.0` 精确版本；adapter 层隔离 SDK，升级只改 translator |
-| MRTR legacy shim 语义漂移（`LegacyInputRequiredShim` 是 SDK 内部非标准概念） | 复用 SDK 的 shim 而非自复刻；TCK 对拍验证 |
+| MRTR legacy shim 语义漂移（`LegacyInputRequiredShim` 是 SDK 内部非标准概念） | 复用 SDK 的 shim 而非自复刻；`handleLegacyMrtr` 单元测试钉死 MVP 占位契约（返回 -32601）。注：真正的 shim 翻译留 P2，TCK 对拍待上游支持 |
 | 迁移期间 P1/P5 已实现部分行为变化 | 兼容层默认开启但 `reject` 配置项保留 P1 行为；分阶段灰度 |
 
 ## 开放问题（实现计划阶段细化）
