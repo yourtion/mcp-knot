@@ -426,10 +426,13 @@ export class McpServiceManager implements McpServiceManagerInterface {
     _retryContext: RetryContext,
   ): Promise<ToolResult | InputRequiredResult> {
     this.ensureInitialized();
-    this.logger.warn('executeToolCallWithContext 在 core mock 壳中被调用；应经 backend 适配器执行', {
-      toolName,
-      serverId,
-    });
+    this.logger.warn(
+      'executeToolCallWithContext 在 core mock 壳中被调用；应经 backend 适配器执行',
+      {
+        toolName,
+        serverId,
+      },
+    );
     // 复用 executeToolCall 的 mock 结果结构（真实重试在 backend 侧）
     return this.executeToolCall(toolName, args, serverId);
   }

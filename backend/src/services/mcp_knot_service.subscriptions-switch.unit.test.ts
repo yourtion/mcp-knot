@@ -74,10 +74,15 @@ vi.mock('../utils/logger.js', () => ({
 
 import { McpKnotService } from './mcp_knot_service.js';
 
-import type { DeepReadonly, GroupConfig, ServerConfig, SystemConfig } from '@mcp-core/mcp-knot-share';
+import type {
+  DeepReadonly,
+  GroupConfig,
+  ServerConfig,
+  SystemConfig,
+} from '@mcp-core/mcp-knot-share';
 
 const serverConfigs: Record<string, ServerConfig> = {
-  's1': { type: 'stdio', command: 'node', args: ['x.js'], enabled: true },
+  s1: { type: 'stdio', command: 'node', args: ['x.js'], enabled: true },
 };
 const groupConfigs: GroupConfig = {
   default: {

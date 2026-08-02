@@ -405,7 +405,12 @@ describe('ServerManager', () => {
 
     it('should throw error for non-existent server', async () => {
       await expect(
-        serverManager.executeToolOnServerWithContext('non-existent', 'tool', {}, { requestState: 's' }),
+        serverManager.executeToolOnServerWithContext(
+          'non-existent',
+          'tool',
+          {},
+          { requestState: 's' },
+        ),
       ).rejects.toThrow('Server non-existent not found');
     });
 
@@ -417,7 +422,12 @@ describe('ServerManager', () => {
       }
 
       await expect(
-        serverManager.executeToolOnServerWithContext('test-server-1', 'tool', {}, { requestState: 's' }),
+        serverManager.executeToolOnServerWithContext(
+          'test-server-1',
+          'tool',
+          {},
+          { requestState: 's' },
+        ),
       ).rejects.toThrow('Server test-server-1 is not connected');
     });
 

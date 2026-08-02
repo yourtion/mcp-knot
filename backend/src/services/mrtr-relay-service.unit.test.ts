@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { MrtrRelayService } from './mrtr-relay-service.js';
 
 function makeKey(): Uint8Array {
@@ -12,10 +13,15 @@ describe('MrtrRelayService', () => {
   describe('relay + resume round-trip', () => {
     it('relay mint 的 state 可被 resume 还原', async () => {
       const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 600 });
-      const result = await relay.relay('s1', 'tool_a', {
-        inputRequests: { confirm: { type: 'elicitation', message: 'sure?' } },
-        requestState: 'upstream-opaque-state',
-      }, 1);
+      const result = await relay.relay(
+        's1',
+        'tool_a',
+        {
+          inputRequests: { confirm: { type: 'elicitation', message: 'sure?' } },
+          requestState: 'upstream-opaque-state',
+        },
+        1,
+      );
       expect(result.resultType).toBe('input_required');
       expect(result.requestState).toBeTypeOf('string');
       expect(result.inputRequests).toBeDefined();

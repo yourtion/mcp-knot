@@ -45,7 +45,6 @@ import {
   type McpRequestContext,
 } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-
 import { z } from 'zod/v4';
 
 // 上游级 requestState codec（32 字节 key；本上游是单进程，无需多实例共享）
@@ -86,7 +85,10 @@ function buildServer(): McpServer {
       const ctx = extra as { mcpReq?: { inputResponses?: unknown; requestState?: () => unknown } };
 
       // 重试路径：客户端已带回 inputResponses（经 Hub 中转透传）
-      const confirmView = acceptedContent<{ confirm: boolean }>(ctx?.mcpReq?.inputResponses, 'confirm');
+      const confirmView = acceptedContent<{ confirm: boolean }>(
+        ctx?.mcpReq?.inputResponses,
+        'confirm',
+      );
       if (confirmView === undefined) {
         // 首次调用：mint 上游 state（关联重试），返回 input_required + elicit 请求
         const requestState = await upstreamCodec.mint({ round: 1 });

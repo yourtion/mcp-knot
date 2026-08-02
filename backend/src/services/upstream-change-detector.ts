@@ -13,7 +13,10 @@ export interface UpstreamChangeDetectorOptions {
  * 描述等非结构性变化不触发变更。
  */
 function computeSignature(tools: { name: string }[]): string {
-  return [...tools.map((t) => t.name)].sort().join('|');
+  return tools
+    .map((t) => t.name)
+    .toSorted()
+    .join('|');
 }
 
 /**

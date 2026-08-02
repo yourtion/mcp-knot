@@ -9,12 +9,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod/v4';
 
-import { MrtrRelayService } from '../../services/mrtr-relay-service.js';
 import { extractFromMeta, runWithTraceContext } from '../../middleware/trace-context.js';
+import { MrtrRelayService } from '../../services/mrtr-relay-service.js';
 
+import type { HubState } from '../../services/mrtr-relay-service.js';
 import type { McpServiceManagerInterface } from '@mcp-core/mcp-knot-core';
 import type { CallToolResult, InputRequiredResult } from '@modelcontextprotocol/server';
-import type { HubState } from '../../services/mrtr-relay-service.js';
 // JSON Schema types
 interface JsonSchema {
   type: string;
@@ -797,7 +797,9 @@ export class GroupMcpService {
 
     try {
       // 1. 取最新工具列表
-      const latestTools = (await this.coreServiceManager.getServerTools(serverId)) as GroupToolInfo[];
+      const latestTools = (await this.coreServiceManager.getServerTools(
+        serverId,
+      )) as GroupToolInfo[];
       // 应用组工具过滤规则，保持与初始注册一致
       const filteredTools = this.applyToolFilter(latestTools);
       // 确定性排序（与 registerGroupDynamicTools 一致）

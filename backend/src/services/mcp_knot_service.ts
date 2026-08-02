@@ -11,8 +11,18 @@ import { ToolManager } from './tool_manager.js';
 import { UpstreamChangeDetector } from './upstream-change-detector.js';
 import { UpstreamChangeFanout } from './upstream-change-fanout.js';
 
-import type { Group, McpKnotService as IMcpKnotService, Tool, ToolResult } from '../types/mcp-knot.js';
-import type { DeepReadonly, GroupConfig, ServerConfig, SystemConfig } from '@mcp-core/mcp-knot-share';
+import type {
+  Group,
+  McpKnotService as IMcpKnotService,
+  Tool,
+  ToolResult,
+} from '../types/mcp-knot.js';
+import type {
+  DeepReadonly,
+  GroupConfig,
+  ServerConfig,
+  SystemConfig,
+} from '@mcp-core/mcp-knot-share';
 
 export class McpKnotService implements IMcpKnotService {
   private serverManager: ServerManager;
@@ -167,13 +177,10 @@ export class McpKnotService implements IMcpKnotService {
         (id) => this.serverManager.getServerStatus(id) === ServerStatus.CONNECTED,
       );
       if (this.subscriptionsEnabled && this.changeDetector && connectedServerIds.length > 0) {
-        await this.changeDetector.startPolling(
-          async (serverId) => {
-            const tools = await this.serverManager.refetchServerTools(serverId);
-            return tools.map((t) => ({ name: t.name }));
-          },
-          connectedServerIds,
-        );
+        await this.changeDetector.startPolling(async (serverId) => {
+          const tools = await this.serverManager.refetchServerTools(serverId);
+          return tools.map((t) => ({ name: t.name }));
+        }, connectedServerIds);
         logger.info('上游工具集变更轮询已启动（P5）', {
           pollIntervalMs: this.subscriptionsPollIntervalMs,
           serverCount: connectedServerIds.length,

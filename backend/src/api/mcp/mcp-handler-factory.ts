@@ -65,12 +65,14 @@ function resolveMrtrKey(configuredKey?: string): Uint8Array {
         return new Uint8Array(bytes);
       }
       logger.warn('MRTR stateKey 解码后不足 32 字节，回退下一候选/随机生成', {
-        source: candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
+        source:
+          candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
         byteLength: bytes.byteLength,
       });
     } catch (error) {
       logger.warn('MRTR stateKey hex 解码失败，回退下一候选/随机生成', {
-        source: candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
+        source:
+          candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -126,9 +128,12 @@ async function getMrtrRelay(): Promise<MrtrRelayService | null> {
         stateKey = cfg.system?.mrtr?.stateKey;
       } catch (error) {
         configReadFailed = true;
-        logger.warn('读取 mrtr 配置失败，本次回退默认值（enabled=true, ttl=600s, 随机 key）且不缓存单例，下次调用重试', {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          '读取 mrtr 配置失败，本次回退默认值（enabled=true, ttl=600s, 随机 key）且不缓存单例，下次调用重试',
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
       }
       // P5 修复（C1）：mrtr.enabled=false 不构造 relay，返回 null。
       // GroupMcpService 收到 undefined 的 mrtrRelay 后走「识别但不中转」保底路径。
@@ -159,7 +164,10 @@ async function getMrtrRelay(): Promise<MrtrRelayService | null> {
         return relay;
       }
       mrtrRelayInstance = relay;
-      logger.info('MRTR relay 单例已构造（P5）', { ttlSeconds, hasStateKey: stateKey !== undefined });
+      logger.info('MRTR relay 单例已构造（P5）', {
+        ttlSeconds,
+        hasStateKey: stateKey !== undefined,
+      });
       return relay;
     })();
   }

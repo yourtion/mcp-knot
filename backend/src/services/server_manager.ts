@@ -168,12 +168,9 @@ export class ServerManager implements IServerManager {
       // 必须在 discoverServerTools 之前注册，确保订阅就绪后再拉取首份工具列表；
       // 闭包捕获 serverId，handler 内部即可定位到正确的 server。
       if (this.options.changeDetector) {
-        serverConnection.client.setNotificationHandler(
-          'notifications/tools/list_changed',
-          () => {
-            this.options.changeDetector!.onUpstreamNotification(serverId);
-          },
-        );
+        serverConnection.client.setNotificationHandler('notifications/tools/list_changed', () => {
+          this.options.changeDetector!.onUpstreamNotification(serverId);
+        });
       }
 
       // Discover tools after successful connection

@@ -49,8 +49,8 @@ import { ErrorCode, ServiceError } from '@mcp-core/mcp-knot-core';
 import { MrtrRelayService } from '../../services/mrtr-relay-service.js';
 import { GroupMcpService } from './group-service.js';
 
-import type { McpServiceManagerInterface } from '@mcp-core/mcp-knot-core';
 import type { HubState } from '../../services/mrtr-relay-service.js';
+import type { McpServiceManagerInterface } from '@mcp-core/mcp-knot-core';
 
 function makeCoreManagerMock(): McpServiceManagerInterface {
   return {
@@ -75,7 +75,13 @@ function makeKey(): Uint8Array {
 function makeExtra(opts: {
   requestStateValue?: HubState;
   inputResponses?: Record<string, unknown>;
-}): { mcpReq: { _meta: Record<string, never>; requestState: <T>() => T | undefined; inputResponses?: Record<string, unknown> } } {
+}): {
+  mcpReq: {
+    _meta: Record<string, never>;
+    requestState: <T>() => T | undefined;
+    inputResponses?: Record<string, unknown>;
+  };
+} {
   const value = opts.requestStateValue;
   return {
     mcpReq: {
@@ -513,17 +519,15 @@ describe('GroupMcpService.refreshTools（P5）', () => {
     removedTools.length = 0; // 清掉重灌期间的 remove 记录
 
     // 上游变更：s1 工具集变为 [t1,t4]（t2 消失、t4 新增）
-    (cm.getServerTools as ReturnType<typeof vi.fn>).mockImplementation(
-      async (serverId: string) => {
-        if (serverId === 's1') {
-          return [
-            { name: 't1', serverId: 's1', inputSchema: { type: 'object', properties: {} } },
-            { name: 't4', serverId: 's1', inputSchema: { type: 'object', properties: {} } },
-          ];
-        }
-        return [{ name: 't3', serverId: 's2', inputSchema: { type: 'object', properties: {} } }];
-      },
-    );
+    (cm.getServerTools as ReturnType<typeof vi.fn>).mockImplementation(async (serverId: string) => {
+      if (serverId === 's1') {
+        return [
+          { name: 't1', serverId: 's1', inputSchema: { type: 'object', properties: {} } },
+          { name: 't4', serverId: 's1', inputSchema: { type: 'object', properties: {} } },
+        ];
+      }
+      return [{ name: 't3', serverId: 's2', inputSchema: { type: 'object', properties: {} } }];
+    });
 
     const registerCallsBefore = mcpServer.registerTool.mock.calls.length;
     await svc.refreshTools('s1');
@@ -611,7 +615,8 @@ describe('MRTR handler（P5）', () => {
       .mockResolvedValue(opts.upstreamResult) as unknown as ReturnType<typeof vi.fn>;
     // 挂到 core manager mock 上（接口未显式声明，但 backend 适配器有此方法；
     // handler 改造后走 executeToolCallWithContext 路径）
-    (cm as unknown as Record<string, unknown>).executeToolCallWithContext = executeToolCallWithContext;
+    (cm as unknown as Record<string, unknown>).executeToolCallWithContext =
+      executeToolCallWithContext;
 
     const svc = new GroupMcpService('testgroup', cm, opts.mrtrRelay);
     await svc.initialize();
@@ -621,9 +626,11 @@ describe('MRTR handler（P5）', () => {
     };
     const registerCalls = mcpServer.registerTool.mock.calls;
     // 找到动态工具注册项（排除 group_status / list_group_tools 管理工具）
-    const dynamic = registerCalls.find(
-      (c: unknown[]) => c[0] === 's1_t',
-    ) as unknown as [string, unknown, (args: unknown, extra: unknown) => Promise<unknown>];
+    const dynamic = registerCalls.find((c: unknown[]) => c[0] === 's1_t') as unknown as [
+      string,
+      unknown,
+      (args: unknown, extra: unknown) => Promise<unknown>,
+    ];
     expect(dynamic).toBeDefined();
     return { handler: dynamic[2], executeToolCallWithContext, mrtrRelay: opts.mrtrRelay };
   }
@@ -679,10 +686,7 @@ describe('MRTR handler（P5）', () => {
     };
     const hubState = await mrtrRelay.relay('s1', 't', upstreamFirst, 1);
     // 用 codec.verify 解出 HubState，模拟 SDK seam 在 handler 前已 verify
-    const verifiedHubState = await mrtrRelay.verify(
-      hubState.requestState,
-      {} as never,
-    );
+    const verifiedHubState = await mrtrRelay.verify(hubState.requestState, {} as never);
 
     // 第二轮：上游返回最终结果（带 content），断言 retryContext 透传
     const upstreamSecond = { content: [{ type: 'text', text: 'done' }] };
@@ -750,7 +754,8 @@ describe('MRTR handler（P5）', () => {
       .mockResolvedValueOnce(upstreamRound1)
       .mockResolvedValueOnce(upstreamRound2)
       .mockResolvedValueOnce(upstreamRound3) as unknown as ReturnType<typeof vi.fn>;
-    (cm as unknown as Record<string, unknown>).executeToolCallWithContext = executeToolCallWithContext;
+    (cm as unknown as Record<string, unknown>).executeToolCallWithContext =
+      executeToolCallWithContext;
 
     const svc = new GroupMcpService('testgroup', cm, mrtrRelay);
     await svc.initialize();
@@ -758,9 +763,11 @@ describe('MRTR handler（P5）', () => {
       registerTool: ReturnType<typeof vi.fn>;
     };
     const registerCalls = mcpServer.registerTool.mock.calls;
-    const dynamic = registerCalls.find(
-      (c: unknown[]) => c[0] === 's1_t',
-    ) as unknown as [string, unknown, (args: unknown, extra: unknown) => Promise<unknown>];
+    const dynamic = registerCalls.find((c: unknown[]) => c[0] === 's1_t') as unknown as [
+      string,
+      unknown,
+      (args: unknown, extra: unknown) => Promise<unknown>,
+    ];
     expect(dynamic).toBeDefined();
     const handler = dynamic[2];
 
