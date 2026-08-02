@@ -25,6 +25,7 @@ export default defineConfig({
     //   api-e2e / api-e2e-oauth / api-e2e-validation / api-e2e-outbound，各自隔离端口+setup）。
     projects: [
       './packages/share/vitest.config.ts',
+      './packages/protocol/vitest.config.ts',
       './packages/core/vitest.config.ts',
       './packages/cli/vitest.config.ts',
       './backend/vitest.config.ts',
