@@ -5,3 +5,6 @@
  * outbound / mrtr / errors 等模块的公共导出。
  */
 export const PROTOCOL_VERSION = '0.0.1';
+
+export { CompatibilityOptionsSchema, defaultCompatibilityOptions } from './config.js';
+export type { CompatibilityOptions } from './config.js';
