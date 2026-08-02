@@ -28,3 +28,5 @@ export {
   inputRequiredResult,
   errorResult,
 } from './model/normalized.js';
+
+export { normalizeError, toJsonRpcError, UnifiedErrorNormalizer } from './errors/normalizer.js';
