@@ -8,6 +8,9 @@
 # 做什么：
 #   1. 构建 backend（dist）；
 #   2. 在固定端口 8181 以「开放访问」配置起 Hub（OAuth 未配置 → /:group/mcp 全开）；
+#      配置**完全自包含**：在临时目录里生成最小 system/group/mcp_server.json，
+#      不依赖仓库 backend/config/*.json（那些被 .gitignore 忽略，干净 CI 里不存在），
+#      也不连任何外部上游（占位 stub 永远连不上，只为满足组校验）；
 #   3. 用官方 @modelcontextprotocol/conformance v0.1.16（npx 拉取，不加为依赖）
 #      在 server 模式下连 http://localhost:8181/default/mcp 跑 active suite；
 #   4. 用 scripts/conformance/expected-failures.yaml 作 baseline：所有失败必须落在
@@ -27,7 +30,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFORMANCE_PKG="@modelcontextprotocol/conformance@0.1.16"
 HUB_PORT="${HUB_PORT:-8181}"
-HUB_GROUP="${HUB_GROUP:-default}"
+# HUB_GROUP：自包含配置只生成 default 组（见下方 TMP_CONFIG 生成段）。
+# 不再支持通过 HUB_GROUP 指向其他组——干净 CI 里没有别的组，避免误导。
+HUB_GROUP="default"
 HUB_URL="http://localhost:${HUB_PORT}/${HUB_GROUP}/mcp"
 SPEC_VERSION="${SPEC_VERSION:-2025-11-25}"   # 累积过滤；覆盖全部 server 场景
 SUITE="${SUITE:-active}"
@@ -39,6 +44,8 @@ log()  { printf '\033[36m[conformance]\033[0m %s\n' "$*"; }
 err()  { printf '\033[31m[conformance ERROR]\033[0m %s\n' "$*" >&2; }
 
 HUB_PID=""
+TMP_CONFIG=""
+HUB_LOG=""   # 每次运行用 mktemp 生成，运行结束在 trap 里清理（不再用全局 /tmp 固定路径）
 cleanup() {
   if [[ -n "${HUB_PID}" ]] && kill -0 "${HUB_PID}" 2>/dev/null; then
     log "关闭 Hub（pid=${HUB_PID}）"
@@ -50,10 +57,10 @@ cleanup() {
     pkill -9 -f "dist/backend/src/index.js" 2>/dev/null || true
   fi
 }
-TMP_CONFIG=""
 finish() {
   cleanup
   [[ -n "${TMP_CONFIG}" && -d "${TMP_CONFIG}" ]] && rm -rf "${TMP_CONFIG}"
+  [[ -n "${HUB_LOG}" && -f "${HUB_LOG}" ]] && rm -f "${HUB_LOG}"
 }
 trap finish EXIT INT TERM
 
@@ -82,12 +89,53 @@ if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"${HUB_PORT}" -sTCP:LISTEN 
   exit 3
 fi
 
-# 用临时 CONFIG_PATH 放一份 system.json={}（空对象 → 走 port 默认值 8181 且 OAuth 未配置
-# → /:group/mcp 全开，TCK 无需凭据即可连）。避免污染仓库 backend/config。
+# 用临时 CONFIG_PATH 放一份**自包含**的最小配置，完全不依赖仓库 backend/config/*.json
+# （这些 .json 被 .gitignore 忽略，干净 CI checkout 里不存在）。
+#
+# 设计目标（C1 修复）：
+#   - 只有 default 组，且该组只引用一个**永远连不上**的占位上游 stub server。
+#     这样既满足 GroupSchema 的 servers.min(1) 校验，又不会引入任何外部进程/网络依赖，
+#     也不依赖工作树里未提交的 group.json / mcp_server.json。
+#   - system.json={} → port 默认 8181、OAuth 未配置 → /:group/mcp 全开，TCK 无需凭据。
+#   - 占位上游连不上 → ServerManager 把它登记为 ERROR（仍出现在 getAllServers，
+#     使 group 校验通过），但 getAvailableServersForGroup 只留 status=connected 的 →
+#     该组可用上游为空。tools/list 仍会返回 Hub 自注册的两个组管理工具
+#     （group_status / list_group_tools），它们缺 description → tools-list 场景 FAILURE，
+#     已在 baseline（详见 expected-failures.yaml 第五节）。
+#   - 不生成 api-tools.json：JsonStorage 在缺失时不报错，且无 apiToolService 注册。
 TMP_CONFIG="$(mktemp -d)"
-cp "${REPO_ROOT}/backend/config/"*.json "${TMP_CONFIG}/" 2>/dev/null || true
-# 强制 system.json 为空对象：触发 getAllConfig 的 system=空分支（port 默认 8181，OAuth 未配置）
+
+# system.json：空对象触发 system=空分支（port 默认 8181，OAuth 未配置）
 printf '{}\n' > "${TMP_CONFIG}/system.json"
+
+# group.json：default 组引用占位上游 stub（满足 servers.min(1)）
+cat > "${TMP_CONFIG}/group.json" <<'EOF'
+{
+  "default": {
+    "id": "default",
+    "name": "conformance-default",
+    "description": "自包含的最小 default 组（conformance TCK 用，不连任何真实上游）",
+    "servers": ["stub"],
+    "tools": []
+  }
+}
+EOF
+
+# mcp_server.json：占位上游 stub——stdio 命令指向不存在的二进制，spawn 立即 ENOENT 失败，
+# 注册为 ERROR 状态，不产生任何工具，也不拉起真实进程。
+cat > "${TMP_CONFIG}/mcp_server.json" <<'EOF'
+{
+  "servers": {
+    "stub": {
+      "type": "stdio",
+      "command": "conformance-stub-upstream-not-real",
+      "args": [],
+      "env": {},
+      "enabled": true
+    }
+  }
+}
+EOF
 # 若调用方通过 HUB_PORT 改了端口，写进 system.json（需要完整 system 校验，故仅当端口非默认时
 # 走环境变量 HUB_PORT 让 index.ts 读取——index.ts 当前只读 config，不读 env，因此改端口需配
 # 置文件；默认 8181 即可，不在此处支持改端口以避免触发 system 全字段校验）。
@@ -97,8 +145,9 @@ if [[ "${HUB_PORT}" != "8181" ]]; then
 fi
 
 log "启动 Hub：port=${HUB_PORT} endpoint=/${HUB_GROUP}/mcp（开放访问）"
+HUB_LOG="$(mktemp -t p7-conformance-hub.XXXXXX.log)"
 ( cd "${REPO_ROOT}/backend" \
-  && CONFIG_PATH="${TMP_CONFIG}" node "${BACKEND_ENTRY}" ) >/tmp/p7-conformance-hub.log 2>&1 &
+  && CONFIG_PATH="${TMP_CONFIG}" node "${BACKEND_ENTRY}" ) >"${HUB_LOG}" 2>&1 &
 HUB_PID=$!
 
 # ---------- 3. 等 Hub 就绪 ----------
@@ -111,12 +160,12 @@ for _ in $(seq 1 60); do
         -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${SPEC_VERSION}"'","capabilities":{},"clientInfo":{"name":"tck-probe","version":"1"}}}'; then
     ready=1; break
   fi
-  kill -0 "${HUB_PID}" 2>/dev/null || { err "Hub 进程已退出，日志见 /tmp/p7-conformance-hub.log"; tail -20 /tmp/p7-conformance-hub.log >&2 || true; exit 3; }
+  kill -0 "${HUB_PID}" 2>/dev/null || { err "Hub 进程已退出，日志见 ${HUB_LOG}"; tail -20 "${HUB_LOG}" >&2 || true; exit 3; }
   sleep 0.5
 done
 if [[ "${ready}" != "1" ]]; then
-  err "Hub 在 30s 内未就绪，日志见 /tmp/p7-conformance-hub.log"
-  tail -20 /tmp/p7-conformance-hub.log >&2 || true
+  err "Hub 在 30s 内未就绪，日志见 ${HUB_LOG}"
+  tail -20 "${HUB_LOG}" >&2 || true
   exit 3
 fi
 log "Hub 就绪（${HUB_URL}）"
@@ -147,7 +196,7 @@ if [[ "${TCK_EXIT}" -eq 0 ]]; then
 else
   err "❌ conformance 未通过（exit ${TCK_EXIT}）：存在 unexpected failure 或 stale baseline 条目。"
   err "   结果目录：${OUT_DIR}"
-  err "   Hub 日志：/tmp/p7-conformance-hub.log"
+  err "   Hub 日志：${HUB_LOG}"
   err "   - unexpected failure = 真实回归，需修复 Hub；"
   err "   - stale baseline 条目 = 之前失败的场景现在通过了，需从 expected-failures.yaml 移除。"
   exit "${TCK_EXIT}"
