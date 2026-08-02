@@ -41,6 +41,30 @@ describe('OutboundProtocolAdapter', () => {
     expect(r.kind).toBe('success');
   });
 
+  it('modern result 缺 content 时归一为空 success（覆盖 ?? [] 分支）', () => {
+    const r = translateUpstreamResult({}, 'modern');
+    expect(r.kind).toBe('success');
+    if (r.kind === 'success') expect(r.content).toEqual([]);
+  });
+
+  it('modern result isError=true 透传（覆盖 isError ?? false 真分支）', () => {
+    const r = translateUpstreamResult(
+      { content: [{ type: 'text', text: 'err' }], isError: true },
+      'modern',
+    );
+    expect(r.kind).toBe('success');
+    if (r.kind === 'success') expect(r.isError).toBe(true);
+  });
+
+  it('legacy result 缺 content/isError 时归一为空 success（覆盖 legacy translator 的 ?? 分支）', () => {
+    const r = translateUpstreamResult({}, 'legacy');
+    expect(r.kind).toBe('success');
+    if (r.kind === 'success') {
+      expect(r.content).toEqual([]);
+      expect(r.isError).toBe(false);
+    }
+  });
+
   it('upstream input_required 归一为 input_required', () => {
     const r = translateUpstreamResult(
       {
