@@ -4,7 +4,8 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
  *
  * 验证 Hub 在升级到 MCP 2026-07-28（v2）后的 5 个核心协议合规点：
  *   1. server/discover 返回 capabilities（modern 握手真的能跑通）
- *   2. 入站激进升级（legacy: 'reject'）拒绝 2025-era initialize
+ *   2. 入站默认全开（stateless）下，裸 stateful initialize 握手仍被拒绝
+ *      （SDK stateless 语义：只服务无状态请求），返回 4xx
  *   3. 出站 era 桥接（Hub 对外 modern StreamableHTTP，后端接 2025-era legacy
  *      upstream）—— 已实现（确定性 legacy-upstream-server.ts fixture）
  *   4. 无状态：两个互不相关的请求被独立处理（无 session 粘连）
