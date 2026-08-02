@@ -51,3 +51,6 @@ export {
   translateLegacyResult,
   legacyMrtrUnsupportedError,
 } from './outbound/legacy-translator.js';
+
+export { HubMrtrCodec } from './mrtr/relay.js';
+export type { HubState, HubMrtrCodecOptions } from './mrtr/relay.js';
