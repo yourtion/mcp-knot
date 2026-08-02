@@ -54,14 +54,9 @@ server:
   - elicitation-sep1034-defaults  # 缺 test_elicitation_sep1034_defaults 工具
   - elicitation-sep1330-enums     # 缺 test_elicitation_sep1330_enums 工具
 
-  # ---- 五、tools-list：Hub 自注册的组管理工具 group_status / list_group_tools
-  # ----     注册时只传 { inputSchema }、缺 description 字段（group-service.ts
-  # ----     registerGroupManagementTools）。TCK 要求每个工具都有 description → 失败。
-  # ----     注：首次报告误把根因归于「转发上游工具缺 description」，Fix round 1
-  # ----     改用自包含空 default 组（不连任何上游）复跑后核实真因是这两个内置工具。
-  # ----     属 Hub 自身工具 schema 缺陷（非架构性、非上游问题），后续给这两个工具
-  # ----     补 description 即可移除此条。
-  - tools-list
+  # ---- 五、tools-list 已修复移出 baseline（2026-08-02）：group_status /
+  # ----     list_group_tools 两个自注册工具补了 description（group-service.ts
+  # ----     registerGroupManagementTools），TCK tools-list 场景现通过。
 
   # ---- 六、DNS rebinding：Hub 当前不校验 Host/Origin 头（无 DNS-rebinding 防护）。
   # ----     localhost-host-valid-accepted 子检查通过；invalid-host 子检查期望 4xx 实得 200。
