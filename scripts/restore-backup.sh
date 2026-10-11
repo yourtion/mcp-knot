@@ -137,7 +137,7 @@ if pm2 list | grep -q "mcp-knot-api"; then
     pm2 restart mcp-knot-api
 else
     cd backend
-    pm2 start dist/src/index.js --name mcp-knot-api
+    pm2 start dist/index.js --name mcp-knot-api
 fi
 
 log_info "服务已启动"

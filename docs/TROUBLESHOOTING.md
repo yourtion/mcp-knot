@@ -403,7 +403,7 @@ ps aux | grep mcp-knot            # 观察占用
 
 #### 提高并发
 
-PM2 集群模式：`pm2 start dist/src/index.js -i max`；或在 Nginx 层做负载均衡部署多实例。
+PM2 集群模式：`pm2 start dist/index.js -i max`；或在 Nginx 层做负载均衡部署多实例。
 
 ### Docker 与部署
 

@@ -173,10 +173,10 @@ pnpm build:production
 
 ```bash
 # 方式 A：从仓库根启动（读 ./config）
-pm2 start backend/dist/src/index.js --name mcp-knot-api --cwd .
+pm2 start backend/dist/index.js --name mcp-knot-api --cwd .
 
 # 方式 B：用 CONFIG_PATH 指定配置目录
-CONFIG_PATH=/etc/mcp-knot/config pm2 start backend/dist/src/index.js --name mcp-knot-api
+CONFIG_PATH=/etc/mcp-knot/config pm2 start backend/dist/index.js --name mcp-knot-api
 
 pm2 save
 pm2 startup

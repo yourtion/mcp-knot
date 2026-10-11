@@ -68,9 +68,9 @@ command -v node >/dev/null || { err "未找到 node"; exit 2; }
 [[ -f "${BASELINE}" ]]     || { err "baseline 文件不存在：${BASELINE}"; exit 2; }
 
 # ---------- 1. 构建 backend ----------
-# dist 路径受 monorepo tsconfig 影响：backend 实际产物在 dist/backend/src/index.js
+# backend rootDir=src，产物入口固定为 dist/index.js
 # （与 package.json 的 start 入口一致）
-BACKEND_ENTRY="${REPO_ROOT}/backend/dist/backend/src/index.js"
+BACKEND_ENTRY="${REPO_ROOT}/backend/dist/index.js"
 if [[ "${CONFORMANCE_SKIP_BUILD:-0}" != "1" ]]; then
   log "构建 backend（确保验证当前源码）"
   (cd "${REPO_ROOT}" && pnpm --filter @mcp-core/mcp-knot-share build >/dev/null \
