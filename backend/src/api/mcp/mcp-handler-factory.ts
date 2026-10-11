@@ -6,8 +6,10 @@
  *
  * - 工厂闭包从 groupServices 缓存中取（或惰性创建）GroupMcpService，
  *   返回其已注册好工具的 McpServer 实例。
- * - 入站激进升级：legacy: 'reject' 拒绝所有 2025-era（无 envelope）请求，
- *   仅服务 2026-07-28 modern 流量。
+ * - 入站兼容（P7）：legacy 开关由 InboundProtocolAdapter 据
+ *   CompatibilityOptions（system.json compatibility 段）解析。默认全开时
+ *   legacyMode='stateless'（HTTP 走无状态 shim，由 SDK 服务 legacy 客户端）；
+ *   inbound.enabled=false 或 legacyMode='reject' 时退回 'reject'。
  * - handler.fetch 是 Web-standard face，Hono 端用 c.req.raw 桥接
  *   （预解析 body 经 parsedBody 传入，避免重复读取请求流）。
  *
@@ -15,6 +17,11 @@
  * serving），与 groupServices 缓存互补：缓存复用 GroupMcpService/McpServer
  * 实例以避免重复初始化与工具注册。
  */
+import {
+  CompatibilityOptionsSchema,
+  InboundProtocolAdapter,
+  type CompatibilityOptions,
+} from '@mcp-core/mcp-knot-protocol';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 
 import { MrtrRelayService } from '../../services/mrtr-relay-service.js';
@@ -24,6 +31,69 @@ import { logger } from '../../utils/logger.js';
 import { GroupMcpService } from './group-service.js';
 
 import type { McpHttpHandler } from '@modelcontextprotocol/server';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P7 协议兼容层：CompatibilityOptions 单例 + InboundProtocolAdapter。
+//
+// 与 MRTR relay 一样进程级单例（首次读取 system.json 后缓存），避免每请求重读
+// config + 重 parse schema。运行期翻转 compatibility 配置需重启进程（与 relay
+// 单例语义一致）。解析失败（system.json 损坏）时回退 defaultCompatibilityOptions
+// （schema.parse({}) = 全开），保证启动不阻断。
+//
+// 入站 legacy 开关改由 InboundProtocolAdapter.resolveLegacyMode('http') 解析：
+//   - inbound.enabled=false 或 legacyMode='reject' → 'reject'（拒绝 legacy 流量）
+//   - 否则 → 'stateless'（HTTP 传输走无状态 legacy shim，由 SDK 处理）
+// 默认全开时 resolveLegacyMode('http') === 'stateless'。
+// ─────────────────────────────────────────────────────────────────────────────
+
+let compatibilityInstance: CompatibilityOptions | null = null;
+let compatibilityPromise: Promise<CompatibilityOptions> | null = null;
+
+/**
+ * 获取（必要时惰性构造）CompatibilityOptions 单例。
+ * 从 system.json 的 compatibility 段读取（缺失/为空时 schema.parse({}) 回退默认全开）。
+ * 读取失败时回退默认值并缓存（compatibility 是稳定配置决策，非瞬时错误可重试的）。
+ */
+export async function getCompatibilityOptions(): Promise<CompatibilityOptions> {
+  if (compatibilityInstance) {
+    return compatibilityInstance;
+  }
+  if (!compatibilityPromise) {
+    compatibilityPromise = (async () => {
+      try {
+        const cfg = await getAllConfig();
+        const raw = cfg.system?.compatibility ?? {};
+        const opts = CompatibilityOptionsSchema.parse(raw);
+        compatibilityInstance = opts;
+        logger.info('CompatibilityOptions 单例已构造（P7）', {
+          inboundEnabled: opts.inbound.enabled,
+          inboundLegacyMode: opts.inbound.legacyMode,
+          outboundModernOnly: opts.outbound.modernOnly,
+          errorsUnified: opts.errors.unified,
+        });
+        return opts;
+      } catch (error) {
+        logger.warn('读取 compatibility 配置失败，回退默认全开（P7）', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        const fallback = CompatibilityOptionsSchema.parse({});
+        // 配置读取失败回退默认值也缓存（默认全开是安全决策；不重试避免每请求重读）
+        compatibilityInstance = fallback;
+        return fallback;
+      }
+    })();
+  }
+  return compatibilityPromise;
+}
+
+/**
+ * 重置 CompatibilityOptions 单例缓存（仅测试用：让每个用例独立读 config）。
+ * 生产代码不应调用。
+ */
+export function resetCompatibilityOptionsCacheForTest(): void {
+  compatibilityInstance = null;
+  compatibilityPromise = null;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // P5 MRTR：Hub 级 requestState codec 单例。
@@ -65,12 +135,14 @@ function resolveMrtrKey(configuredKey?: string): Uint8Array {
         return new Uint8Array(bytes);
       }
       logger.warn('MRTR stateKey 解码后不足 32 字节，回退下一候选/随机生成', {
-        source: candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
+        source:
+          candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
         byteLength: bytes.byteLength,
       });
     } catch (error) {
       logger.warn('MRTR stateKey hex 解码失败，回退下一候选/随机生成', {
-        source: candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
+        source:
+          candidate === configuredKey ? 'system.json mrtr.stateKey' : 'MRTR_REQUEST_STATE_KEY',
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -126,9 +198,12 @@ async function getMrtrRelay(): Promise<MrtrRelayService | null> {
         stateKey = cfg.system?.mrtr?.stateKey;
       } catch (error) {
         configReadFailed = true;
-        logger.warn('读取 mrtr 配置失败，本次回退默认值（enabled=true, ttl=600s, 随机 key）且不缓存单例，下次调用重试', {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          '读取 mrtr 配置失败，本次回退默认值（enabled=true, ttl=600s, 随机 key）且不缓存单例，下次调用重试',
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
       }
       // P5 修复（C1）：mrtr.enabled=false 不构造 relay，返回 null。
       // GroupMcpService 收到 undefined 的 mrtrRelay 后走「识别但不中转」保底路径。
@@ -159,7 +234,10 @@ async function getMrtrRelay(): Promise<MrtrRelayService | null> {
         return relay;
       }
       mrtrRelayInstance = relay;
-      logger.info('MRTR relay 单例已构造（P5）', { ttlSeconds, hasStateKey: stateKey !== undefined });
+      logger.info('MRTR relay 单例已构造（P5）', {
+        ttlSeconds,
+        hasStateKey: stateKey !== undefined,
+      });
       return relay;
     })();
   }
@@ -257,6 +335,13 @@ export async function createGroupMcpHandler(groupId: string): Promise<McpHttpHan
     // 确保 service 已初始化并放入缓存（factory 闭包从缓存中取）
     await ensureGroupMcpService(groupId);
 
+    // P7：入站 legacy 开关经 InboundProtocolAdapter 解析（默认全开 → 'stateless'）
+    const compatOpts = await getCompatibilityOptions();
+    const inboundAdapter = new InboundProtocolAdapter(compatOpts);
+    // HTTP 传输：resolveLegacyMode 只会返回 'stateless' 或 'reject'
+    // （'serve' 仅 stdio 路径，此处不发生）。显式断言以满足 SDK options 类型。
+    const legacyMode = inboundAdapter.resolveLegacyMode('http') as 'stateless' | 'reject';
+
     const handler = createMcpHandler(
       // McpServerFactory：按请求返回该组对应的 McpServer
       //
@@ -280,8 +365,9 @@ export async function createGroupMcpHandler(groupId: string): Promise<McpHttpHan
         return groupService.getMcpServer();
       },
       {
-        // 入站激进升级：拒绝 2025-era（legacy）流量，仅服务 2026-07-28
-        legacy: 'reject',
+        // P7：legacy 由 InboundProtocolAdapter 据 CompatibilityOptions 解析
+        // （默认全开 → 'stateless'，SDK 服务 legacy HTTP 客户端；reject 时拒绝）
+        legacy: legacyMode,
         onerror: (error) => {
           logger.error('组MCP handler 错误', error, { groupId });
         },

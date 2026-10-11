@@ -1,13 +1,12 @@
 # CLI 使用指南
 
-MCP Knot CLI 包 (`@mcp-core/mcp-knot-cli`) 提供了一个独立的命令行 MCP 服务器，可以聚合多个 MCP 服务并通过标准 MCP 协议提供访问。
+MCP Knot CLI（包名 `@mcp-core/mcp-knot-cli`，命令 `mcp-knot`）是一个独立的命令行 MCP 服务器，可聚合多个 MCP 服务，并通过标准 MCP 协议（stdio 传输）对外提供访问。
 
 ## 安装
 
-### 从工作区安装
+### 从工作区构建
 
 ```bash
-# 构建 CLI 包
 cd packages/cli
 pnpm build
 
@@ -15,61 +14,85 @@ pnpm build
 node dist/cli.js
 ```
 
-### 全局安装（推荐）
+### 全局安装
 
 ```bash
 # 从 npm 安装（发布后）
 npm install -g @mcp-core/mcp-knot-cli
 
-# 或从本地构建安装
+# 或从本地构建产物安装
 cd packages/cli
 npm pack
 npm install -g mcp-core-mcp-knot-cli-1.0.0.tgz
 ```
 
-## 基本使用
-
-### 启动 CLI MCP 服务器
+## 命令行选项
 
 ```bash
-# 使用默认配置
+mcp-knot [选项] [配置文件路径]
+```
+
+| 选项                  | 说明                                                                              |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `-h, --help`          | 显示帮助信息                                                                      |
+| `-v, --verbose`       | 启用详细日志输出（注意：`-v` 是 verbose，不是 version）                           |
+| `--version`           | 显示版本信息（无短写）                                                            |
+| `-c, --config <path>` | 指定配置文件路径（默认：`./mcp_server.json`）                                     |
+| `--generate-config`   | 生成配置文件模板（输出到 stdout）                                                 |
+| `--template <type>`   | 指定模板类型：`basic` / `advanced` / `development` / `production`                 |
+| `--validate`          | 验证配置文件                                                                      |
+| `--list-templates`    | 列出所有可用的配置模板                                                            |
+| `--list-presets`      | 列出所有可用的服务器预设                                                          |
+| `--init`              | 快速初始化配置文件（包含 fetch / time / sequential-thinking）                     |
+| `--init-all`          | 初始化所有配置文件（包含组配置）                                                  |
+| `--overwrite`         | 覆盖已存在的配置文件（与 `--init` / `--init-all` / `--generate-config` 配合使用） |
+
+> 说明：CLI **没有** `--debug` / `-d` 或 `--log-level` / `-l` 选项。需要更详细的日志请使用 `-v` / `--verbose`。如果不带任何子命令式选项（如 `--validate`），则进入服务器启动流程。
+
+## 快速上手
+
+### 初始化配置
+
+```bash
+# 快速初始化默认配置（包含 fetch / time / sequential-thinking）
+mcp-knot --init
+
+# 初始化所有配置文件（包含组配置），并覆盖已存在文件
+mcp-knot --init-all --overwrite
+
+# 查看可用的配置模板和服务器预设
+mcp-knot --list-templates
+mcp-knot --list-presets
+
+# 生成高级模板并保存
+mcp-knot --generate-config --template advanced > mcp_server.json
+```
+
+### 验证与启动
+
+```bash
+# 验证配置文件
+mcp-knot --validate -c mcp_server.json
+
+# 使用默认配置（./mcp_server.json）启动
 mcp-knot
 
-# 指定配置文件
-mcp-knot --config /path/to/mcp_server.json
-
-# 启用调试模式
-mcp-knot --debug
-
-# 指定日志级别
-mcp-knot --log-level debug
+# 指定配置文件并启用详细日志
+mcp-knot -c /path/to/mcp_server.json -v
 ```
 
-### 命令行选项
+## 配置文件格式
 
-```bash
-mcp-knot [options]
+CLI 使用 `mcp_server.json` 配置文件，顶层结构为 `{"servers": {...}}`。每个 server 项支持标准的 `command` / `args` / `env` 等字段。
 
-选项:
-  --config, -c <path>     指定配置文件路径 (默认: ./mcp_server.json)
-  --log-level, -l <level> 设置日志级别 (debug|info|warn|error, 默认: info)
-  --debug, -d             启用调试模式
-  --help, -h              显示帮助信息
-  --version, -v           显示版本信息
-```
-
-## 配置
-
-### 配置文件格式
-
-CLI 使用与 API 服务器相同的 `mcp_server.json` 配置格式：
+> 说明：transport 固定为 stdio，**没有**独立的顶层 `transport` 字段；日志配置不在该文件中，由 `system.json` 管理，因此也**没有**顶层 `logging` 字段。
 
 ```json
 {
   "servers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/documents"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
       "env": {}
     },
     "brave-search": {
@@ -78,43 +101,19 @@ CLI 使用与 API 服务器相同的 `mcp_server.json` 配置格式：
       "env": {
         "BRAVE_API_KEY": "your-brave-api-key"
       }
-    },
-    "git": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-git", "/path/to/git/repo"],
-      "env": {}
     }
   }
 }
 ```
 
-### 配置文件位置
+### 配置文件查找顺序
 
-CLI 按以下顺序查找配置文件：
-
-1. 命令行指定的路径 (`--config`)
-2. 当前目录的 `mcp_server.json`
-3. 用户主目录的 `.mcp_server.json`
-4. 系统配置目录的 `mcp_server.json`
-
-### 环境变量配置
-
-```bash
-# 设置默认配置文件路径
-export MCP_HUB_CONFIG=/path/to/config.json
-
-# 设置日志级别
-export MCP_HUB_LOG_LEVEL=debug
-
-# 启用调试模式
-export MCP_HUB_DEBUG=true
-```
+1. 命令行指定的路径（`-c` / `--config`，或直接位置参数）
+2. 当前目录下的 `mcp_server.json`
 
 ## MCP 客户端集成
 
-### Claude Desktop 集成
-
-在 Claude Desktop 的配置文件中添加 MCP Knot CLI：
+### Claude Desktop
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -130,169 +129,57 @@ export MCP_HUB_DEBUG=true
 }
 ```
 
-### 其他 MCP 客户端
+### 直接通过 stdin/stdout 交互
 
-CLI 服务器通过 stdin/stdout 实现标准 MCP 协议，可以与任何支持 MCP 的客户端集成：
-
-```bash
-# 直接与 CLI 服务器交互
-echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | mcp-knot
-```
-
-## 使用示例
-
-### 基本工具列表
+CLI 服务器通过 stdin/stdout 实现标准 MCP 协议，可与任何支持 MCP 的客户端集成：
 
 ```bash
-# 启动 CLI 服务器
-mcp-knot --config examples/config.json
+# 列出所有工具
+echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | mcp-knot -c mcp_server.json
 
-# 在另一个终端中测试
-echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | mcp-knot --config examples/config.json
-```
-
-### 调用工具
-
-```bash
-# 调用文件系统工具
+# 调用工具
 echo '{
   "jsonrpc": "2.0",
   "id": 2,
   "method": "tools/call",
   "params": {
     "name": "read_file",
-    "arguments": {
-      "path": "/path/to/file.txt"
-    }
+    "arguments": { "path": "/path/to/file.txt" }
   }
-}' | mcp-knot
-```
-
-### 调试模式
-
-```bash
-# 启用详细日志
-mcp-knot --debug --log-level debug
-
-# 查看连接状态
-mcp-knot --debug 2>&1 | grep "连接状态"
+}' | mcp-knot -c mcp_server.json
 ```
 
 ## 故障排除
 
-### 常见问题
+### 配置文件未找到
 
-#### 1. 配置文件未找到
-
-```bash
+```text
 错误: 配置文件未找到: mcp_server.json
-
-解决方案:
-- 确保配置文件存在于当前目录
-- 使用 --config 指定正确路径
-- 检查文件权限
 ```
 
-#### 2. MCP 服务器连接失败
+解决：确保配置文件存在于当前目录，或使用 `-c` / `--config` 指定正确路径。若尚无配置文件，可使用 `mcp-knot --init` 生成。
 
-```bash
+### MCP 服务器连接失败
+
+```text
 错误: 无法连接到 MCP 服务器 'filesystem'
-
-解决方案:
-- 检查服务器命令和参数是否正确
-- 确保所需的 npm 包已安装
-- 验证环境变量设置
-- 使用 --debug 查看详细错误信息
 ```
 
-#### 3. 工具调用失败
+解决：检查该 server 的 `command` 和 `args` 是否正确、所需 npm 包是否已安装、`env` 中的环境变量（如 API Key）是否设置；使用 `-v` 查看更详细的信息。
+
+### 验证配置文件
 
 ```bash
-错误: 工具调用失败: read_file
-
-解决方案:
-- 确保工具名称正确
-- 检查工具参数格式
-- 验证文件路径和权限
-- 查看服务器日志
+# 启动前先验证配置
+mcp-knot --validate -c mcp_server.json
 ```
 
-### 调试技巧
+`--validate` 会输出详细的校验结果，并在配置非法时以非 0 退出码退出。
 
-#### 启用详细日志
-
-```bash
-# 最详细的日志输出
-mcp-knot --debug --log-level debug
-
-# 只显示错误
-mcp-knot --log-level error
-```
-
-#### 检查服务器状态
+## 本地开发
 
 ```bash
-# 查看所有连接的服务器
-echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | mcp-knot --debug
-```
-
-#### 测试单个服务器
-
-```bash
-# 创建只包含一个服务器的测试配置
-{
-  "servers": {
-    "test-server": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-      "env": {}
-    }
-  }
-}
-```
-
-## 高级用法
-
-### 自定义日志配置
-
-```bash
-# 将日志输出到文件
-mcp-knot --log-level debug 2> mcp-knot.log
-
-# 使用 systemd 运行（Linux）
-sudo systemctl edit --force --full mcp-knot.service
-```
-
-### 性能优化
-
-```bash
-# 限制并发连接数
-export MCP_HUB_MAX_CONNECTIONS=10
-
-# 设置连接超时
-export MCP_HUB_TIMEOUT=30000
-```
-
-### 安全配置
-
-```bash
-# 限制可执行的命令
-export MCP_HUB_ALLOWED_COMMANDS="npx,node"
-
-# 设置工作目录
-export MCP_HUB_WORK_DIR=/safe/directory
-```
-
-## 开发和测试
-
-### 本地开发
-
-```bash
-# 克隆仓库
-git clone <repository-url>
-cd mcp-knot
-
-# 安装依赖
+# 克隆仓库后
 pnpm install
 
 # 构建 CLI 包
@@ -301,57 +188,11 @@ pnpm build
 
 # 运行测试
 pnpm test
-
-# 端到端测试
 pnpm test:e2e
 ```
-
-### 创建测试配置
-
-```bash
-# 创建测试配置文件
-cat > test-config.json << EOF
-{
-  "servers": {
-    "echo": {
-      "command": "node",
-      "args": ["-e", "console.log(JSON.stringify({result: 'Hello from echo server'}))"],
-      "env": {}
-    }
-  }
-}
-EOF
-
-# 测试配置
-mcp-knot --config test-config.json --debug
-```
-
-## 最佳实践
-
-### 配置管理
-
-1. **使用版本控制**: 将配置文件纳入版本控制
-2. **环境分离**: 为不同环境使用不同配置
-3. **敏感信息**: 使用环境变量存储 API 密钥
-4. **配置验证**: 定期验证配置文件格式
-
-### 监控和日志
-
-1. **结构化日志**: 使用 JSON 格式的日志
-2. **日志轮转**: 配置日志文件轮转
-3. **监控指标**: 监控连接状态和响应时间
-4. **告警设置**: 为关键错误设置告警
-
-### 安全考虑
-
-1. **最小权限**: 只授予必要的文件系统权限
-2. **网络隔离**: 在受限网络环境中运行
-3. **输入验证**: 验证所有输入参数
-4. **定期更新**: 保持依赖包更新
 
 ## 参考资料
 
 - [MCP 协议规范](https://modelcontextprotocol.io/docs)
 - [MCP SDK 文档](https://github.com/modelcontextprotocol/typescript-sdk)
 - [Claude Desktop MCP 配置](https://docs.anthropic.com/claude/docs/mcp)
-- [项目 GitHub 仓库](https://github.com/your-org/mcp-knot)

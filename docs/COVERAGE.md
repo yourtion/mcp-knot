@@ -90,10 +90,10 @@ pnpm coverage:report      # 显示覆盖率汇总
 ### 查看覆盖率报告
 
 ```bash
-# 打开 HTML 报告（macOS）
-pnpm --filter @mcp-core/mcp-knot-api coverage:open
+# 打开 core 包的 HTML 报告（仅 core 包提供此脚本）
 pnpm --filter @mcp-core/mcp-knot-core coverage:open
-pnpm --filter @mcp-core/mcp-knot-cli coverage:open
+
+# 其他包可直接打开各自 coverage 目录下的 HTML 报告
 ```
 
 ### CI/CD 测试
@@ -195,7 +195,7 @@ pnpm ci:test
 
    ```bash
    # 查看详细的覆盖率报告
-   pnpm coverage:check
+   pnpm coverage:report
    ```
 
 3. **合并报告失败**
@@ -220,9 +220,9 @@ pnpm ci:test
 # 测试相关
 pnpm test                    # 运行所有测试
 pnpm test:coverage          # 运行测试并生成覆盖率
-pnpm coverage:check         # 检查覆盖率阈值
+pnpm coverage:report        # 检查覆盖率阈值
 pnpm coverage:merge         # 合并覆盖率报告
-pnpm coverage:report        # 完整覆盖率流程
+pnpm coverage:full          # 完整覆盖率流程（test:coverage + merge + report）
 pnpm ci:test               # CI 测试流程
 
 # 开发相关

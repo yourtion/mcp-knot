@@ -3,6 +3,8 @@
  */
 import { z } from 'zod/v4';
 
+import { CompatibilityOptionsSchema } from './compatibility.schema.js';
+
 /**
  * 系统配置 Schema
  */
@@ -114,4 +116,10 @@ export const SystemConfigSchema = z.object({
       stateKey: z.string().optional(),
     })
     .optional(),
+
+  // P7：协议兼容层配置（双向 era 翻译 + 错误归一）。
+  // 整块 optional（与 subscriptions/mrtr 一致），未配置时由 ConfigManager.getCompatibility()
+  // 兜底解析为「默认全开」；提供时 `.prefault({})` 触发字段级 default（zod v4 容器级
+  // `.default({})` 不会回填字段默认值，Task 2 在 4.3.6 下验证）。
+  compatibility: CompatibilityOptionsSchema.prefault({}).optional(),
 });

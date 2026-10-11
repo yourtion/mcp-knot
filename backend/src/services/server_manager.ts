@@ -1,4 +1,5 @@
 import { ConfigError, ConnectionError, ErrorCode, ServiceError } from '@mcp-core/mcp-knot-core';
+import { OutboundProtocolAdapter, defaultCompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 import {
   Client,
   SSEClientTransport,
@@ -12,7 +13,39 @@ import { logger } from '../utils/logger.js';
 import { createServerAuthProvider } from './mcp-server-auth-provider.js';
 
 import type { ServerManager as IServerManager, ServerConnection, Tool } from '../types/mcp-knot.js';
+import type { UpstreamEra } from '../types/mcp-knot.js';
+import type { CompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 import type { ServerConfig } from '@mcp-core/mcp-knot-share';
+import type { Client as SdkClient } from '@modelcontextprotocol/client';
+
+/**
+ * 探测上游协议 era。connect 成功后调用，记录到 ServerConnection.era。
+ *
+ * 用 SDK client.getProtocolEra()（'modern' | 'legacy' | undefined）：
+ *   - 'modern' / 'legacy' → 原样记录
+ *   - undefined（未连接/协商未完成）→ 记录 'modern' 占位（MVP 不破坏现有 modern 链路，
+ *     Task 12 e2e 验证 legacy upstream 时完善），并记 warn 日志便于诊断
+ *
+ * 探测本身不抛错（fail-open）：失败时退化为 'modern' 假设，保证现有链路无回归。
+ */
+function probeUpstreamEra(client: SdkClient, serverId: string): UpstreamEra {
+  try {
+    const sdkEra = client.getProtocolEra();
+    if (sdkEra === 'modern' || sdkEra === 'legacy') {
+      return sdkEra;
+    }
+    // undefined：协商未完成或 SDK 未暴露——按 modern 假设（MVP 占位，不破坏现有链路）
+    logger.warn('上游 era 探测返回 undefined，按 modern 假设处理（P7 MVP 占位）', { serverId });
+    return 'modern';
+  } catch (error) {
+    // 防御性：getProtocolEra 不应抛错，但 fail-open 保证不阻断连接
+    logger.warn('探测上游 era 失败，按 modern 假设处理', {
+      serverId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 'modern';
+  }
+}
 
 /**
  * P5: 上游工具集变更检测器接入点。
@@ -20,6 +53,7 @@ import type { ServerConfig } from '@mcp-core/mcp-knot-share';
  * 便于测试注入部分 mock，也避免与 UpstreamChangeDetector 实现强耦合。
  */
 export interface ServerManagerOptions {
+  compatibility?: CompatibilityOptions;
   changeDetector?: {
     saveSnapshot: (serverId: string, tools: { name: string }[]) => void;
     onUpstreamNotification: (serverId: string) => void;
@@ -27,6 +61,8 @@ export interface ServerManagerOptions {
 }
 
 export class ServerManager implements IServerManager {
+  private readonly outboundAdapter: OutboundProtocolAdapter;
+  private readonly compatibility: CompatibilityOptions;
   private servers: Map<string, ServerConnection> = new Map();
   private serverConfigs: Map<string, ServerConfig> = new Map();
 
@@ -56,6 +92,8 @@ export class ServerManager implements IServerManager {
     serverConfigs: Record<string, ServerConfig>,
     private readonly options: ServerManagerOptions = {},
   ) {
+    this.compatibility = options.compatibility ?? defaultCompatibilityOptions;
+    this.outboundAdapter = new OutboundProtocolAdapter(this.compatibility);
     // Store server configurations
     for (const [serverId, config] of Object.entries(serverConfigs)) {
       this.serverConfigs.set(serverId, config);
@@ -112,8 +150,13 @@ export class ServerManager implements IServerManager {
           capabilities: { elicitation: {}, sampling: {}, roots: {} },
           // 出站保留兼容：探测到 modern server（2026-07-28）走 server/discover，
           // 否则回退到 legacy initialize。SDK 默认是 'legacy'（只发旧握手），
-          // 必须显式设 'auto' 才能连上纯 modern server。
-          versionNegotiation: { mode: 'auto' },
+          // 默认 auto 兼容两种 era；禁用 legacy 时固定到 modern 协议。
+          versionNegotiation: {
+            mode:
+              this.compatibility.outbound.modernOnly || !this.compatibility.outbound.enabled
+                ? { pin: '2026-07-28' }
+                : 'auto',
+          },
           // P5 MRTR：禁用上游客户端的 input_required 自动 fulfil。Hub 是中转层，
           // 不就地处理上游的 elicitation/sampling/roots 请求，而是把 input_required
           // 透传给下游客户端（真实用户交互）。auto-fulfil（默认）会试图调本地 handler，
@@ -162,18 +205,26 @@ export class ServerManager implements IServerManager {
       serverConnection.lastConnected = new Date();
       serverConnection.reconnectAttempts = 0;
 
+      // P7：探测上游协议 era（modern/legacy），记录到 server 元数据供 callTool 翻译用。
+      // 探测 fail-open：失败/undefined 时退化为 'modern'（不破坏现有 modern 链路）。
+      serverConnection.era = probeUpstreamEra(serverConnection.client, serverId);
+      try {
+        this.outboundAdapter.effectiveEra(serverConnection.era);
+      } catch (error) {
+        await serverConnection.client.close();
+        throw error;
+      }
+      logger.info('上游 era 探测完成（P7）', { serverId, era: serverConnection.era });
+
       logger.logServerConnection(serverId, 'connected');
 
       // P5: 注册上游 listChanged 通知 handler，收到推送时回调 Detector.onUpstreamNotification。
       // 必须在 discoverServerTools 之前注册，确保订阅就绪后再拉取首份工具列表；
       // 闭包捕获 serverId，handler 内部即可定位到正确的 server。
       if (this.options.changeDetector) {
-        serverConnection.client.setNotificationHandler(
-          'notifications/tools/list_changed',
-          () => {
-            this.options.changeDetector!.onUpstreamNotification(serverId);
-          },
-        );
+        serverConnection.client.setNotificationHandler('notifications/tools/list_changed', () => {
+          this.options.changeDetector!.onUpstreamNotification(serverId);
+        });
       }
 
       // Discover tools after successful connection
@@ -410,17 +461,17 @@ export class ServerManager implements IServerManager {
   }
 
   /**
-   * P5 MRTR：带重试上下文（inputResponses + requestState）的工具调用。
+   * P5 MRTR + P7 出站翻译：带重试上下文（inputResponses + requestState）的工具调用。
    *
    * 复用 executeToolOnServer 的连接查找 / 状态校验 / message tracker / trace
-   * _meta 注入逻辑；区别在于上游 callTool 的 request params 额外携带多轮重试
-   * 字段。SDK GA（protocol revision 2026-07-28）已确认：inputResponses 与
-   * requestState 是 `tools/call` request params 的**顶层成员**（与 name/
-   * arguments 平级，由 `retryParamsShape` / `RETRY_PARAMS_KEYS` 定义），**不是**
-   * options._meta 也不是 params._meta。trace 三件套仍走 params._meta。
+   * _meta 注入逻辑；区别在于上游 callTool 的 request params 经
+   * OutboundProtocolAdapter.translateCall 据 server.era 翻译：
+   *   - modern era：inputResponses/requestState 是顶层成员（与 name/arguments 平级，
+   *     由 retryParamsShape / RETRY_PARAMS_KEYS 定义），trace 三件套仍走 params._meta。
+   *   - legacy era：仅 name/arguments（legacy 协议层无 MRTR/重试字段）。
    *
    * retryContext.requestState 是上游原始 state（即 HubState.upstreamRequestState），
-   * 按规范字节级原样回传。
+   * 按规范字节级原样回传（modern era）。
    */
   async executeToolOnServerWithContext(
     serverId: string,
@@ -465,26 +516,34 @@ export class ServerManager implements IServerManager {
       }
 
       const startTime = Date.now();
-      // callTool params 顶层成员：name / arguments / _meta(可选) /
-      // inputResponses(可选，重试) / requestState(可选，重试)。
-      // （SDK CallToolRequestParams 对重试字段的接受见 retryParamsShape。）
+      // P7：经 OutboundProtocolAdapter.translateCall 据 upstream era 翻译 wire callTool params。
+      // modern era：name/arguments/(requestState/inputResponses 顶层) —— 与原手写一致。
+      // legacy era：仅 name/arguments（legacy 协议层无 input_required/重试字段），
+      //   MRTR 字段在 legacy upstream 会被剥离（adapter 由 era 决策）。
+      // trace _meta 是 backend 自有透传关注点（adapter 不处理 _meta），单独注入。
+      const mrtr: { requestState?: string; inputResponses?: Record<string, unknown> } = {};
+      if (retryContext.requestState !== undefined) {
+        mrtr.requestState = retryContext.requestState;
+      }
+      if (retryContext.inputResponses !== undefined) {
+        mrtr.inputResponses = retryContext.inputResponses;
+      }
+      const wire = this.outboundAdapter.translateCall(
+        {
+          toolName,
+          arguments: args,
+          ...(Object.keys(mrtr).length > 0 ? { mrtr } : {}),
+        },
+        server.era ?? 'modern',
+      );
+      // callTool params：adapter wire + trace _meta（backend 自有透传）
       const callParams: {
         name: string;
-        arguments: Record<string, unknown>;
+        arguments: unknown;
         _meta?: Record<string, string>;
         inputResponses?: Record<string, unknown>;
         requestState?: string;
-      } = {
-        name: toolName,
-        arguments: args,
-      };
-      // 多轮重试字段：顶层透传（仅当存在时加入，避免污染首轮式调用语义）
-      if (retryContext.inputResponses !== undefined) {
-        callParams.inputResponses = retryContext.inputResponses;
-      }
-      if (retryContext.requestState !== undefined) {
-        callParams.requestState = retryContext.requestState;
-      }
+      } = { ...wire };
       // P6/SEP-414：trace context 仍注入 _meta（与 executeToolOnServer 一致）
       const traceCtx = getCurrentTraceContext();
       if (hasTraceContext(traceCtx)) {
@@ -492,13 +551,18 @@ export class ServerManager implements IServerManager {
           Object.entries(traceCtx).filter(([, v]) => v !== undefined),
         ) as Record<string, string>;
       }
-      const response = await server.client.callTool(callParams, {
-        // P5 MRTR：允许上游返回 input_required 交回 Hub（而非被 auto-fulfil 驱动吞掉）。
-        // 配合 ClientOptions.inputRequired.autoFulfill:false，上游的 input_required
-        // 结果以 InputRequiredResult 形态回到这里，再由 group-service.ts 的
-        // isInputRequiredResult 分支识别并 mint Hub state 中转给下游。
-        allowInputRequired: true,
-      });
+      // SDK callTool 要求 arguments 为 { [x: string]: unknown }（adapter wire 为 unknown 形态，
+      // args 本身已是 Record<string, unknown>，断言还原）
+      const response = await server.client.callTool(
+        callParams as Parameters<typeof server.client.callTool>[0],
+        {
+          // P5 MRTR：允许上游返回 input_required 交回 Hub（而非被 auto-fulfil 驱动吞掉）。
+          // 配合 ClientOptions.inputRequired.autoFulfill:false，上游的 input_required
+          // 结果以 InputRequiredResult 形态回到这里，再由 group-service.ts 的
+          // isInputRequiredResult 分支识别并 mint Hub state 中转给下游。
+          allowInputRequired: true,
+        },
+      );
       const executionTime = Date.now() - startTime;
 
       logger.debug('Tool execution (with retry context) completed', {

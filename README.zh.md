@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文版
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 **把你的 MCP server 系在一起。**
 
@@ -46,7 +46,7 @@ MCP Knot 采用模块化 monorepo 架构，包含以下包：
 
 ### 前置要求
 
-- Node.js 18+
+- Node.js 20.19+（推荐 Node 22/24）
 - pnpm 包管理器
 
 ### 安装依赖
@@ -224,16 +224,18 @@ pnpm build:fe
    - 密码: `admin`
 
 2. **生产环境设置**:
-   - 在 `backend/config/system.json` 中配置凭据
-   - 使用 bcrypt 哈希设置强密码
-   - 在环境变量中配置 JWT 密钥
+   - 在 `system.json` 中配置凭据、JWT 密钥、服务端口（参见
+     `backend/config/system.json.example` 与 schema
+     `packages/share/src/config/schemas/system.schema.ts`）。
+   - 使用 bcrypt 哈希在 `auth.users` 块设置强密码。
+   - JWT 密钥与过期时间来自 `system.json` 的 `auth.jwt` 块，**不是**环境变量。
 
 3. **环境变量**:
    ```bash
-   # 后端 (.env)
-   JWT_SECRET=your-secret-key-here
-   JWT_EXPIRES_IN=1h
-   JWT_REFRESH_EXPIRES_IN=7d
+   # 后端 (.env) — 仅列代码实际识别的变量，完整说明见 .env.production.example
+   NODE_ENV=production
+   CONFIG_PATH=/path/to/config      # 含 system.json、mcp_server.json、group.json 的目录
+   VALIDATION_KEY_SECRET=<>=32 字符>  # 启用组 validation 时必填
    ```
 
 #### 访问 Web 界面
@@ -402,25 +404,23 @@ pnpm test:mcp         # MCP 协议测试
 
 - [Web 界面使用指南](docs/WEB_UI_GUIDE.md) - 完整的 Web 界面使用指南
 - [CLI 使用指南](docs/CLI_USAGE.md) - 详细的 CLI 使用和配置
-- [常见问题解答](docs/FAQ.md) - 常见问题和故障排除
+- [故障排除与常见问题](docs/TROUBLESHOOTING.md) - 常见问题和故障排除
 
 ### 技术文档
 
 - [API 参考](docs/API_REFERENCE.md) - 完整的 API 文档
 - [组路由指南](docs/GROUP_ROUTING.md) - 基于组的路由文档
-- [迁移指南](docs/MIGRATION.md) - 从旧版本升级
 
 ### 开发与部署
 
 - [开发指南](docs/DEVELOPMENT.md) - 开发环境搭建和贡献指南
 - [发布流程](#发布流程) - 使用 Changesets 进行版本管理和发布
-- [NPM Trusted Publishers 配置](docs/NPM_TRUSTED_PUBLISHERS.md) - 安全的包发布配置
 - [部署指南](docs/DEPLOYMENT.md) - 生产环境部署说明
 - [故障排除](docs/TROUBLESHOOTING.md) - 常见问题和解决方案
 
 ### 发布流程
 
-MCP Knot 使用 [Changesets](https://github.com/changesets/changesets) 进行版本管理和发布，并使用 [NPM Trusted Publishers](docs/NPM_TRUSTED_PUBLISHERS.md) 进行安全的包发布。
+MCP Knot 使用 [Changesets](https://github.com/changesets/changesets) 进行版本管理和发布。
 
 #### 日常开发流程
 
@@ -462,7 +462,17 @@ MCP Knot 使用 [Changesets](https://github.com/changesets/changesets) 进行版
 3. **合并 Version Packages PR**：触发自动发布
    - 发布到 npm
    - 创建 GitHub Release
-   - 构建 Docker 镜像
+   - 可选发布 Docker 镜像（`DOCKER_PUBLISH=true`）
+
+发包使用 **npm Trusted Publishing（OIDC）**，配置 Node 24、npm 11 和
+`id-token: write`，无需 npm token。只有 main 的 push CI 成功且仍对应当前 main
+提交时才会执行发布；先创建版本 PR，该 PR 合入并通过 CI 后自动发布构建好的包、
+包版本标签和 GitHub Release。
+
+首次发布前，需要用交互式 `npm login` 创建缺失的 npm 包，再逐包设置 Trusted
+Publisher：用户 `yourtion`、仓库 `mcp-knot`、工作流 **`publish.yml`**、环境留空，
+允许 **`npm publish`**。完整命令与重试说明见[发布配置指南](docs/RELEASING.md)。
+使用 `GITHUB_TOKEN` 自动创建的版本 PR，可能需要在 GitHub 上批准其 CI 运行。
 
 #### 版本类型选择
 

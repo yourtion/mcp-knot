@@ -200,16 +200,18 @@ describe('BackendCoreServiceAdapter', () => {
       });
       const adapter = new BackendCoreServiceAdapter(sm);
 
-      const result = await adapter.executeToolCallWithContext(
-        'my-tool',
-        { q: 'x' },
-        'srv-1',
-        { requestState: 'opaque' },
-      );
-
-      expect(sm.executeToolOnServerWithContext).toHaveBeenCalledWith('srv-1', 'my-tool', { q: 'x' }, {
+      const result = await adapter.executeToolCallWithContext('my-tool', { q: 'x' }, 'srv-1', {
         requestState: 'opaque',
       });
+
+      expect(sm.executeToolOnServerWithContext).toHaveBeenCalledWith(
+        'srv-1',
+        'my-tool',
+        { q: 'x' },
+        {
+          requestState: 'opaque',
+        },
+      );
       expect(result).toEqual(mcpResult);
     });
   });

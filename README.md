@@ -2,7 +2,7 @@
 
 English | [中文版](README.zh.md)
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 **Tie your MCP servers together.**
 
@@ -27,6 +27,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 - **`@mcp-core/mcp-knot-core`** - Core MCP service management, connection handling, and tool execution
 - **`@mcp-core/mcp-knot-api`** - Web API server with group-based routing and HTTP endpoints
 - **`@mcp-core/mcp-knot-cli`** - Command-line MCP server for standalone tool aggregation
+- **`@mcp-core/mcp-knot-protocol`** - Protocol compatibility layer: dual-era (modern/legacy) translation, normalized models, unified errors
 - **`@mcp-core/mcp-knot-share`** - Shared types and utilities across packages
 - **`@mcp-core/mcp-knot-web`** - Vue.js frontend interface (optional)
 
@@ -38,6 +39,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 ├── packages/
 │   ├── core/            # Core MCP logic (@mcp-core/mcp-knot-core)
 │   ├── cli/             # CLI package (@mcp-core/mcp-knot-cli)
+│   ├── protocol/        # Protocol compatibility layer (@mcp-core/mcp-knot-protocol)
 │   └── share/           # Shared types (@mcp-core/mcp-knot-share)
 └── docs/                # Documentation
 ```
@@ -46,7 +48,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 20.19+ (Node 22/24 recommended)
 - pnpm package manager
 
 ### Install Dependencies
@@ -228,16 +230,19 @@ The frontend uses JWT-based authentication. To configure authentication:
    - Password: `admin`
 
 2. **Production Setup**:
-   - Configure credentials in `backend/config/system.json`
-   - Set strong passwords using bcrypt hashing
-   - Configure JWT secret in environment variables
+   - Configure credentials, JWT secret, and server port in `system.json` (see
+     `backend/config/system.json.example` and the schema at
+     `packages/share/src/config/schemas/system.schema.ts`).
+   - Set strong passwords using bcrypt hashing in the `auth.users` block.
+   - JWT secret/expiry come from the `auth.jwt` block in `system.json`, **not**
+     environment variables.
 
 3. **Environment Variables**:
    ```bash
-   # Backend (.env)
-   JWT_SECRET=your-secret-key-here
-   JWT_EXPIRES_IN=1h
-   JWT_REFRESH_EXPIRES_IN=7d
+   # Backend (.env) — only env vars the code actually reads; see .env.production.example
+   NODE_ENV=production
+   CONFIG_PATH=/path/to/config      # directory containing system.json, mcp_server.json, group.json
+   VALIDATION_KEY_SECRET=<>=32 chars>  # required when group validation is enabled
    ```
 
 #### Accessing the Web Interface
@@ -369,11 +374,16 @@ curl -X POST http://localhost:8181/research/mcp \
 
 #### Connecting with the official MCP SDK (Node)
 
-The `/:group/mcp` endpoint enforces the modern **2026-07-28** protocol version and
-rejects legacy 2025-era handshakes (`legacy: 'reject'`). The official
-`@modelcontextprotocol/client` therefore needs **`versionNegotiation: { mode: 'auto' }`**
-to auto-negotiate the version — without it, the client defaults to `2025-11-25` and
-the handshake fails with `Unsupported protocol version`.
+The `/:group/mcp` endpoint serves the modern **2026-07-28** protocol by default,
+and — since the protocol compatibility layer (P7) — **also accepts legacy 2025-era
+clients**. Inbound compatibility defaults to **全开 (modern + legacy)**: a modern
+client negotiates via `server/discover`, while a legacy client's bare `initialize`
+handshake is still served. This is configurable (see
+[Protocol Compatibility](#protocol-compatibility)).
+
+For a modern client, the official `@modelcontextprotocol/client` should use
+**`versionNegotiation: { mode: 'auto' }`** so the SDK probes and adopts the
+server's 2026-07-28 version.
 
 ```ts
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -383,7 +393,7 @@ const client = new Client(
   { name: 'my-client', version: '1.0.0' },
   {
     capabilities: { tools: {} },
-    // Required: lets the SDK probe and adopt the server's 2026-07-28 version.
+    // Recommended: lets the SDK probe and adopt the server's 2026-07-28 version.
     versionNegotiation: { mode: 'auto' },
   },
 );
@@ -396,6 +406,37 @@ await client.callTool({ name: 'fetch_fetch', arguments: { url: 'https://example.
 Tools are namespaced as `<serverId>_<toolName>` (e.g. `fetch_fetch`,
 `context7_query-docs`) to avoid collisions across servers. Two built-in meta-tools
 (`group_status`, `list_group_tools`) are also exposed on every group endpoint.
+
+##### Protocol Compatibility
+
+Hub ships a protocol compatibility layer (`@mcp-core/mcp-knot-protocol`) that
+bridges the modern **2026-07-28** era and legacy 2025-era MCP on both directions:
+
+- **Inbound** (client → Hub): defaults to **modern + legacy** simultaneously — a
+  modern client negotiates via `server/discover`, a legacy client's bare
+  `initialize` is still served. Set `compatibility.inbound.enabled: false` (or CLI
+  `--no-legacy-inbound`) to reject legacy clients and accept only modern.
+- **Outbound** (Hub → upstream server): era is auto-probed per server; Hub
+  transparently bridges modern requests to legacy upstreams. Set
+  `compatibility.outbound.modernOnly: true` (or CLI `--modern-only-upstream`) to
+  connect only to modern upstreams in the backend. The CLI flag is reserved:
+  its core service currently simulates upstream connections and does not enforce it.
+- **MRTR & errors**: cross-era `InputRequiredResult` (MRTR) state and protocol
+  errors are normalized into a unified shape regardless of upstream era. A
+  legacy upstream that cannot honor `input_required` degrades to a clear
+  `-32601` error rather than failing silently.
+
+Defaults are intentionally permissive so existing clients keep working. The
+`compatibility` block in `system.json` is optional and partially overridable;
+omit it entirely for the default all-open behavior.
+
+**Testing coverage**: cross-era bridging is covered by project-owned e2e
+(`protocol-compliance.test.ts`: outbound modern→legacy, inbound legacy→modern)
+plus unit tests for the adapter/codec/normalizer layers. The official
+`@modelcontextprotocol/conformance` TCK is wired as a regression gate
+(`pnpm test:conformance`) but, as of TCK v0.1.16, only covers the legacy
+(2025-11-25) era in server mode — modern-era (2026-07-28) conformance is
+pending upstream TCK support.
 
 ### CLI MCP Server Integration
 
@@ -461,25 +502,23 @@ pnpm test:mcp         # MCP protocol tests
 
 - [Web UI Guide](docs/WEB_UI_GUIDE.md) - Complete web interface usage guide
 - [CLI Usage Guide](docs/CLI_USAGE.md) - Detailed CLI usage and configuration
-- [FAQ](docs/FAQ.md) - Frequently asked questions and troubleshooting
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Frequently asked questions and troubleshooting
 
 ### Technical Documentation
 
 - [API Reference](docs/API_REFERENCE.md) - Complete API documentation
 - [Group Routing Guide](docs/GROUP_ROUTING.md) - Group-based routing documentation
-- [Migration Guide](docs/MIGRATION.md) - Upgrading from previous versions
 
 ### Development & Deployment
 
 - [Development Guide](docs/DEVELOPMENT.md) - Development environment setup and contribution guide
 - [Release Process](#release-process) - Version management and publishing with Changesets
-- [NPM Trusted Publishers](docs/NPM_TRUSTED_PUBLISHERS.md) - Secure package publishing setup
 - [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment instructions
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ### Release Process
 
-MCP Knot uses [Changesets](https://github.com/changesets/changesets) for version management and publishing, with [NPM Trusted Publishers](docs/NPM_TRUSTED_PUBLISHERS.md) for secure package publishing.
+MCP Knot uses [Changesets](https://github.com/changesets/changesets) for version management and publishing.
 
 #### Daily Development Workflow
 
@@ -521,7 +560,19 @@ The project uses GitHub Actions for automated publishing:
 3. **Version Packages PR merged**: Triggers automatic publishing
    - Publish to npm
    - Create GitHub Release
-   - Build Docker images
+   - Optionally publish Docker images (`DOCKER_PUBLISH=true`)
+
+Publishing uses **npm Trusted Publishing (OIDC)** with Node 24, npm 11, and
+`id-token: write`; no npm token is used. Only successful main **push** CI runs can
+release the current main commit. Changesets creates a version PR first; merging
+that PR and passing CI publishes built tarballs, package tags, and GitHub Releases.
+
+Before the first release, create any missing npm packages using an interactive
+`npm login`, then configure each package's Trusted Publisher with user `yourtion`,
+repository `mcp-knot`, workflow **`publish.yml`**, no environment, and permission
+for **`npm publish`**. See [the release setup guide](docs/RELEASING.md) for commands,
+package names, and retry instructions. Automated version PRs may require approving
+their CI runs in GitHub when created with `GITHUB_TOKEN`.
 
 #### Version Type Selection
 

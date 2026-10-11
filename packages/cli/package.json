@@ -12,6 +12,11 @@
   ],
   "license": "ISC",
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourtion/mcp-knot.git",
+    "directory": "packages/cli"
+  },
   "bin": {
     "mcp-knot": "./bin/mcp-knot.js"
   },
@@ -52,6 +57,7 @@
   },
   "dependencies": {
     "@mcp-core/mcp-knot-core": "workspace:*",
+    "@mcp-core/mcp-knot-protocol": "workspace:*",
     "@mcp-core/mcp-knot-share": "workspace:*",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",

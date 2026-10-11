@@ -1,6 +1,7 @@
 {
   "name": "@mcp-core/mcp-knot",
   "version": "0.0.1",
+  "private": true,
   "description": "",
   "keywords": [],
   "license": "ISC",
@@ -11,11 +12,13 @@
     "dev:api": "pnpm --filter @mcp-core/mcp-knot-api dev",
     "dev:cli": "pnpm --filter @mcp-core/mcp-knot-cli dev",
     "build": "pnpm --filter \"@mcp-core/*\" build",
+    "build:share": "pnpm --filter @mcp-core/mcp-knot-share build",
+    "build:protocol": "pnpm --filter @mcp-core/mcp-knot-protocol build",
     "build:core": "pnpm --filter @mcp-core/mcp-knot-core build",
     "build:api": "pnpm --filter @mcp-core/mcp-knot-api build",
     "build:cli": "pnpm --filter @mcp-core/mcp-knot-cli build",
     "build:fe": "pnpm --filter @mcp-core/mcp-knot-web build",
-    "build:production": "pnpm --filter @mcp-core/mcp-knot-share build && pnpm build:core && pnpm build:api && pnpm build:cli && pnpm build:fe",
+    "build:production": "pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:api && pnpm build:cli && pnpm build:fe",
     "check": "pnpm --filter \"@mcp-core/*\" check",
     "check:ci": "oxlint --ignore-path .oxlintignore . && oxfmt --check .",
     "check:all": "oxlint --fix --ignore-path .oxlintignore . && oxfmt .",
@@ -26,6 +29,7 @@
     "test:e2e": "vitest --run --project api-e2e",
     "test:coverage": "vitest --run --coverage",
     "test:debug": "VITEST_DEBUG=true vitest --run",
+    "test:conformance": "bash scripts/conformance/run.sh",
     "coverage:report": "tsx scripts/check-coverage.ts",
     "coverage:merge": "tsx scripts/merge-coverage.ts",
     "coverage:full": "pnpm test:coverage && pnpm coverage:merge && pnpm coverage:report",
@@ -38,9 +42,9 @@
     "clean:all": "pnpm clean && rm -rf node_modules packages/*/node_modules backend/node_modules frontend/node_modules",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "changeset publish",
+    "release": "pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:cli && node scripts/publish-packages.cjs",
     "changeset:check": "changeset status",
-    "release:dry-run": "changeset publish --no-git-tag --dry-run"
+    "release:dry-run": "pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:cli && node scripts/check-release-packages.cjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
@@ -52,7 +56,7 @@
     "vitest": "^4.1.4"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "packageManager": "pnpm@10.6.4"
 }

@@ -7,7 +7,7 @@ export default defineConfig({
     // coverage 默认配置
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'json-summary', 'html'],
+      reporter: ['text', 'json', 'json-summary', 'html', 'lcov'],
       exclude: [
         'node_modules/',
         'dist/',
@@ -25,6 +25,7 @@ export default defineConfig({
     //   api-e2e / api-e2e-oauth / api-e2e-validation / api-e2e-outbound，各自隔离端口+setup）。
     projects: [
       './packages/share/vitest.config.ts',
+      './packages/protocol/vitest.config.ts',
       './packages/core/vitest.config.ts',
       './packages/cli/vitest.config.ts',
       './backend/vitest.config.ts',

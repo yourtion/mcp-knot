@@ -46,8 +46,6 @@ docs/
 
 # 配置文件（在运行时挂载）
 config/
-*.config.js
-*.config.ts
 
 # Docker 相关
 Dockerfile*
@@ -56,8 +54,11 @@ docker-compose*.yml
 
 # CI/CD
 .github/
-scripts/
 
 # 其他
 logs/
 workspace/
+.conformance-results/
+**/node_modules/
+**/dist/
+**/coverage/

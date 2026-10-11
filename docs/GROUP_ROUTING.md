@@ -8,14 +8,14 @@ MCP Knot 的组路由功能允许您通过特定的组路径 (`/:group/mcp`) 访
 
 - **组隔离**: 不同组之间的工具访问完全隔离
 - **工具过滤**: 每个组可以配置允许的工具列表
-- **访问控制**: 支持组级别的验证密钥
+- **访问控制**: 支持组级别的验证密钥，以及 OAuth 2.1 Protected Resource
 - **灵活配置**: 每个组可以使用不同的 MCP 服务器组合
 
 ## 配置
 
 ### 组配置文件
 
-在 `backend/config/group.json` 中定义组配置：
+组配置默认从 `<cwd>/config/group.json` 读取（即进程当前工作目录下的 `config/group.json`）。可通过设置环境变量 `CONFIG_PATH` 指定其它配置目录，Hub 会从 `$CONFIG_PATH/group.json` 加载。
 
 ```json
 {
@@ -71,7 +71,7 @@ MCP Knot 的组路由功能允许您通过特定的组路径 (`/:group/mcp`) 访
 
 ### MCP 服务器配置
 
-确保在 `backend/config/mcp_server.json` 中配置了组所需的 MCP 服务器：
+确保在 `<cwd>/config/mcp_server.json`（同样可由 `CONFIG_PATH` 覆盖）中配置了组所需的 MCP 服务器：
 
 ```json
 {
@@ -101,91 +101,117 @@ MCP Knot 的组路由功能允许您通过特定的组路径 (`/:group/mcp`) 访
 
 ### 基本端点
 
-组路由提供以下端点：
+组路由的 MCP 入口唯一，所有 JSON-RPC 调用都走同一个端点：
 
 ```
-GET    /:group/mcp/list_tools    # 列出组的可用工具
-POST   /:group/mcp/call_tool     # 调用组内的工具
-GET    /api/groups               # 列出所有组
-GET    /api/groups/:group        # 获取特定组信息
-GET    /api/groups/:group/health # 检查组健康状态
+POST   /:group/mcp             # MCP JSON-RPC 入口（列工具、调工具均通过此端点 + Mcp-Method 头）
+GET    /:group/status          # 获取组运行时状态
+GET    /:group/tools           # 获取组聚合工具列表（便捷查询，等价于 tools/list）
+GET    /api/groups             # 列出所有组
+GET    /api/groups/:groupId    # 获取特定组信息
+GET    /api/groups/:groupId/health  # 检查组健康状态
 ```
 
-### 列出组的工具
+> 注意：MCP 端点路径参数为 `:group`（组标识），而组管理 REST API（`/api/groups/...`）路径参数为 `:groupId`。
+
+### MCP 协议：列出组的工具
+
+通过 MCP JSON-RPC `tools/list` 调用，需要带 `Mcp-Method` 请求头：
 
 ```bash
-# 获取开发组的所有工具
-curl http://localhost:8181/development/mcp/list_tools
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
 
-# 响应示例
+工具按"先 serverId 后 toolName"字典序稳定返回。每个工具名采用 `<serverId>_<toolName>` 命名空间形式；此外 Hub 还会注入内置元工具 `group_status`、`list_group_tools`。
+
+响应示例（JSON-RPC 结果）：
+
+```json
 {
-  "tools": [
-    {
-      "name": "read_file",
-      "description": "读取文件内容",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "文件路径"
-          }
-        },
-        "required": ["path"]
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {
+        "name": "filesystem_read_file",
+        "description": "读取文件内容",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "description": "文件路径" }
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "filesystem_write_file",
+        "description": "写入文件内容",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "content": { "type": "string" }
+          },
+          "required": ["path", "content"]
+        }
       }
-    },
-    {
-      "name": "write_file",
-      "description": "写入文件内容",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": {"type": "string"},
-          "content": {"type": "string"}
-        },
-        "required": ["path", "content"]
-      }
-    }
-  ]
+    ]
+  }
 }
 ```
 
-### 调用组内工具
+如需快速查看聚合工具列表而无需走完整 JSON-RPC，也可直接 `GET /:group/tools`。
+
+### MCP 协议：调用组内工具
+
+通过 MCP JSON-RPC `tools/call`，`Mcp-Method` 头指定为 `tools/call`，`params.name` 使用 `<serverId>_<toolName>` 命名空间形式：
 
 ```bash
-# 在开发组中调用文件读取工具
-curl -X POST http://localhost:8181/development/mcp/call_tool \
+curl -X POST http://localhost:8181/development/mcp \
   -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
   -d '{
-    "name": "read_file",
-    "arguments": {
-      "path": "/workspace/README.md"
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "filesystem_read_file",
+      "arguments": { "path": "/workspace/README.md" }
     }
   }'
+```
 
-# 响应示例
+响应示例：
+
+```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "# My Project\n\nThis is a sample README file..."
-    }
-  ]
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "content": [{ "type": "text", "text": "# My Project\n\nThis is a sample README file..." }]
+  }
 }
 ```
 
-### 使用验证密钥
+### 使用验证密钥 / OAuth
 
-如果组配置了验证密钥，需要在请求头中提供：
+- 若组启用了 `validation`，MCP 端点会强制校验 `Authorization: Bearer <validationKey>`，需在请求头中提供正确 key。
+- 若系统配置启用了 OAuth（Protected Resource），则需标准的 `Authorization: Bearer <jwt>`。
 
 ```bash
-# 使用验证密钥访问
-curl -X POST http://localhost:8181/admin/mcp/call_tool \
+# 使用 validationKey 访问需要验证的组
+curl -X POST http://localhost:8181/admin/mcp \
   -H "Content-Type: application/json" \
-  -H "X-Validation-Key: admin-secret-key-789" \
+  -H "Mcp-Method: tools/call" \
+  -H "Authorization: Bearer admin-secret-key-789" \
   -d '{
-    "name": "system_status",
-    "arguments": {}
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": { "name": "system-monitor_status", "arguments": {} }
   }'
 ```
 
@@ -232,12 +258,7 @@ curl http://localhost:8181/api/groups/development
   "servers": ["filesystem", "git", "npm"],
   "allowedTools": ["read_file", "write_file", "list_directory"],
   "enabled": true,
-  "requireAuth": false,
-  "stats": {
-    "toolCount": 6,
-    "serverCount": 3,
-    "lastUsed": "2024-01-15T10:30:00Z"
-  }
+  "requireAuth": false
 }
 ```
 
@@ -251,18 +272,9 @@ curl http://localhost:8181/api/groups/development/health
   "group": "development",
   "status": "healthy",
   "servers": {
-    "filesystem": {
-      "status": "connected",
-      "responseTime": 45
-    },
-    "git": {
-      "status": "connected",
-      "responseTime": 32
-    },
-    "npm": {
-      "status": "error",
-      "error": "Connection timeout"
-    }
+    "filesystem": { "status": "connected", "responseTime": 45 },
+    "git":        { "status": "connected", "responseTime": 32 },
+    "npm":        { "status": "error",     "error": "Connection timeout" }
   },
   "overallHealth": "degraded"
 }
@@ -270,12 +282,13 @@ curl http://localhost:8181/api/groups/development/health
 
 ## 错误处理
 
-### 常见错误响应
-
-#### 组不存在
+### 组不存在
 
 ```bash
-curl http://localhost:8181/nonexistent/mcp/list_tools
+curl -X POST http://localhost:8181/nonexistent/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 
 # 响应 (404)
 {
@@ -285,10 +298,9 @@ curl http://localhost:8181/nonexistent/mcp/list_tools
 }
 ```
 
-#### 工具不在允许列表中
+### 工具不在允许列表中
 
-```bash
-# 响应 (403)
+```json
 {
   "error": "TOOL_NOT_ALLOWED",
   "message": "工具 'system_reboot' 不在组 'development' 的允许列表中",
@@ -297,10 +309,9 @@ curl http://localhost:8181/nonexistent/mcp/list_tools
 }
 ```
 
-#### 验证密钥错误
+### 验证密钥错误
 
-```bash
-# 响应 (401)
+```json
 {
   "error": "INVALID_VALIDATION_KEY",
   "message": "无效的验证密钥",
@@ -308,10 +319,9 @@ curl http://localhost:8181/nonexistent/mcp/list_tools
 }
 ```
 
-#### 服务器连接失败
+### 服务器连接失败
 
-```bash
-# 响应 (503)
+```json
 {
   "error": "SERVICE_UNAVAILABLE",
   "message": "组 'development' 的服务器连接失败",
@@ -327,47 +337,15 @@ curl http://localhost:8181/nonexistent/mcp/list_tools
 
 ### 动态工具过滤
 
-可以在运行时动态调整工具过滤规则：
+可在运行时通过组管理 API 更新组的工具配置：
 
 ```bash
-# 更新组的允许工具列表
-curl -X PATCH http://localhost:8181/api/groups/development \
+# 更新组的允许工具列表（注意：组管理 API 路径参数为 :groupId，方法为 PUT）
+curl -X PUT http://localhost:8181/api/groups/development \
   -H "Content-Type: application/json" \
   -H "X-Admin-Key: admin-secret" \
   -d '{
     "allowedTools": ["read_file", "write_file", "git_status"]
-  }'
-```
-
-### 组级别的工具别名
-
-为工具创建组特定的别名：
-
-```json
-{
-  "groups": {
-    "development": {
-      "name": "开发工具组",
-      "servers": ["filesystem", "git"],
-      "toolAliases": {
-        "read": "read_file",
-        "write": "write_file",
-        "status": "git_status"
-      }
-    }
-  }
-}
-```
-
-```bash
-# 使用别名调用工具
-curl -X POST http://localhost:8181/development/mcp/call_tool \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "read",
-    "arguments": {
-      "path": "/workspace/package.json"
-    }
   }'
 ```
 
@@ -394,61 +372,6 @@ curl -X POST http://localhost:8181/development/mcp/call_tool \
 }
 ```
 
-## 监控和日志
-
-### 组使用统计
-
-```bash
-# 获取组使用统计
-curl http://localhost:8181/api/groups/development/stats
-
-# 响应
-{
-  "group": "development",
-  "period": "24h",
-  "stats": {
-    "totalRequests": 156,
-    "successfulRequests": 142,
-    "failedRequests": 14,
-    "averageResponseTime": 234,
-    "topTools": [
-      {"name": "read_file", "count": 89},
-      {"name": "write_file", "count": 34},
-      {"name": "git_status", "count": 19}
-    ]
-  }
-}
-```
-
-### 组活动日志
-
-```bash
-# 获取组活动日志
-curl http://localhost:8181/api/groups/development/logs?limit=10
-
-# 响应
-{
-  "logs": [
-    {
-      "timestamp": "2024-01-15T10:30:15Z",
-      "level": "info",
-      "message": "工具调用成功",
-      "tool": "read_file",
-      "duration": 45,
-      "success": true
-    },
-    {
-      "timestamp": "2024-01-15T10:29:32Z",
-      "level": "error",
-      "message": "工具调用失败",
-      "tool": "write_file",
-      "error": "权限被拒绝",
-      "success": false
-    }
-  ]
-}
-```
-
 ## 最佳实践
 
 ### 组设计原则
@@ -460,7 +383,7 @@ curl http://localhost:8181/api/groups/development/logs?limit=10
 
 ### 安全考虑
 
-1. **验证密钥**: 为敏感组设置强验证密钥
+1. **验证密钥 / OAuth**: 为敏感组设置强验证密钥或启用 OAuth 2.1 Protected Resource
 2. **工具过滤**: 严格控制每个组可访问的工具
 3. **参数验证**: 对工具参数进行严格验证
 4. **访问日志**: 记录所有组访问和工具调用
@@ -468,52 +391,60 @@ curl http://localhost:8181/api/groups/development/logs?limit=10
 ### 性能优化
 
 1. **连接复用**: 多个组共享底层 MCP 服务器连接
-2. **缓存策略**: 缓存工具列表和组配置
-3. **负载均衡**: 在多个服务器实例间分配请求
-4. **监控告警**: 监控组性能和可用性
+2. **缓存策略**: 利用 `tools/list` 的协议层 cacheHint 提升客户端缓存命中率
+3. **监控告警**: 监控组性能和可用性（`GET /:group/status`）
 
 ### 故障处理
 
 1. **优雅降级**: 部分服务器失败时继续提供可用工具
-2. **重试机制**: 对临时失败实施重试
-3. **故障隔离**: 一个组的故障不影响其他组
-4. **快速恢复**: 提供快速的故障恢复机制
+2. **故障隔离**: 一个组的故障不影响其他组
+3. **健康检查**: 通过 `/api/groups/:groupId/health` 快速定位故障服务器
 
 ## 示例场景
 
 ### 开发团队使用场景
 
 ```bash
-# 开发组 - 代码相关工具
-curl http://localhost:8181/development/mcp/list_tools
-curl -X POST http://localhost:8181/development/mcp/call_tool \
-  -d '{"name": "read_file", "arguments": {"path": "/src/main.ts"}}'
+# 开发组 - 列出可用工具
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/list" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 
-# 测试组 - 测试相关工具
-curl http://localhost:8181/testing/mcp/call_tool \
-  -d '{"name": "run_tests", "arguments": {"suite": "unit"}}'
+# 开发组 - 读取源码文件
+curl -X POST http://localhost:8181/development/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -d '{
+    "jsonrpc":"2.0","id":2,"method":"tools/call",
+    "params": {"name": "filesystem_read_file", "arguments": {"path": "/src/main.ts"}}
+  }'
 
-# 部署组 - 部署相关工具
-curl http://localhost:8181/deployment/mcp/call_tool \
-  -H "X-Validation-Key: deploy-key" \
-  -d '{"name": "deploy", "arguments": {"environment": "staging"}}'
+# 部署组 - 部署到预发环境（需要 validationKey）
+curl -X POST http://localhost:8181/deployment/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -H "Authorization: Bearer deploy-key" \
+  -d '{
+    "jsonrpc":"2.0","id":3,"method":"tools/call",
+    "params": {"name": "ci_deploy", "arguments": {"environment": "staging"}}
+  }'
 ```
 
 ### 研究团队使用场景
 
 ```bash
-# 文献研究组
-curl -X POST http://localhost:8181/research/mcp/call_tool \
-  -d '{"name": "search_papers", "arguments": {"query": "machine learning"}}'
-
-# 数据分析组
-curl -X POST http://localhost:8181/analysis/mcp/call_tool \
-  -d '{"name": "analyze_data", "arguments": {"dataset": "experiment_results.csv"}}'
+# 文献研究组 - 检索论文
+curl -X POST http://localhost:8181/research/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -d '{
+    "jsonrpc":"2.0","id":4,"method":"tools/call",
+    "params": {"name": "arxiv_search_papers", "arguments": {"query": "machine learning"}}
+  }'
 ```
 
 ## 参考资料
 
 - [MCP Knot API 参考](API_REFERENCE.md)
-- [配置文件格式](CONFIGURATION.md)
 - [故障排除指南](TROUBLESHOOTING.md)
-- [安全最佳实践](SECURITY.md)

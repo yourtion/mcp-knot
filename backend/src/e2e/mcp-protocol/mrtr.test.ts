@@ -1,3 +1,4 @@
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 /**
  * P5 MRTR 端到端测试（Task 9，M3 里程碑可交付）
  *
@@ -44,10 +45,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 import {
   createHubService,
@@ -292,13 +290,15 @@ describe('MRTR（P5 e2e）', () => {
  * 是 HubState（{ serverId, toolName, upstreamRequestState?, step, exp }）。本 helper 只取
  * 中间段做 base64url 解码再读 `.p`，不验签（验签由 Hub 的 SDK seam 完成）。
  */
-function decodeRequestStatePayload(state: string): {
-  serverId?: string;
-  toolName?: string;
-  upstreamRequestState?: string;
-  step?: number;
-  exp?: number;
-} | undefined {
+function decodeRequestStatePayload(state: string):
+  | {
+      serverId?: string;
+      toolName?: string;
+      upstreamRequestState?: string;
+      step?: number;
+      exp?: number;
+    }
+  | undefined {
   const parts = state.split('.');
   // 期望 ["v1", <b64url payload>, <b64url mac>]
   if (parts.length < 2 || parts[0] !== 'v1') {

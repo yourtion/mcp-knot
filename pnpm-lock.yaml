@@ -41,6 +41,9 @@ importers:
       '@mcp-core/mcp-knot-core':
         specifier: workspace:*
         version: link:../packages/core
+      '@mcp-core/mcp-knot-protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
       '@mcp-core/mcp-knot-share':
         specifier: workspace:*
         version: link:../packages/share
@@ -163,6 +166,9 @@ importers:
       '@mcp-core/mcp-knot-core':
         specifier: workspace:*
         version: link:../core
+      '@mcp-core/mcp-knot-protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@mcp-core/mcp-knot-share':
         specifier: workspace:*
         version: link:../share
@@ -204,6 +210,25 @@ importers:
       '@types/jsonata':
         specifier: ^1.5.1
         version: 1.5.1
+      '@types/node':
+        specifier: ^20.11.17
+        version: 20.17.45
+      typescript:
+        specifier: ^5.8.3
+        version: 5.8.3
+
+  packages/protocol:
+    dependencies:
+      '@mcp-core/mcp-knot-share':
+        specifier: workspace:*
+        version: link:../share
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0
+        version: 2.0.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
       '@types/node':
         specifier: ^20.11.17
         version: 20.17.45

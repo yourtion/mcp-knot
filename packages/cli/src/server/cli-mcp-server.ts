@@ -4,6 +4,7 @@
  */
 
 import { McpServiceManager } from '@mcp-core/mcp-knot-core';
+import { defaultCompatibilityOptions, InboundProtocolAdapter } from '@mcp-core/mcp-knot-protocol';
 import { createCliLogger } from '@mcp-core/mcp-knot-share';
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
@@ -12,6 +13,7 @@ import { z } from 'zod/v4';
 import { McpProtocolHandler } from '../protocol/mcp-protocol-handler.js';
 
 import type { CliConfig } from '../types';
+import type { CompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 
@@ -29,6 +31,7 @@ export class CliMcpServer {
   private coreService: McpServiceManager | null = null;
   private protocolHandler: McpProtocolHandler | null = null;
   private config: CliConfig | null = null;
+  private compat: CompatibilityOptions = defaultCompatibilityOptions;
   private isInitialized = false;
   private isStarted = false;
   private logger = createCliLogger({ component: 'McpServer' });
@@ -82,8 +85,11 @@ export class CliMcpServer {
 
   /**
    * 初始化CLI MCP服务器
+   *
+   * @param config CLI 配置
+   * @param compat 协议兼容层选项（由启动 flag 映射而来），缺省走全开默认
    */
-  async initialize(config: CliConfig): Promise<void> {
+  async initialize(config: CliConfig, compat?: CompatibilityOptions): Promise<void> {
     if (this.isInitialized) {
       this.logger.warn('CLI MCP服务器已初始化，跳过重复初始化');
       return;
@@ -93,6 +99,7 @@ export class CliMcpServer {
 
     try {
       this.config = config;
+      this.compat = compat ?? defaultCompatibilityOptions;
 
       // 创建和初始化核心服务管理器
       this.coreService = this.createServiceManager();
@@ -134,9 +141,11 @@ export class CliMcpServer {
   /**
    * 启动MCP服务器
    *
-   * 通过 `serveStdio` 把 stdio 传输层交给 SDK 管理：工厂返回的工具已注册的
+   * 通过 `serveStdio` 把 stdio 传输层交给 SDK 管理：工厂返回已注册工具的
    * `McpServer` 实例，SDK 在每次连接建立时调用工厂、启动传输层并完成 era
-   * 协商。`legacy: 'reject'` 强制使用 2026-07-28 现代协议。
+   * 协商。legacy 取值由 `InboundProtocolAdapter` 据兼容层配置决定（默认
+   * inbound.enabled=true + legacyMode='shim' → stdio 下为 'serve'；当
+   * `--no-legacy-inbound` 关闭入站时退化为 'reject'）。
    */
   async start(): Promise<void> {
     if (!this.isInitialized) {
@@ -158,10 +167,15 @@ export class CliMcpServer {
       // 在启动时注册工具（延迟到真正需要时）
       await this.registerTools();
 
-      // serveStdio 接管传输层：传入返回当前 server 的工厂，并拒绝旧协议。
+      // 由协议兼容层适配器据当前配置解析 legacy 取值。
+      // resolveLegacyMode 的返回类型是三种 transport 的并集（'stateless' |
+      // 'serve' | 'reject'），但 stdio 仅接受 'serve' | 'reject'；kind='stdio'
+      // 下适配器不可能返回 'stateless'，这里收窄到 stdio 的合法集合。
+      const adapter = new InboundProtocolAdapter(this.compat);
+      const legacy = adapter.resolveLegacyMode('stdio');
       const serverRef = this.server;
       this.stdioHandle = serveStdio(() => serverRef, {
-        legacy: 'reject',
+        legacy: legacy === 'reject' ? 'reject' : 'serve',
         onerror: (error) => {
           this.logger.error('serveStdio 传输层错误', error);
         },

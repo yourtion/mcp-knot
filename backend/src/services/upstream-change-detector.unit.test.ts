@@ -1,5 +1,6 @@
 // backend/src/services/upstream-change-detector.unit.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { UpstreamChangeDetector } from './upstream-change-detector.js';
 
 describe('UpstreamChangeDetector', () => {

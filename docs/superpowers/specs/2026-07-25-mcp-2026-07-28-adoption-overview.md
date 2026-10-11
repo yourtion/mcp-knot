@@ -19,28 +19,29 @@
 
 ## 全景决策（brainstorming 已确认）
 
-| 决策           | 选择                                                                                          | 理由                                                  |
-| -------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| 迭代主线       | 全量跟进 MCP 2026-07-28，分解为 P1-P6 分阶段交付                                              | 一次性做会失控；分解后每个子项目可独立 spec/计划/实现 |
-| 总体兼容性策略 | 激进升级，只支持新协议（入站方向）                                                            | 项目 0.0.1，趁早切干净                                |
-| 出站方向策略   | 保留兼容（`auto` 模式 + 保留 SSE 连接）                                                       | 外部 server 生态参差不齐，网关价值在于能连各种 server |
-| OAuth 范围     | 不自建完整 IAM；入站做 Protected Resource，出站接 `AuthenticationStrategy`，Web 登录可接 OIDC | 审计报告建议接 Keycloak/Entra/OIDC，不自造            |
-| 社交登录       | 纳入考虑（属 Web UI 范畴，与 MCP 协议解耦）                                                   | 偏用户体验                                            |
+| 决策           | 选择                                                                                          | 理由                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 迭代主线       | 全量跟进 MCP 2026-07-28，分解为 P1-P6 分阶段交付                                              | 一次性做会失控；分解后每个子项目可独立 spec/计划/实现                     |
+| 总体兼容性策略 | 默认全开（modern + legacy），可配置收窄                                                       | 修订自 P1 的"激进升级"；P7 引入协议兼容层，趁早切干净的同时不丢存量客户端 |
+| 出站方向策略   | 保留兼容（`auto` 模式 + 保留 SSE 连接）                                                       | 外部 server 生态参差不齐，网关价值在于能连各种 server                     |
+| OAuth 范围     | 不自建完整 IAM；入站做 Protected Resource，出站接 `AuthenticationStrategy`，Web 登录可接 OIDC | 审计报告建议接 Keycloak/Entra/OIDC，不自造                                |
+| 社交登录       | 纳入考虑（属 Web UI 范畴，与 MCP 协议解耦）                                                   | 偏用户体验                                                                |
 
 ## 子项目全景
 
 > 状态分两个维度：**spec 状态**（设计文档是否产出）与**实现进度**（代码是否在动）。两者独立——spec 完成不等于实现完成。
 
-| #      | 子项目                               | spec 状态                 | 实现进度                                                              | 详细 spec                                   |
-| ------ | ------------------------------------ | ------------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
-| **P1** | 传输层升级到 2026-07-28 无状态       | ✅ 完成                   | ✅ **实现完成**（已合并 main，commits `6aedf23`/`f802256`/`5303574`） | `2026-07-25-p1-transport-upgrade-design.md` |
-| **P2** | 入站 OAuth 2.1（Protected Resource） | ✅ 完成                   | ✅ **实现完成**（已合并 main，merge `768ff09`）                       | `2026-07-26-p2-inbound-oauth-design.md`     |
-| P3     | 出站 OAuth（AuthenticationStrategy） | ✅ 完成                   | ✅ **实现完成**（已合并 main，merge `5865277`；e2e 已激活）           | `2026-07-27-p3-outbound-oauth-design.md`    |
-| **P4** | `ttlMs`/`cacheScope` 缓存语义        | ✅ 完成                   | ✅ **实现完成**（已合并 main，merge `a03f430`）                       | `2026-07-26-p4-cache-semantics-design.md`   |
-| P5     | `subscriptions/listen` + MRTR        | ✅ 完成                   | ✅ **实现完成**（分支 `feat/p5-subscriptions-mrtr`，待合并 main）       | `2026-07-30-p5-subscriptions-mrtr-design.md` |
-| **P6** | OTel trace context + 弃用项清理      | ✅ 完成                   | ✅ **实现完成**（已合并 main，merge `6a2f11b`）                       | `2026-07-28-p6-otel-deprecation-design.md`  |
+| #      | 子项目                                     | spec 状态 | 实现进度                                                              | 详细 spec                                    |
+| ------ | ------------------------------------------ | --------- | --------------------------------------------------------------------- | -------------------------------------------- |
+| **P1** | 传输层升级到 2026-07-28 无状态             | ✅ 完成   | ✅ **实现完成**（已合并 main，commits `6aedf23`/`f802256`/`5303574`） | `2026-07-25-p1-transport-upgrade-design.md`  |
+| **P2** | 入站 OAuth 2.1（Protected Resource）       | ✅ 完成   | ✅ **实现完成**（已合并 main，merge `768ff09`）                       | `2026-07-26-p2-inbound-oauth-design.md`      |
+| P3     | 出站 OAuth（AuthenticationStrategy）       | ✅ 完成   | ✅ **实现完成**（已合并 main，merge `5865277`；e2e 已激活）           | `2026-07-27-p3-outbound-oauth-design.md`     |
+| **P4** | `ttlMs`/`cacheScope` 缓存语义              | ✅ 完成   | ✅ **实现完成**（已合并 main，merge `a03f430`）                       | `2026-07-26-p4-cache-semantics-design.md`    |
+| P5     | `subscriptions/listen` + MRTR              | ✅ 完成   | ✅ **实现完成**（分支 `feat/p5-subscriptions-mrtr`，待合并 main）     | `2026-07-30-p5-subscriptions-mrtr-design.md` |
+| **P6** | OTel trace context + 弃用项清理            | ✅ 完成   | ✅ **实现完成**（已合并 main，merge `6a2f11b`）                       | `2026-07-28-p6-otel-deprecation-design.md`   |
+| **P7** | 协议兼容层（双向 era 翻译 + 入站默认全开） | ✅ 完成   | ✅ **实现完成**（分支 `feat/p7-protocol-compat-layer`，待合并 main）  | `2026-08-02-protocol-compat-layer-design.md` |
 
-**推荐主线顺序**：P1 → P4 → P2 → P3 → P6 → P5
+**推荐主线顺序**：P1 → P4 → P2 → P3 → P6 → P5 → P7
 
 > **2026-07-25 协议特性审查结论**：对照 2026-07-28 完整特性集，P1-P6 覆盖了协议主干（传输无状态化、Authorization、缓存语义、可观测性、弃用清理）。有 2 个新特性经评估**显式不纳入本轮范围**（见 [§未采纳/待评估协议特性](#未采纳待评估协议特性)）：MCP Apps（server-rendered UI）与 `x-mcp-header`/`Mcp-Param-` 透传（需确认 SDK 是否自动处理）。其余特性层面的覆盖补充已并入对应子项目（P3/P4/P6）。
 
@@ -50,7 +51,8 @@
 P1（传输层）────────┬──→ P2（入站 OAuth）
                    ├──→ P4（缓存语义，弱依赖：结果字段）
                    ├──→ P5（subscriptions/listen，强依赖）
-                   └──→ P6（OTel/弃用清理，无依赖可穿插）
+                   ├──→ P6（OTel/弃用清理，无依赖可穿插）
+                   └──→ P7（协议兼容层，叠加于 P1 之上：修订入站策略）
 
 P3（出站 OAuth）──── 无依赖，可独立做
 ```
@@ -58,6 +60,7 @@ P3（出站 OAuth）──── 无依赖，可独立做
 - P1 是地基，解锁 P2/P4/P5。
 - P3 与 P1 解耦（改的是 `api-to-mcp` 子系统，不碰传输层），可独立做。
 - P6 无依赖，任何时候可穿插。
+- P7 叠加于 P1 之上（不推翻）：P1 的激进入站策略由 P7 修订为"默认全开可配置"，并新增双向 era 翻译、归一化模型与统一错误。
 
 ---
 
@@ -126,9 +129,9 @@ P3（出站 OAuth）──── 无依赖，可独立做
 
 P3 聚焦 `api-to-mcp` 子系统（Hub 把外部 REST API 封装成 MCP 工具）。有一个相邻但**不属于 P3** 的问题需明确边界，避免范围蔓延：
 
-| 问题                                                          | 是否属 P3             | 说明                                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api-to-mcp` 调外部 REST API 的 OAuth                         | ✅ 是                 | P3 核心，改 `AuthenticationStrategy`                                                                                                                                                                                                                                                         |
+| 问题                                                          | 是否属 P3                         | 说明                                                                                                                                                                                                                       |
+| ------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api-to-mcp` 调外部 REST API 的 OAuth                         | ✅ 是                             | P3 核心，改 `AuthenticationStrategy`                                                                                                                                                                                       |
 | Hub 连外部 **MCP server** 时的出站认证（`server_manager.ts`） | ✅ 已完成（2026-07-30，独立立项） | ✅ **已完成**：`server_manager.ts` 的 SSE/Streamable 连接接入 SDK 原生 `authProvider`（bearer 静态 token + oauth `ClientCredentialsProvider`），动态获取/刷新 token。详见 `2026-07-30-outbound-mcp-server-oauth-design.md` |
 
 ### 设计大纲
@@ -316,8 +319,9 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 ## 跟踪机制
 
 - 每个子项目完成后，回本 spec 更新"实现进度"列和"详细 spec"链接。
-- 主线顺序（P1 → P4 → P2 → P3 → P6 → P5）是推荐，可根据实际情况调整。
+- 主线顺序（P1 → P4 → P2 → P3 → P6 → P5 → P7）是推荐，可根据实际情况调整。
 - P5 已实现完成（分支 `feat/p5-subscriptions-mrtr`，待合并 main）。原推迟理由与复查触发条件见上文「推迟理由（已作废）」/「复查触发条件」。
+- P7 已实现完成（分支 `feat/p7-protocol-compat-layer`，待合并 main）。P7 叠加于 P1 之上：把 P1 的"激进入站"修订为"默认全开可配置"，并新增协议兼容层（双向 era 翻译、归一化模型、统一错误）。详见 [`2026-08-02-protocol-compat-layer-design.md`](./2026-08-02-protocol-compat-layer-design.md)。**验收订正**：设计阶段预期的"TCK 双 era 对拍"因 TCK v0.1.16 上游限制（server 模式无 2026-07-28 场景、无 backcompat suite）未完全达成——TCK 当前只作 legacy era（2025-11-25）回归 gate（active suite，5 passed / 25 baseline），modern era 合规靠项目自有 e2e 覆盖，待 TCK 后续版本支持。详见 spec 的"验收"章节订正。
 
 ## 实现进度跟踪
 
@@ -336,27 +340,28 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 
 ### 各子项目实现进度
 
-| 子项目 | 分支                           | 关键 commit                                                                                                                                              | 进度                                                                                                                        |
-| ------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| P1     | 已合并 main                    | `f802256` 用 createMcpHandler 重写 group-router；`6aedf23` SDK v2 codemod                                                                                | ✅ **实现完成**（已合并 main）                                                                                              |
-| P4     | 已合并 main（merge `a03f430`） | `2b75c39` 注册 4 个 Hub 元数据 resources；`660e45b` tools/list 确定性排序；`8018afc` McpServer 构造接入 cacheHints                                       | ✅ **实现完成**（typecheck + 1683 tests 全绿，含 5 个 P4 e2e）                                                              |
-| P2     | 已合并 main（merge `768ff09`） | `0ffb6b8` 主线接入 + internal 模式 token 验签；`f6a82c4` OAuth 端点；`8d966f3` Resource Server 编排                                                      | ✅ **实现完成**（typecheck + 1750 tests 全绿，含 5 个 P2 e2e）                                                              |
-| P3     | 已合并 main（merge `5865277`） | `ff482e3` OAuthStrategy 实现（client_credentials + refresh + cache）；`f98d7c5` AuthenticationManager 注册；`5194ed2` e2e 骨架；`6de3416` e2e 全链路激活 | ✅ **实现完成**（typecheck + 1783 tests 全绿；e2e 已激活，经 `/api/api-to-mcp/configs/:id/test` 触发，fixture schema 已修） |
-| P6     | 已合并 main（merge `6a2f11b`） | `75c2b4e` TraceContextStore；`3cbb207` 出站 callTool 注入 \_meta；`c94d68c` 入站 handler 提取（mcpReq.\_meta）；`a7d125b` 集成测试                       | ✅ **实现完成**（typecheck + 542 unit tests 全绿，含 22 个 P6 新测试；弃用项/日志已核实干净）                               |
-| P5     | `feat/p5-subscriptions-mrtr`（待合并 main） | `a3ccb26` SDK beta.5→2.0.0 GA 升级；`cf20273`/`1b41a45` UpstreamChangeDetector + listChanged handler；`09098fd`/`8274335` Fanout + subscriptions/listen 接线 + e2e；`1c332d8` MrtrRelayService；`8724ab3`/`13fde56` 重试上下文透传 + handler 中转；`6953ab4` factory 注入 verify；`be6eeb5` MRTR e2e；Task 10 配置集成 + 文档 | ✅ **实现完成**（分支待合并；typecheck + 603 unit/152 share/33+16 e2e 全绿，含 2 个 P5 e2e：subscriptions + MRTR） |
+| 子项目 | 分支                                           | 关键 commit                                                                                                                                                                                                                                                                                                                                                                                                        | 进度                                                                                                                        |
+| ------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| P1     | 已合并 main                                    | `f802256` 用 createMcpHandler 重写 group-router；`6aedf23` SDK v2 codemod                                                                                                                                                                                                                                                                                                                                          | ✅ **实现完成**（已合并 main）                                                                                              |
+| P4     | 已合并 main（merge `a03f430`）                 | `2b75c39` 注册 4 个 Hub 元数据 resources；`660e45b` tools/list 确定性排序；`8018afc` McpServer 构造接入 cacheHints                                                                                                                                                                                                                                                                                                 | ✅ **实现完成**（typecheck + 1683 tests 全绿，含 5 个 P4 e2e）                                                              |
+| P2     | 已合并 main（merge `768ff09`）                 | `0ffb6b8` 主线接入 + internal 模式 token 验签；`f6a82c4` OAuth 端点；`8d966f3` Resource Server 编排                                                                                                                                                                                                                                                                                                                | ✅ **实现完成**（typecheck + 1750 tests 全绿，含 5 个 P2 e2e）                                                              |
+| P3     | 已合并 main（merge `5865277`）                 | `ff482e3` OAuthStrategy 实现（client_credentials + refresh + cache）；`f98d7c5` AuthenticationManager 注册；`5194ed2` e2e 骨架；`6de3416` e2e 全链路激活                                                                                                                                                                                                                                                           | ✅ **实现完成**（typecheck + 1783 tests 全绿；e2e 已激活，经 `/api/api-to-mcp/configs/:id/test` 触发，fixture schema 已修） |
+| P6     | 已合并 main（merge `6a2f11b`）                 | `75c2b4e` TraceContextStore；`3cbb207` 出站 callTool 注入 \_meta；`c94d68c` 入站 handler 提取（mcpReq.\_meta）；`a7d125b` 集成测试                                                                                                                                                                                                                                                                                 | ✅ **实现完成**（typecheck + 542 unit tests 全绿，含 22 个 P6 新测试；弃用项/日志已核实干净）                               |
+| P5     | `feat/p5-subscriptions-mrtr`（待合并 main）    | `a3ccb26` SDK beta.5→2.0.0 GA 升级；`cf20273`/`1b41a45` UpstreamChangeDetector + listChanged handler；`09098fd`/`8274335` Fanout + subscriptions/listen 接线 + e2e；`1c332d8` MrtrRelayService；`8724ab3`/`13fde56` 重试上下文透传 + handler 中转；`6953ab4` factory 注入 verify；`be6eeb5` MRTR e2e；Task 10 配置集成 + 文档                                                                                      | ✅ **实现完成**（分支待合并；typecheck + 603 unit/152 share/33+16 e2e 全绿，含 2 个 P5 e2e：subscriptions + MRTR）          |
+| P7     | `feat/p7-protocol-compat-layer`（待合并 main） | `def2240` 包脚手架；`d1a81a0` CompatibilityOptions；`633c5d6` 归一化模型；`e80a900` UnifiedErrorNormalizer；`e3c4b96` InboundProtocolAdapter；`5487179` OutboundProtocolAdapter；`fbfc5df` HubMrtrCodec；`033fd71` SystemConfig 接入；`8bcff1d` backend 入站 legacy shim + 出站 era 探测；`7c31257` CLI flag；`3e36b48` fixture；`499d9cd` 跨 era 桥接 + legacy 入站 e2e；`7f94cf0`/`a73b0ac` conformance TCK 接入 | ✅ **实现完成**（分支待合并；typecheck + 全量测试全绿，含跨 era 桥接 + legacy 入站 e2e + conformance TCK 自包含）           |
 
 ## 跨子项目共享待办
 
 > 以下事项被多个子项目反复引用，为避免重复认领或遗漏，集中在此登记归属。每项标明"归谁、何时做、现状"。移交给归属子项目后，对应子项目 spec 需 mirror 一份。
 
-| 事项                                                                                          | 归属                      | 何时做                                                                       | 现状                                                                                                                                                                                                                              | 涉及子项目                                         |
-| --------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `RedisCacheManager`（当前 no-op，`cache-manager.ts:338-377`）                                 | P6（候选）或独立基建      | P3 多实例前必须实现                                                          | 🟡 no-op 占位；**P4 评估确认协议层 cacheHint 不依赖 Redis**；**P2 的 introspection/JWKS 内存缓存 MVP 不依赖 Redis，多实例部署需 P6 实现后接入**                                                                                   | P2（OAuth 缓存）、P3（token 存储）、P6（候选归属） |
-| ~~`simple-auth.ts` 假认证（任何非空 token 放行）~~                                            | ~~P2~~                    | —                                                                            | ✅ **已核实：当前代码不存在该文件**（spec 描述滞后，可能 P1 时清理），无需处理                                                                                                                                                    | —                                                  |
-| ~~`message-audit-service.ts` 用户归因硬编码 `'admin'`~~                                       | ~~P2~~                    | —                                                                            | ✅ **已核实：当前 `message-audit-service.ts` 无 'admin' 硬编码**，message 结构无 user 字段，描述过时                                                                                                                              | —                                                  |
-| 组级 validationKey 在 MCP 端点未强制（`group-router.ts` 只校验组存在）                        | ✅ P2 已修复              | P2 一并修复                                                                  | ✅ **P2 已通过 `mcp-auth` 中间件强制**（启用了 validation 的组现在必须带正确 key）                                                                                                                                                | P2                                                 |
-| ~~`console.*` 绕过统一 Logger（25+ 处）~~                                                     | ~~P6~~                    | —                                                                            | ✅ **P6 已核实：`backend/src` 生产代码 console.\* = 0 处**（统一 Logger `@mcp-core/mcp-hub-share` 已全量接入）；`packages/cli` 的 console.\* 是 CLI stdout（合理），`packages/share` 是 logger 实现本身。原描述"25+ 处正在修"滞后 | —                                                  |
-| ~~出站连 MCP server 的 token 获取/刷新（原只透传静态 `headers`，`server_manager.ts`）~~ | ✅ **已完成**（2026-07-30） | 已立项并完成 | ✅ **已完成**：`server_manager.ts` 的 SSE/Streamable 连接接入 SDK 原生 `authProvider`（bearer 静态 token + oauth `ClientCredentialsProvider`），动态获取/刷新 token。详见 `2026-07-30-outbound-mcp-server-oauth-design.md`（commits `f9c5a46`..`cf16b1a`） | — |
+| 事项                                                                                    | 归属                        | 何时做              | 现状                                                                                                                                                                                                                                                       | 涉及子项目                                         |
+| --------------------------------------------------------------------------------------- | --------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `RedisCacheManager`（当前 no-op，`cache-manager.ts:338-377`）                           | P6（候选）或独立基建        | P3 多实例前必须实现 | 🟡 no-op 占位；**P4 评估确认协议层 cacheHint 不依赖 Redis**；**P2 的 introspection/JWKS 内存缓存 MVP 不依赖 Redis，多实例部署需 P6 实现后接入**                                                                                                            | P2（OAuth 缓存）、P3（token 存储）、P6（候选归属） |
+| ~~`simple-auth.ts` 假认证（任何非空 token 放行）~~                                      | ~~P2~~                      | —                   | ✅ **已核实：当前代码不存在该文件**（spec 描述滞后，可能 P1 时清理），无需处理                                                                                                                                                                             | —                                                  |
+| ~~`message-audit-service.ts` 用户归因硬编码 `'admin'`~~                                 | ~~P2~~                      | —                   | ✅ **已核实：当前 `message-audit-service.ts` 无 'admin' 硬编码**，message 结构无 user 字段，描述过时                                                                                                                                                       | —                                                  |
+| 组级 validationKey 在 MCP 端点未强制（`group-router.ts` 只校验组存在）                  | ✅ P2 已修复                | P2 一并修复         | ✅ **P2 已通过 `mcp-auth` 中间件强制**（启用了 validation 的组现在必须带正确 key）                                                                                                                                                                         | P2                                                 |
+| ~~`console.*` 绕过统一 Logger（25+ 处）~~                                               | ~~P6~~                      | —                   | ✅ **P6 已核实：`backend/src` 生产代码 console.\* = 0 处**（统一 Logger `@mcp-core/mcp-hub-share` 已全量接入）；`packages/cli` 的 console.\* 是 CLI stdout（合理），`packages/share` 是 logger 实现本身。原描述"25+ 处正在修"滞后                          | —                                                  |
+| ~~出站连 MCP server 的 token 获取/刷新（原只透传静态 `headers`，`server_manager.ts`）~~ | ✅ **已完成**（2026-07-30） | 已立项并完成        | ✅ **已完成**：`server_manager.ts` 的 SSE/Streamable 连接接入 SDK 原生 `authProvider`（bearer 静态 token + oauth `ClientCredentialsProvider`），动态获取/刷新 token。详见 `2026-07-30-outbound-mcp-server-oauth-design.md`（commits `f9c5a46`..`cf16b1a`） | —                                                  |
 
 ## 未采纳/待评估协议特性
 
@@ -373,7 +378,7 @@ P4 **不是替换**已有缓存，而是**新增协议层缓存提示**，并探
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SDK v2 还在 beta，可能有 breaking change | 跟踪 GA；版本用 codemod 输出而非手钉。**复查节点**：每次启动新子项目前查 `@modelcontextprotocol/sdk` releases；GA 发布后在 changeset 里把 `2.0.0-beta.5` 升正式版（当前锁版本，下次复查默认 2026-08-25） |
 | 子项目间隐性依赖未识别                   | 每个子项目 brainstorming 时复查与本 spec 的依赖声明 + [跨子项目共享待办](#跨子项目共享待办) 表                                                                                                           |
-| 激进升级导致与主流客户端不兼容           | P1 验证 Claude Desktop 等对新协议的支持情况；必要时回退某项决策                                                                                                                                          |
+| 协议演进导致与主流客户端不兼容           | ~~P1 激进入站~~ **已由 P7 修订**：入站默认全开（modern + legacy），可配置收窄；P1 验证 Claude Desktop 等对新协议的支持情况，必要时再调整 CompatibilityOptions                                            |
 | 范围蔓延（子项目越做越大）               | 每个子项目独立 spec，严格按 spec 范围控制；相邻问题归入 [跨子项目共享待办](#跨子项目共享待办) 而非塞进当前子项目                                                                                         |
 | 出站保留 SSE 连接成为长期维护负担        | **退出条件**：当 Hub 接入的外部 MCP server 普遍只支持 Streamable HTTP（可统计配置中 SSE 型 server 占比），且主流 SDK 客户端弃用 `SSEClientTransport` 时，移除出站 SSE 支持。未达条件前保留               |
 

@@ -1,5 +1,6 @@
 // backend/src/services/upstream-change-fanout.unit.test.ts
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+
 import { UpstreamChangeFanout } from './upstream-change-fanout.js';
 
 describe('UpstreamChangeFanout', () => {

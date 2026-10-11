@@ -14,7 +14,6 @@
  */
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-
 import { z } from 'zod/v4';
 
 interface DynTool {
@@ -53,7 +52,10 @@ server.registerTool(
     // 注册新工具到 server（使其在下次 tools/list 可见）
     server.registerTool(
       name,
-      { inputSchema: z.object({}), description: dynamicTools[dynamicTools.length - 1]!.description },
+      {
+        inputSchema: z.object({}),
+        description: dynamicTools[dynamicTools.length - 1]!.description,
+      },
       async () => ({
         content: [{ type: 'text' as const, text: `${name} ok` }],
       }),

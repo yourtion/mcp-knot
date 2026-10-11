@@ -1,0 +1,79 @@
+# =============================================================================
+# Task 13 — 官方 MCP conformance TCK 已知失败基线（baseline）
+# =============================================================================
+# 作用：CI acceptance gate。conformance v0.1.16 server 模式跑完后，所有失败
+# 必须落在此文件内，且不得有已恢复（stale）条目，否则 CI 抓到回归即 exit 1。
+#
+# 维护规则：
+#   - 新增失败 → 先判定是「Hub 架构性不支持」还是「真实回归」。
+#       * 架构性不支持（参考实现才提供的 test_* 工具 / test:// 资源 / prompts /
+#         completion / logging / sampling / elicitation 等）→ 加进本 baseline；
+#       * 真实回归（initialize / ping / tools-list 结构 / SSE 传输 / Hub 自有工具行为）
+#         → 不进 baseline，修 Hub。
+#   - 已恢复（原本在 baseline、现在通过）→ 必须从本文件移除，否则报 stale。
+#
+# 对照报告：.superpowers/sdd/2026-08-02-protocol-compat-layer/task-13-report.md
+# 首次填充依据：2026-08-02 跑 active suite @ spec 2025-11-25。
+#
+# ⚠️ 覆盖范围限制（TCK v0.1.16 上游能力）：
+#   - server 模式**无 2026-07-28（modern）场景**，--spec-version 是累积过滤器
+#     （非 era 切换开关），故本 baseline 只覆盖 legacy era（2025-11-25）。
+#   - server 模式**无 backcompat suite**（只 active/all/pending），故用 active。
+#   - modern era（2026-07-28）合规目前只靠项目自有 e2e（protocol-compliance.test.ts）
+#     覆盖，未经官方 TCK 对拍。待 TCK 后续版本补 modern server 场景后，在 run.sh
+#     循环追加该 spec-version 即可启用。
+#
+# Fix round 1（2026-08-02）：run.sh 改为自包含配置（空 default 组，不连外部上游）。
+# Fix round 2（2026-08-02）：group_status/list_group_tools 补 description，tools-list
+#   场景通过、移出 baseline（真 bug 不再被 baseline 掩盖）。当前 25 条已知失败。
+# =============================================================================
+
+server:
+  # ---- 一、参考实现专有工具（test_*）：Hub 是路由/代理，不提供这些 conformance
+  # ----     测试桩工具，故所有 tools-call/* 场景缺失被测工具 → -32602。
+  - tools-call-simple-text # 缺 test_simple_text 工具
+  - tools-call-image # 缺 test_image_content 工具
+  - tools-call-audio # 缺 test_audio_content 工具
+  - tools-call-embedded-resource # 缺 test_embedded_resource 工具
+  - tools-call-mixed-content # 缺 test_multiple_content_types 工具
+  - tools-call-error # 缺 test_error_handling 工具
+  - tools-call-with-progress # 缺 test_tool_with_progress 工具
+  - tools-call-sampling # 缺 test_sampling 工具（需 sampling server 能力）
+  - tools-call-elicitation # 缺 test_elicitation 工具（需 elicitation server 能力）
+  - tools-call-with-logging # logging/setLevel method not found（见下）
+
+  # ---- 二、参考实现专有资源（test://）：Hub 不持有静态 test:// 资源 → -32602/-32601。
+  - resources-read-text # 缺 test://static-text
+  - resources-read-binary # 缺 test://static-binary
+  - resources-templates-read # 缺 test://template/{id}/data 模板资源
+  - resources-subscribe # resources/subscribe method not found
+  - resources-unsubscribe # resources/unsubscribe method not found
+
+  # ---- 三、Hub 未实现的方法（method not found, -32601）。
+  - logging-set-level # logging/setLevel 未实现
+  - completion-complete # completion/complete 未实现
+  - prompts-list # prompts/list 未实现（Hub 无 prompts）
+  - prompts-get-simple # prompts/get 未实现
+  - prompts-get-with-args # prompts/get 未实现
+  - prompts-get-embedded-resource # prompts/get 未实现
+  - prompts-get-with-image # prompts/get 未实现
+
+  # ---- 四、elicitation SEP 参考桩：需 test_elicitation_sep* 工具，Hub 不提供。
+  - elicitation-sep1034-defaults # 缺 test_elicitation_sep1034_defaults 工具
+  - elicitation-sep1330-enums # 缺 test_elicitation_sep1330_enums 工具
+
+  # ---- 五、tools-list 已修复移出 baseline（2026-08-02）：group_status /
+  # ----     list_group_tools 两个自注册工具补了 description（group-service.ts
+  # ----     registerGroupManagementTools），TCK tools-list 场景现通过。
+
+  # ---- 六、DNS rebinding：Hub 当前不校验 Host/Origin 头（无 DNS-rebinding 防护）。
+  # ----     localhost-host-valid-accepted 子检查通过；invalid-host 子检查期望 4xx 实得 200。
+  # ----     属安全增强项，暂入 baseline；接入 Host 头校验后可移除。
+  - dns-rebinding-protection
+
+  # ---- 七、SSE 多流会话（SEP-1699）：Hub 是无状态路由器，不在 initialize 响应里
+  # ----     下发 Mcp-Session-Id，且并发多 POST 流偶发 GROUP_NOT_FOUND（handler 缓存
+  # ----     竞态）。套件上下文里表现为 WARNING（无 session id），独立跑表现为 FAILURE。
+  # ----     属架构性（无状态路由 + 无 session 关联），暂入 baseline；若后续 Hub 引入
+  # ----     session id 与并发安全的 handler 缓存可移除。
+  - server-sse-multiple-streams
