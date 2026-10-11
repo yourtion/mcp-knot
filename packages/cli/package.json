@@ -12,6 +12,11 @@
   ],
   "license": "ISC",
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourtion/mcp-knot.git",
+    "directory": "packages/cli"
+  },
   "bin": {
     "mcp-knot": "./bin/mcp-knot.js"
   },

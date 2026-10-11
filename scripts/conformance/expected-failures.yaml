@@ -31,36 +31,36 @@
 server:
   # ---- 一、参考实现专有工具（test_*）：Hub 是路由/代理，不提供这些 conformance
   # ----     测试桩工具，故所有 tools-call/* 场景缺失被测工具 → -32602。
-  - tools-call-simple-text        # 缺 test_simple_text 工具
-  - tools-call-image              # 缺 test_image_content 工具
-  - tools-call-audio              # 缺 test_audio_content 工具
-  - tools-call-embedded-resource  # 缺 test_embedded_resource 工具
-  - tools-call-mixed-content      # 缺 test_multiple_content_types 工具
-  - tools-call-error              # 缺 test_error_handling 工具
-  - tools-call-with-progress      # 缺 test_tool_with_progress 工具
-  - tools-call-sampling           # 缺 test_sampling 工具（需 sampling server 能力）
-  - tools-call-elicitation        # 缺 test_elicitation 工具（需 elicitation server 能力）
-  - tools-call-with-logging       # logging/setLevel method not found（见下）
+  - tools-call-simple-text # 缺 test_simple_text 工具
+  - tools-call-image # 缺 test_image_content 工具
+  - tools-call-audio # 缺 test_audio_content 工具
+  - tools-call-embedded-resource # 缺 test_embedded_resource 工具
+  - tools-call-mixed-content # 缺 test_multiple_content_types 工具
+  - tools-call-error # 缺 test_error_handling 工具
+  - tools-call-with-progress # 缺 test_tool_with_progress 工具
+  - tools-call-sampling # 缺 test_sampling 工具（需 sampling server 能力）
+  - tools-call-elicitation # 缺 test_elicitation 工具（需 elicitation server 能力）
+  - tools-call-with-logging # logging/setLevel method not found（见下）
 
   # ---- 二、参考实现专有资源（test://）：Hub 不持有静态 test:// 资源 → -32602/-32601。
-  - resources-read-text           # 缺 test://static-text
-  - resources-read-binary         # 缺 test://static-binary
-  - resources-templates-read      # 缺 test://template/{id}/data 模板资源
-  - resources-subscribe           # resources/subscribe method not found
-  - resources-unsubscribe         # resources/unsubscribe method not found
+  - resources-read-text # 缺 test://static-text
+  - resources-read-binary # 缺 test://static-binary
+  - resources-templates-read # 缺 test://template/{id}/data 模板资源
+  - resources-subscribe # resources/subscribe method not found
+  - resources-unsubscribe # resources/unsubscribe method not found
 
   # ---- 三、Hub 未实现的方法（method not found, -32601）。
-  - logging-set-level             # logging/setLevel 未实现
-  - completion-complete           # completion/complete 未实现
-  - prompts-list                  # prompts/list 未实现（Hub 无 prompts）
-  - prompts-get-simple            # prompts/get 未实现
-  - prompts-get-with-args         # prompts/get 未实现
+  - logging-set-level # logging/setLevel 未实现
+  - completion-complete # completion/complete 未实现
+  - prompts-list # prompts/list 未实现（Hub 无 prompts）
+  - prompts-get-simple # prompts/get 未实现
+  - prompts-get-with-args # prompts/get 未实现
   - prompts-get-embedded-resource # prompts/get 未实现
-  - prompts-get-with-image        # prompts/get 未实现
+  - prompts-get-with-image # prompts/get 未实现
 
   # ---- 四、elicitation SEP 参考桩：需 test_elicitation_sep* 工具，Hub 不提供。
-  - elicitation-sep1034-defaults  # 缺 test_elicitation_sep1034_defaults 工具
-  - elicitation-sep1330-enums     # 缺 test_elicitation_sep1330_enums 工具
+  - elicitation-sep1034-defaults # 缺 test_elicitation_sep1034_defaults 工具
+  - elicitation-sep1330-enums # 缺 test_elicitation_sep1330_enums 工具
 
   # ---- 五、tools-list 已修复移出 baseline（2026-08-02）：group_status /
   # ----     list_group_tools 两个自注册工具补了 description（group-service.ts

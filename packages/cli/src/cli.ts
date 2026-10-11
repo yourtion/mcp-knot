@@ -158,7 +158,7 @@ MCP Knot CLI - 聚合多个MCP服务的命令行界面
   --init-all              初始化所有配置文件（包含组配置）
   --overwrite             覆盖已存在的配置文件
   --no-legacy-inbound     关闭入站 legacy 协议 shim（仅接受现代协议客户端）
-  --modern-only-upstream  上游 MCP 服务仅走现代协议（不做 modern→legacy 翻译）
+  --modern-only-upstream  预留选项（CLI 上游连接尚未实现，当前不生效）
 
 示例:
   mcp-knot                                    # 使用默认配置文件

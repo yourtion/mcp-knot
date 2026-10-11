@@ -12,7 +12,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "check": "rm -rf dist && oxlint --fix src/ && oxfmt src/",
-    "start": "node dist/src/index.js",
+    "start": "node dist/backend/src/index.js",
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:e2e": "vitest --run --project api-e2e",

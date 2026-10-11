@@ -19,17 +19,17 @@
 
 ## 决策汇总
 
-| 维度 | 决策 | 理由 |
-|---|---|---|
-| 处理方式 | 改名 + 差异化定位一起做 | npm 未发布，迁移成本最低；名字和定位强绑定，一次性解决 |
-| 差异化主线 | C（轻量开发者工具），A（协议领先）作支撑卖点 | C 受众广、与 0.0.1 现状契合；A 是时间窗口资产，作支撑而非主轴 |
-| 目标用户 | 开发者为主 + 团队可扩展 | 默认零配置本地用，需要时能开分组/鉴权扩展 |
-| 命名词族 | 枢纽/聚合型（避开 hub/nexus） | 与"团队可扩展"最契合；避开被竞品占住的语义领地 |
-| 新名字 | **`mcp-knot`** | npm 自由 / GitHub 无热门同名 / 词形最短最独特 |
-| npm scope | 保留 `@mcp-core`，只改包名 | scope 本身不撞竞品，迁移最小 |
-| 迁移策略 | 一刀切，无兼容垫片 | npm 从未发布，零外部用户依赖旧名 |
-| GitHub 仓库 | `yourtion/mcp-hub` → `yourtion/mcp-knot`（最后手动改名） | 自动 301 redirect，stars/issues 全保留 |
-| 域名 | 不纳入考虑 | 用户明确不需要 |
+| 维度        | 决策                                                     | 理由                                                          |
+| ----------- | -------------------------------------------------------- | ------------------------------------------------------------- |
+| 处理方式    | 改名 + 差异化定位一起做                                  | npm 未发布，迁移成本最低；名字和定位强绑定，一次性解决        |
+| 差异化主线  | C（轻量开发者工具），A（协议领先）作支撑卖点             | C 受众广、与 0.0.1 现状契合；A 是时间窗口资产，作支撑而非主轴 |
+| 目标用户    | 开发者为主 + 团队可扩展                                  | 默认零配置本地用，需要时能开分组/鉴权扩展                     |
+| 命名词族    | 枢纽/聚合型（避开 hub/nexus）                            | 与"团队可扩展"最契合；避开被竞品占住的语义领地                |
+| 新名字      | **`mcp-knot`**                                           | npm 自由 / GitHub 无热门同名 / 词形最短最独特                 |
+| npm scope   | 保留 `@mcp-core`，只改包名                               | scope 本身不撞竞品，迁移最小                                  |
+| 迁移策略    | 一刀切，无兼容垫片                                       | npm 从未发布，零外部用户依赖旧名                              |
+| GitHub 仓库 | `yourtion/mcp-hub` → `yourtion/mcp-knot`（最后手动改名） | 自动 301 redirect，stars/issues 全保留                        |
+| 域名        | 不纳入考虑                                               | 用户明确不需要                                                |
 
 ## 命名调研结论
 
@@ -49,15 +49,15 @@
 
 ### 名字语义阐释（写进 README 开头）
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 ### 差异化叙事结构（C 主轴 + A 支撑）
 
-| 层 | 内容 | 作用 |
-|---|---|---|
-| 主轴（拉新） | "轻量枢纽"：比 mcphub 更轻、比 MetaMCP 更简，零配置启动 | 吸引个人开发者/小团队 |
-| 支撑（留客） | "全协议领先"：已抢先实现 2026-07-28 无状态 + ttlMs/cacheScope + OAuth 2.1 + OTel | 留住懂行的，建技术壁垒 |
-| 化解风险 | "knot" 正向语义：纽带/交织/连接（不是"打结卡住"）。tagline "Tie your MCP servers together" | 覆盖负面联想 |
+| 层           | 内容                                                                                       | 作用                   |
+| ------------ | ------------------------------------------------------------------------------------------ | ---------------------- |
+| 主轴（拉新） | "轻量枢纽"：比 mcphub 更轻、比 MetaMCP 更简，零配置启动                                    | 吸引个人开发者/小团队  |
+| 支撑（留客） | "全协议领先"：已抢先实现 2026-07-28 无状态 + ttlMs/cacheScope + OAuth 2.1 + OTel           | 留住懂行的，建技术壁垒 |
+| 化解风险     | "knot" 正向语义：纽带/交织/连接（不是"打结卡住"）。tagline "Tie your MCP servers together" | 覆盖负面联想           |
 
 ### 差异化站位
 
@@ -69,14 +69,14 @@
 
 ### 包名映射（一刀切，无垫片）
 
-| 旧名 | 新名 |
-|---|---|
-| `@mcp-core/mcp-hub` | `@mcp-core/mcp-knot` |
-| `@mcp-core/mcp-hub-core` | `@mcp-core/mcp-knot-core` |
-| `@mcp-core/mcp-hub-cli` | `@mcp-core/mcp-knot-cli` |
-| `@mcp-core/mcp-hub-api` | `@mcp-core/mcp-knot-api` |
+| 旧名                      | 新名                       |
+| ------------------------- | -------------------------- |
+| `@mcp-core/mcp-hub`       | `@mcp-core/mcp-knot`       |
+| `@mcp-core/mcp-hub-core`  | `@mcp-core/mcp-knot-core`  |
+| `@mcp-core/mcp-hub-cli`   | `@mcp-core/mcp-knot-cli`   |
+| `@mcp-core/mcp-hub-api`   | `@mcp-core/mcp-knot-api`   |
 | `@mcp-core/mcp-hub-share` | `@mcp-core/mcp-knot-share` |
-| `@mcp-core/mcp-hub-web` | `@mcp-core/mcp-knot-web` |
+| `@mcp-core/mcp-hub-web`   | `@mcp-core/mcp-knot-web`   |
 
 ### 仓库 / 外部标识
 
@@ -85,15 +85,15 @@
 
 ### 改动清单（按文件类别）
 
-| 类别 | 范围 | 数量 |
-|---|---|---|
-| package.json `name` 字段 | 6 个文件 | 6 处 |
-| package.json 内部依赖引用 | `workspace:*` / `workspace:^` | 22 处 |
-| 代码 import | `*.ts` / `*.vue` | 144 处 |
-| CLI bin 入口 | `packages/cli/package.json` + 文件改名 | 2 处 |
-| CI slug | `.github/workflows/ci.yml:109` | 1 处 |
-| README / docs 品牌名 | README.md、README.zh.md、各 doc | 待统计（grep 全扫） |
-| changeset 配置 ignore 列表 | `.changeset/config.json` | 2 处包名 |
+| 类别                       | 范围                                   | 数量                |
+| -------------------------- | -------------------------------------- | ------------------- |
+| package.json `name` 字段   | 6 个文件                               | 6 处                |
+| package.json 内部依赖引用  | `workspace:*` / `workspace:^`          | 22 处               |
+| 代码 import                | `*.ts` / `*.vue`                       | 144 处              |
+| CLI bin 入口               | `packages/cli/package.json` + 文件改名 | 2 处                |
+| CI slug                    | `.github/workflows/ci.yml:109`         | 1 处                |
+| README / docs 品牌名       | README.md、README.zh.md、各 doc        | 待统计（grep 全扫） |
+| changeset 配置 ignore 列表 | `.changeset/config.json`               | 2 处包名            |
 
 ## 第 3 节：执行顺序、风险与验证
 
@@ -118,12 +118,12 @@ Phase 2 — GitHub 仓库改名（手动操作，零代码）
 
 ### 风险与对策
 
-| 风险 | 影响 | 对策 |
-|---|---|---|
-| workspace 引用漏改 | 部分包找不到依赖，build 失败 | 全局替换 `mcp-hub` → `mcp-knot`，靠 build 失败兜底（编译器报错所有遗漏） |
-| 测试 fixture / e2e 配置里的包名硬编码 | 测试运行时找不到模块 | 跑 `pnpm test` 全量验证（含 e2e） |
-| CLI bin 改名后 `bin/mcp-hub.js` 文件未重命名 | bin 链接失效 | 同步改文件名 + package.json `bin` 字段 |
-| docs 里品牌名残留（中英文混用） | 品牌不一致 | grep 全仓扫描，逐一确认 |
+| 风险                                         | 影响                         | 对策                                                                     |
+| -------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------ |
+| workspace 引用漏改                           | 部分包找不到依赖，build 失败 | 全局替换 `mcp-hub` → `mcp-knot`，靠 build 失败兜底（编译器报错所有遗漏） |
+| 测试 fixture / e2e 配置里的包名硬编码        | 测试运行时找不到模块         | 跑 `pnpm test` 全量验证（含 e2e）                                        |
+| CLI bin 改名后 `bin/mcp-hub.js` 文件未重命名 | bin 链接失效                 | 同步改文件名 + package.json `bin` 字段                                   |
+| docs 里品牌名残留（中英文混用）              | 品牌不一致                   | grep 全仓扫描，逐一确认                                                  |
 
 ### 验证方案（evidence before assertions）
 

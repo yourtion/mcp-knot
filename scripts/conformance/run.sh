@@ -53,8 +53,7 @@ cleanup() {
     # 给进程一点时间优雅退出，再强杀
     for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "${HUB_PID}" 2>/dev/null || break; sleep 0.3; done
     kill -9 "${HUB_PID}" 2>/dev/null || true
-    # 兜底：按可执行路径再清一次（防止 trap 未及时触发留下僵尸/孤儿）
-    pkill -9 -f "dist/backend/src/index.js" 2>/dev/null || true
+    wait "${HUB_PID}" 2>/dev/null || true
   fi
 }
 finish() {
@@ -70,10 +69,10 @@ command -v node >/dev/null || { err "未找到 node"; exit 2; }
 
 # ---------- 1. 构建 backend ----------
 # dist 路径受 monorepo tsconfig 影响：backend 实际产物在 dist/backend/src/index.js
-# （package.json 的 "start": "node dist/src/index.js" 与实际产物路径不符，故此处硬编码）
+# （与 package.json 的 start 入口一致）
 BACKEND_ENTRY="${REPO_ROOT}/backend/dist/backend/src/index.js"
-if [[ ! -f "${BACKEND_ENTRY}" ]]; then
-  log "构建 backend（首次或产物缺失）"
+if [[ "${CONFORMANCE_SKIP_BUILD:-0}" != "1" ]]; then
+  log "构建 backend（确保验证当前源码）"
   (cd "${REPO_ROOT}" && pnpm --filter @mcp-core/mcp-knot-share build >/dev/null \
     && pnpm --filter @mcp-core/mcp-knot-protocol build >/dev/null \
     && pnpm --filter @mcp-core/mcp-knot-core build >/dev/null \
@@ -147,7 +146,7 @@ fi
 log "启动 Hub：port=${HUB_PORT} endpoint=/${HUB_GROUP}/mcp（开放访问）"
 HUB_LOG="$(mktemp -t p7-conformance-hub.XXXXXX.log)"
 ( cd "${REPO_ROOT}/backend" \
-  && CONFIG_PATH="${TMP_CONFIG}" node "${BACKEND_ENTRY}" ) >"${HUB_LOG}" 2>&1 &
+  && exec env CONFIG_PATH="${TMP_CONFIG}" node "${BACKEND_ENTRY}" ) >"${HUB_LOG}" 2>&1 &
 HUB_PID=$!
 
 # ---------- 3. 等 Hub 就绪 ----------

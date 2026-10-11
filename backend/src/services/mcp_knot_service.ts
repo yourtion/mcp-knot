@@ -1,4 +1,5 @@
 import { ConfigError, ErrorCode, ServiceError, ToolExecutionError } from '@mcp-core/mcp-knot-core';
+import { CompatibilityOptionsSchema } from '@mcp-core/mcp-knot-protocol';
 
 import { ServerStatus } from '../types/mcp-knot.js';
 import { logger } from '../utils/logger.js';
@@ -117,6 +118,7 @@ export class McpKnotService implements IMcpKnotService {
     // ServerManager 注入 detector（连接时注册 listChanged handler + 保存快照）；
     // subscriptions.enabled=false 时不注入（detector 为 undefined）。
     this.serverManager = new ServerManager(this.serverConfigs, {
+      compatibility: CompatibilityOptionsSchema.parse(systemConfig?.compatibility ?? {}),
       ...(this.changeDetector && { changeDetector: this.changeDetector }),
     });
     this.groupManager = new GroupManager(this.groupConfigs, this.serverManager);

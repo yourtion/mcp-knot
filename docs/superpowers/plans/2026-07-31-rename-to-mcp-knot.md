@@ -21,14 +21,14 @@
 
 **包名映射表（所有 task 共用）：**
 
-| 旧名 | 新名 |
-|---|---|
-| `@mcp-core/mcp-hub` | `@mcp-core/mcp-knot` |
-| `@mcp-core/mcp-hub-core` | `@mcp-core/mcp-knot-core` |
-| `@mcp-core/mcp-hub-cli` | `@mcp-core/mcp-knot-cli` |
-| `@mcp-core/mcp-hub-api` | `@mcp-core/mcp-knot-api` |
+| 旧名                      | 新名                       |
+| ------------------------- | -------------------------- |
+| `@mcp-core/mcp-hub`       | `@mcp-core/mcp-knot`       |
+| `@mcp-core/mcp-hub-core`  | `@mcp-core/mcp-knot-core`  |
+| `@mcp-core/mcp-hub-cli`   | `@mcp-core/mcp-knot-cli`   |
+| `@mcp-core/mcp-hub-api`   | `@mcp-core/mcp-knot-api`   |
 | `@mcp-core/mcp-hub-share` | `@mcp-core/mcp-knot-share` |
-| `@mcp-core/mcp-hub-web` | `@mcp-core/mcp-knot-web` |
+| `@mcp-core/mcp-hub-web`   | `@mcp-core/mcp-knot-web`   |
 
 ---
 
@@ -48,6 +48,7 @@
 ### Task 1: 包名基础设施 + CLI bin 改名
 
 **Files:**
+
 - Modify: `package.json`（根，name + 7 处 filter 脚本）
 - Modify: `packages/share/package.json`（name）
 - Modify: `packages/core/package.json`（name）
@@ -58,6 +59,7 @@
 - Rename: `packages/cli/bin/mcp-hub.js` → `packages/cli/bin/mcp-knot.js`
 
 **Interfaces:**
+
 - Produces: 所有 workspace 包的新 `name`，供 Task 2 的 import 替换对齐。
 
 - [ ] **Step 1: 改 6 个 package.json 的 name 字段**
@@ -129,6 +131,7 @@ git commit -m "refactor(rename): 包名 mcp-hub→mcp-knot 基础设施（name/d
 ### Task 2: 代码 import 全局替换
 
 **Files:**
+
 - Modify: 91 个 `.ts`/`.vue` 文件中的 144 处 import 语句
 - 典型样本：
   - `backend/src/middleware/mcp-auth.ts:11` — `from '@mcp-core/mcp-hub-core'`
@@ -137,6 +140,7 @@ git commit -m "refactor(rename): 包名 mcp-hub→mcp-knot 基础设施（name/d
   - `backend/src/types/config-helpers.ts:7` — `from '@mcp-core/mcp-hub-share/config'`
 
 **Interfaces:**
+
 - Consumes: Task 1 产出的新包名。
 - Produces: 全部代码引用新包名，build 可通过。
 
@@ -157,23 +161,27 @@ find . -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.tsx" \) \
 - [ ] **Step 2: 抽查替换正确性（保留 subpath）**
 
 Run:
+
 ```bash
 grep -rn "@mcp-core/mcp-knot" --include="*.ts" --include="*.vue" . | grep -v node_modules | grep -E "/(api-to-mcp|config|services|types|errors|utils/logger)"
 ```
+
 Expected: 能看到 `@mcp-core/mcp-knot-core/api-to-mcp`、`@mcp-core/mcp-knot-share/config` 等，subpath 完整保留。
 
 - [ ] **Step 3: 确认无旧包名残留（代码层）**
 
 Run:
+
 ```bash
 grep -rn "@mcp-core/mcp-hub" --include="*.ts" --include="*.vue" --include="*.tsx" . | grep -v node_modules
 ```
+
 Expected: 空输出（零残留）。
 
 - [ ] **Step 4: 验证全量编译**
 
 Run: `pnpm build:production`
-Expected: 全部 5 个包（share → core → api → cli → web）编译通过。若报 "Cannot find module '@mcp-core/mcp-hub-*'"，说明有遗漏，回到 Step 1 补查。
+Expected: 全部 5 个包（share → core → api → cli → web）编译通过。若报 "Cannot find module '@mcp-core/mcp-hub-\*'"，说明有遗漏，回到 Step 1 补查。
 
 - [ ] **Step 5: Commit**
 
@@ -187,11 +195,13 @@ git commit -m "refactor(rename): 代码 import 全局替换 mcp-hub→mcp-knot�
 ### Task 3: CI slug + README 品牌叙事改写
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml:109`（slug）
 - Modify: `README.md`（24 处品牌名 + 头部叙事改写）
 - Modify: `README.zh.md`（22 处品牌名 + 头部叙事改写）
 
 **Interfaces:**
+
 - Consumes: spec 第 1 节的品牌叙事（一句话定位、语义阐释、差异化站位）。
 
 - [ ] **Step 1: 改 CI slug**
@@ -207,7 +217,7 @@ git commit -m "refactor(rename): 代码 import 全局替换 mcp-hub→mcp-knot�
 
 English | [中文版](README.zh.md)
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 **Tie your MCP servers together.**
 
@@ -223,7 +233,7 @@ A centralized hub server engineered to consolidate multiple MCP servers into ded
 
 [English](README.md) | 中文版
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 **把你的 MCP server 系在一起。**
 
@@ -262,6 +272,7 @@ git commit -m "docs(rename): CI slug + README/README.zh 品牌叙事改写为 MC
 **Files:** 无修改，仅验证。
 
 **Interfaces:**
+
 - Consumes: Task 1–3 的全部产出。
 
 - [ ] **Step 1: 全量测试（含 e2e）**
@@ -282,12 +293,15 @@ Expected: 0 warnings，格式无 diff。
 - [ ] **Step 4: 验收硬指标——grep 零残留**
 
 Run:
+
 ```bash
 grep -rn "mcp-hub" --include="*.ts" --include="*.json" --include="*.md" --include="*.js" --include="*.vue" --include="*.yml" --include="*.yaml" . | grep -v node_modules | grep -v dist
 ```
+
 Expected: **空输出**。
 
 若仍有输出，分两种情况处理：
+
 - **漏改**（如遗漏的 config、fixture）：补改并重跑本步。
 - **历史文档显式保留**（如 `docs/superpowers/specs/2026-07-11-project-audit-report.md` 记录旧名、本改名计划文档本身）：在该处加注释说明保留理由，并在验收记录中列出豁免清单。
 

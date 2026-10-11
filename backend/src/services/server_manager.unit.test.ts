@@ -1,3 +1,4 @@
+import { defaultCompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -94,6 +95,29 @@ describe('ServerManager', () => {
     // 清除 mocks
     vi.restoreAllMocks();
     vi.clearAllMocks();
+  });
+
+  it('modernOnly rejects a negotiated legacy upstream and closes its client', async () => {
+    mockClient.getProtocolEra = vi.fn().mockReturnValue('legacy');
+    serverManager = new ServerManager(
+      { one: mockServerConfigs['test-server-1']! },
+      {
+        compatibility: {
+          ...defaultCompatibilityOptions,
+          outbound: { ...defaultCompatibilityOptions.outbound, modernOnly: true },
+        },
+      },
+    );
+    await serverManager.initialize();
+    expect(serverManager.getServerStatus('one')).toBe(ServerStatus.ERROR);
+    expect(mockClient.close).toHaveBeenCalledOnce();
+    expect(mockClient.listTools).not.toHaveBeenCalled();
+    expect(MockClient).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        versionNegotiation: { mode: { pin: '2026-07-28' } },
+      }),
+    );
   });
 
   describe('constructor', () => {

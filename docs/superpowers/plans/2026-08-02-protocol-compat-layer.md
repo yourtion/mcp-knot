@@ -25,54 +25,55 @@
 
 **新建包 `packages/protocol/`：**
 
-| 文件 | 职责 |
-|------|------|
-| `packages/protocol/package.json` | 包定义，name `@mcp-core/mcp-knot-protocol`，依赖 server/share |
-| `packages/protocol/tsconfig.json` | 独立 ts 配置（照抄 share 模式，无 extends） |
-| `packages/protocol/vitest.config.ts` | vitest project 配置（照抄 share） |
-| `packages/protocol/src/index.ts` | 对外门面，re-export 公共 API |
-| `packages/protocol/src/config.ts` | `CompatibilityOptions` 类型 + zod schema + 默认值 |
-| `packages/protocol/src/model/era.ts` | `Era`、`UpstreamEra`、`InboundEra` 类型 |
-| `packages/protocol/src/model/normalized.ts` | `NormalizedRequest`/`NormalizedCall`/`NormalizedResult`/`NormalizedMrtrState` |
-| `packages/protocol/src/inbound/adapter.ts` | `InboundProtocolAdapter`：据 opts 决定 legacy 模式并归一化入站请求 |
-| `packages/protocol/src/inbound/legacy-fallback.ts` | 包装 SDK `legacyStatelessFallback`，返回 LegacyHttpHandler |
-| `packages/protocol/src/outbound/adapter.ts` | `OutboundProtocolAdapter`：探测 upstream era 并分发 translator |
-| `packages/protocol/src/outbound/modern-translator.ts` | modern upstream：_meta envelope + inputResponses 顶层字段 |
-| `packages/protocol/src/outbound/legacy-translator.ts` | legacy upstream：initialize 语义 + MRTR shim 降级 |
-| `packages/protocol/src/mrtr/relay.ts` | MRTR 跨 era 中转（从 group-service.ts 迁入的 mint/verify 逻辑） |
-| `packages/protocol/src/errors/normalizer.ts` | `UnifiedErrorNormalizer`：三来源错误归一 |
+| 文件                                                  | 职责                                                                          |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `packages/protocol/package.json`                      | 包定义，name `@mcp-core/mcp-knot-protocol`，依赖 server/share                 |
+| `packages/protocol/tsconfig.json`                     | 独立 ts 配置（照抄 share 模式，无 extends）                                   |
+| `packages/protocol/vitest.config.ts`                  | vitest project 配置（照抄 share）                                             |
+| `packages/protocol/src/index.ts`                      | 对外门面，re-export 公共 API                                                  |
+| `packages/protocol/src/config.ts`                     | `CompatibilityOptions` 类型 + zod schema + 默认值                             |
+| `packages/protocol/src/model/era.ts`                  | `Era`、`UpstreamEra`、`InboundEra` 类型                                       |
+| `packages/protocol/src/model/normalized.ts`           | `NormalizedRequest`/`NormalizedCall`/`NormalizedResult`/`NormalizedMrtrState` |
+| `packages/protocol/src/inbound/adapter.ts`            | `InboundProtocolAdapter`：据 opts 决定 legacy 模式并归一化入站请求            |
+| `packages/protocol/src/inbound/legacy-fallback.ts`    | 包装 SDK `legacyStatelessFallback`，返回 LegacyHttpHandler                    |
+| `packages/protocol/src/outbound/adapter.ts`           | `OutboundProtocolAdapter`：探测 upstream era 并分发 translator                |
+| `packages/protocol/src/outbound/modern-translator.ts` | modern upstream：\_meta envelope + inputResponses 顶层字段                    |
+| `packages/protocol/src/outbound/legacy-translator.ts` | legacy upstream：initialize 语义 + MRTR shim 降级                             |
+| `packages/protocol/src/mrtr/relay.ts`                 | MRTR 跨 era 中转（从 group-service.ts 迁入的 mint/verify 逻辑）               |
+| `packages/protocol/src/errors/normalizer.ts`          | `UnifiedErrorNormalizer`：三来源错误归一                                      |
 
 **新建测试 fixture：**
 
-| 文件 | 职责 |
-|------|------|
-| `backend/src/e2e/fixtures/legacy-upstream-server.ts` | 确定性 legacy（2025-11-25）stdio upstream，照抄 mrtr-upstream-server.ts 骨架 |
+| 文件                                                 | 职责                                                                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `backend/src/e2e/fixtures/legacy-upstream-server.ts` | 确定性 legacy（2025-11-25）stdio upstream，照抄 mrtr-upstream-server.ts 骨架          |
 | `backend/src/e2e/fixtures/modern-upstream-server.ts` | 确定性 modern stdio upstream（从 mrtr-upstream-server.ts 抽出无 MRTR 的纯 modern 版） |
 
 **修改现有文件：**
 
-| 文件 | 改动 |
-|------|------|
-| `package.json` | `build:production` 串行链插入 `build:protocol`（share 之后、core 之前） |
-| `vitest.config.ts` | projects 数组加入 `./packages/protocol/vitest.config.ts` |
-| `packages/share/src/config/schemas/*.ts` | 新增 `CompatibilityConfigSchema`（system config 的一部分） |
-| `packages/share/src/config/types/*.ts` | 新增 `CompatibilityConfig` 类型 |
-| `packages/core/src/config/config-manager.ts` | 加载/读取 `compatibility` 配置段 |
-| `backend/src/api/mcp/mcp-handler-factory.ts:282-289` | `legacy:'reject'` → 经 `InboundProtocolAdapter` 按 opts 决定 |
-| `backend/src/config/*` 或入口 | 读环境变量构造 `CompatibilityOptions` |
-| `packages/cli/src/server/cli-mcp-server.ts:163-168` | 同上，stdio 走 `'serve'\|'reject'` |
-| `packages/cli/src/cli.ts:17-29,29-...` | 加 `--no-legacy-inbound` / `--modern-only-upstream` flag |
-| `backend/src/services/server_manager.ts:99-128` | 显式探测记录 `upstreamEra`，挂到 server 元数据 |
-| `backend/src/services/server_manager.ts:425-518` | era 假设迁出，`inputResponses`/`requestState` 经 outbound translator |
-| `backend/src/api/mcp/group-service.ts:668-720` | MRTR mint/verify 迁入 protocol 包并调用 |
-| `backend/src/api/mcp/group-router.ts:84-122,152-167` | 错误经 `UnifiedErrorNormalizer` |
-| `backend/src/e2e/mcp-protocol/protocol-compliance.test.ts` | 填上用例 3 `it.skip`，新增 legacy 客户端入站用例 |
+| 文件                                                       | 改动                                                                    |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `package.json`                                             | `build:production` 串行链插入 `build:protocol`（share 之后、core 之前） |
+| `vitest.config.ts`                                         | projects 数组加入 `./packages/protocol/vitest.config.ts`                |
+| `packages/share/src/config/schemas/*.ts`                   | 新增 `CompatibilityConfigSchema`（system config 的一部分）              |
+| `packages/share/src/config/types/*.ts`                     | 新增 `CompatibilityConfig` 类型                                         |
+| `packages/core/src/config/config-manager.ts`               | 加载/读取 `compatibility` 配置段                                        |
+| `backend/src/api/mcp/mcp-handler-factory.ts:282-289`       | `legacy:'reject'` → 经 `InboundProtocolAdapter` 按 opts 决定            |
+| `backend/src/config/*` 或入口                              | 读环境变量构造 `CompatibilityOptions`                                   |
+| `packages/cli/src/server/cli-mcp-server.ts:163-168`        | 同上，stdio 走 `'serve'\|'reject'`                                      |
+| `packages/cli/src/cli.ts:17-29,29-...`                     | 加 `--no-legacy-inbound` / `--modern-only-upstream` flag                |
+| `backend/src/services/server_manager.ts:99-128`            | 显式探测记录 `upstreamEra`，挂到 server 元数据                          |
+| `backend/src/services/server_manager.ts:425-518`           | era 假设迁出，`inputResponses`/`requestState` 经 outbound translator    |
+| `backend/src/api/mcp/group-service.ts:668-720`             | MRTR mint/verify 迁入 protocol 包并调用                                 |
+| `backend/src/api/mcp/group-router.ts:84-122,152-167`       | 错误经 `UnifiedErrorNormalizer`                                         |
+| `backend/src/e2e/mcp-protocol/protocol-compliance.test.ts` | 填上用例 3 `it.skip`，新增 legacy 客户端入站用例                        |
 
 ---
 
 ## Task 1: 新建 protocol 包脚手架
 
 **Files:**
+
 - Create: `packages/protocol/package.json`
 - Create: `packages/protocol/tsconfig.json`
 - Create: `packages/protocol/vitest.config.ts`
@@ -82,12 +83,14 @@
 - Modify: `vitest.config.ts`（projects 数组）
 
 **Interfaces:**
-- Consumes: `@modelcontextprotocol/server@2.0.0`、`@mcp-core/mcp-knot-share`（workspace:*）
+
+- Consumes: `@modelcontextprotocol/server@2.0.0`、`@mcp-core/mcp-knot-share`（workspace:\*）
 - Produces: 一个可 build、可被 `@mcp-core/*` filter 命中、空 index 但能 import 的包
 
 - [ ] **Step 1: 写 package.json（照抄 packages/share/package.json 结构）**
 
 `packages/protocol/package.json`:
+
 ```json
 {
   "name": "@mcp-core/mcp-knot-protocol",
@@ -124,6 +127,7 @@
 - [ ] **Step 2: 写 tsconfig.json（照抄 packages/share/tsconfig.json，types 加 vitest）**
 
 `packages/protocol/tsconfig.json`:
+
 ```json
 {
   "compilerOptions": {
@@ -153,6 +157,7 @@
 先读 `packages/share/vitest.config.ts` 复制其结构，把 project name 改为 `protocol`。如果 share 用的是引用 `vitest.shared.ts` 的模式，照搬。
 
 `packages/protocol/vitest.config.ts`:
+
 ```ts
 import { defineProject } from '../share/vitest.config.js'; // 视 share 实际导出而定
 // 若 share 无导出，则直接内联 vitest.shared.ts 的配置
@@ -163,12 +168,14 @@ import { defineProject } from '../share/vitest.config.js'; // 视 share 实际�
 - [ ] **Step 4: 写空 index.ts + README**
 
 `packages/protocol/src/index.ts`:
+
 ```ts
 // 协议兼容层公共 API（后续 task 填充）
 export {};
 ```
 
 `packages/protocol/README.md`:
+
 ```markdown
 # @mcp-core/mcp-knot-protocol
 
@@ -180,6 +187,7 @@ MCP Knot 协议兼容层。详见 `docs/superpowers/specs/2026-08-02-protocol-co
 读 `package.json`，找到 `build:production` 脚本（当前是 `...share... && ...core... && ...api... && ...cli... && ...fe`），在 `build:share` 之后、`build:core` 之前插入 `build:protocol`。
 
 同时在根 `package.json` 的 scripts 里加：
+
 ```json
 "build:protocol": "pnpm --filter @mcp-core/mcp-knot-protocol build"
 ```
@@ -187,6 +195,7 @@ MCP Knot 协议兼容层。详见 `docs/superpowers/specs/2026-08-02-protocol-co
 - [ ] **Step 6: 改根 vitest.config.ts 加入新 project**
 
 读 `vitest.config.ts`，在 projects 数组里、share 之后加入：
+
 ```ts
 './packages/protocol/vitest.config.ts',
 ```
@@ -218,17 +227,20 @@ git commit -m "feat(protocol): 新增 @mcp-core/mcp-knot-protocol 包脚手架"
 ## Task 2: CompatibilityOptions 配置模型
 
 **Files:**
+
 - Create: `packages/protocol/src/config.ts`
 - Test: `packages/protocol/src/config.test.ts`
 - Modify: `packages/protocol/src/index.ts`（导出配置类型）
 
 **Interfaces:**
+
 - Consumes: `zod`
 - Produces: `CompatibilityOptions`（类型）、`CompatibilityOptionsSchema`（zod）、`defaultCompatibilityOptions`（默认值常量）
 
 - [ ] **Step 1: 写失败测试**
 
 `packages/protocol/src/config.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { CompatibilityOptionsSchema, defaultCompatibilityOptions } from './config.js';
@@ -251,7 +263,9 @@ describe('CompatibilityOptions', () => {
   });
 
   it('mrtrLegacyDegradation 只接受 shim | reject', () => {
-    expect(() => CompatibilityOptionsSchema.parse({ outbound: { mrtrLegacyDegradation: 'force' } })).toThrow();
+    expect(() =>
+      CompatibilityOptionsSchema.parse({ outbound: { mrtrLegacyDegradation: 'force' } }),
+    ).toThrow();
   });
 
   it('部分覆盖保留其余默认', () => {
@@ -270,6 +284,7 @@ Expected: FAIL（`./config.js` 不存在）
 - [ ] **Step 3: 写实现**
 
 `packages/protocol/src/config.ts`:
+
 ```ts
 import { z } from 'zod';
 
@@ -296,12 +311,15 @@ export const CompatibilityOptionsSchema = z.object({
 
 export type CompatibilityOptions = z.infer<typeof CompatibilityOptionsSchema>;
 
-export const defaultCompatibilityOptions: CompatibilityOptions = CompatibilityOptionsSchema.parse({});
+export const defaultCompatibilityOptions: CompatibilityOptions = CompatibilityOptionsSchema.parse(
+  {},
+);
 ```
 
 - [ ] **Step 4: 更新 index.ts 导出**
 
 `packages/protocol/src/index.ts`:
+
 ```ts
 export { CompatibilityOptionsSchema, defaultCompatibilityOptions } from './config.js';
 export type { CompatibilityOptions } from './config.js';
@@ -329,18 +347,21 @@ git commit -m "feat(protocol): CompatibilityOptions 配置模型与默认值"
 ## Task 3: 归一化数据模型
 
 **Files:**
+
 - Create: `packages/protocol/src/model/era.ts`
 - Create: `packages/protocol/src/model/normalized.ts`
 - Test: `packages/protocol/src/model/normalized.test.ts`
 - Modify: `packages/protocol/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `@modelcontextprotocol/server`（`JSONRPCRequest`/`InputRequiredResult`/`ProtocolEra` 类型）
 - Produces: `Era`、`InboundEra`、`UpstreamEra`、`NormalizedRequest`、`NormalizedCall`、`NormalizedResult`、`NormalizedMrtrState`、`NormalizedError`
 
 - [ ] **Step 1: 写 era.ts**
 
 `packages/protocol/src/model/era.ts`:
+
 ```ts
 // era 是 Hub 内部的统一抽象，与 SDK 的 ProtocolEra 对齐但独立定义，
 // 避免 protocol 包消费者直接依赖 SDK 内部类型。
@@ -359,9 +380,16 @@ export type UpstreamEraProbe = UpstreamEra | 'unknown';
 - [ ] **Step 2: 写失败测试（normalized 形态与构造器）**
 
 `packages/protocol/src/model/normalized.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
-import { normalizeInboundRequest, normalizeCall, okResult, inputRequiredResult, errorResult } from './normalized.js';
+import {
+  normalizeInboundRequest,
+  normalizeCall,
+  okResult,
+  inputRequiredResult,
+  errorResult,
+} from './normalized.js';
 
 describe('normalized model', () => {
   it('normalizeInboundRequest 提取 method/params/meta/era', () => {
@@ -403,6 +431,7 @@ Expected: FAIL
 - [ ] **Step 4: 写实现 normalized.ts**
 
 `packages/protocol/src/model/normalized.ts`:
+
 ```ts
 import type { Era } from './era.js';
 
@@ -468,7 +497,11 @@ export function normalizeInboundRequest(input: {
   return { ...input };
 }
 
-export function normalizeCall(input: { toolName: string; arguments: unknown; mrtr?: NormalizedMrtrState }): NormalizedCall {
+export function normalizeCall(input: {
+  toolName: string;
+  arguments: unknown;
+  mrtr?: NormalizedMrtrState;
+}): NormalizedCall {
   return { ...input };
 }
 
@@ -496,14 +529,26 @@ Expected: PASS
 - [ ] **Step 6: 更新 index.ts 导出模型**
 
 `packages/protocol/src/index.ts` 追加：
+
 ```ts
 export type { Era, InboundEra, UpstreamEra, UpstreamEraProbe } from './model/era.js';
 export type {
-  NormalizedRequest, NormalizedMeta, NormalizedCall, NormalizedMrtrState,
-  NormalizedResult, NormalizedSuccess, NormalizedInputRequired, NormalizedError, NormalizedErrorResult,
+  NormalizedRequest,
+  NormalizedMeta,
+  NormalizedCall,
+  NormalizedMrtrState,
+  NormalizedResult,
+  NormalizedSuccess,
+  NormalizedInputRequired,
+  NormalizedError,
+  NormalizedErrorResult,
 } from './model/normalized.js';
 export {
-  normalizeInboundRequest, normalizeCall, okResult, inputRequiredResult, errorResult,
+  normalizeInboundRequest,
+  normalizeCall,
+  okResult,
+  inputRequiredResult,
+  errorResult,
 } from './model/normalized.js';
 ```
 
@@ -520,24 +565,31 @@ git commit -m "feat(protocol): 归一化数据模型 NormalizedRequest/Call/Resu
 ## Task 4: 统一错误归一化器
 
 **Files:**
+
 - Create: `packages/protocol/src/errors/normalizer.ts`
 - Test: `packages/protocol/src/errors/normalizer.test.ts`
 - Modify: `packages/protocol/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `NormalizedError`（来自 Task 3）
 - Produces: `UnifiedErrorNormalizer`（类）、`normalizeError`（函数）、`toJsonRpcError`（转 JSON-RPC error object）
 
 - [ ] **Step 1: 写失败测试**
 
 `packages/protocol/src/errors/normalizer.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { normalizeError, toJsonRpcError } from './normalizer.js';
 
 describe('UnifiedErrorNormalizer', () => {
   it('SDK 风格错误（含 code/message/data）原样归一', () => {
-    const e = normalizeError({ code: -32601, message: 'method not found', data: { method: 'foo' } });
+    const e = normalizeError({
+      code: -32601,
+      message: 'method not found',
+      data: { method: 'foo' },
+    });
     expect(e.code).toBe(-32601);
     expect(e.data).toEqual({ method: 'foo' });
   });
@@ -568,6 +620,7 @@ Expected: FAIL
 - [ ] **Step 3: 写实现**
 
 `packages/protocol/src/errors/normalizer.ts`:
+
 ```ts
 import type { NormalizedError } from '../model/normalized.js';
 
@@ -595,9 +648,15 @@ export function normalizeError(input: ErrorInput): NormalizedError {
   return { ...INTERNAL_ERROR };
 }
 
-export function toJsonRpcError(input: ErrorInput): { code: number; message: string; data?: unknown } {
+export function toJsonRpcError(input: ErrorInput): {
+  code: number;
+  message: string;
+  data?: unknown;
+} {
   const e = normalizeError(input);
-  return e.data !== undefined ? { code: e.code, message: e.message, data: e.data } : { code: e.code, message: e.message };
+  return e.data !== undefined
+    ? { code: e.code, message: e.message, data: e.data }
+    : { code: e.code, message: e.message };
 }
 
 export class UnifiedErrorNormalizer {
@@ -618,6 +677,7 @@ Expected: PASS
 - [ ] **Step 5: 更新 index.ts 导出**
 
 追加：
+
 ```ts
 export { normalizeError, toJsonRpcError, UnifiedErrorNormalizer } from './errors/normalizer.js';
 ```
@@ -635,12 +695,14 @@ git commit -m "feat(protocol): UnifiedErrorNormalizer 统一错误归一"
 ## Task 5: InboundProtocolAdapter（入站归一化）
 
 **Files:**
+
 - Create: `packages/protocol/src/inbound/legacy-fallback.ts`
 - Create: `packages/protocol/src/inbound/adapter.ts`
 - Test: `packages/protocol/src/inbound/adapter.test.ts`
 - Modify: `packages/protocol/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `@modelcontextprotocol/server`（`classifyInboundRequest`、`isLegacyRequest`、`legacyStatelessFallback`、`McpServerFactory`、`LegacyHttpHandler`）；Task 2 `CompatibilityOptions`；Task 3 `NormalizedRequest`
 - Produces: `InboundProtocolAdapter`（类）、`resolveInboundLegacyMode`（据 opts 映射到 SDK `legacy` 值的纯函数）
 
@@ -649,6 +711,7 @@ git commit -m "feat(protocol): UnifiedErrorNormalizer 统一错误归一"
 - [ ] **Step 1: 写失败测试**
 
 `packages/protocol/src/inbound/adapter.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { resolveInboundLegacyMode } from './adapter.js';
@@ -664,8 +727,18 @@ describe('InboundProtocolAdapter', () => {
   });
 
   it('enabled=false 或 legacyMode=reject → "reject"', () => {
-    expect(resolveInboundLegacyMode({ ...defaultCompatibilityOptions, inbound: { enabled: false, legacyMode: 'shim' } }, 'http')).toBe('reject');
-    expect(resolveInboundLegacyMode({ ...defaultCompatibilityOptions, inbound: { enabled: true, legacyMode: 'reject' } }, 'stdio')).toBe('reject');
+    expect(
+      resolveInboundLegacyMode(
+        { ...defaultCompatibilityOptions, inbound: { enabled: false, legacyMode: 'shim' } },
+        'http',
+      ),
+    ).toBe('reject');
+    expect(
+      resolveInboundLegacyMode(
+        { ...defaultCompatibilityOptions, inbound: { enabled: true, legacyMode: 'reject' } },
+        'stdio',
+      ),
+    ).toBe('reject');
   });
 });
 ```
@@ -678,11 +751,19 @@ Expected: FAIL
 - [ ] **Step 3: 写 legacy-fallback.ts（薄包装 SDK）**
 
 `packages/protocol/src/inbound/legacy-fallback.ts`:
+
 ```ts
-import { legacyStatelessFallback, type McpServerFactory, type LegacyHttpHandler } from '@modelcontextprotocol/server';
+import {
+  legacyStatelessFallback,
+  type McpServerFactory,
+  type LegacyHttpHandler,
+} from '@modelcontextprotocol/server';
 
 // 包装 SDK 的 legacyStatelessFallback，未来如需自定义 onerror/日志在此收口
-export function createLegacyFallback(factory: McpServerFactory, onError?: (e: Error) => void): LegacyHttpHandler {
+export function createLegacyFallback(
+  factory: McpServerFactory,
+  onError?: (e: Error) => void,
+): LegacyHttpHandler {
   return legacyStatelessFallback(factory, onError);
 }
 
@@ -694,6 +775,7 @@ export type { McpServerFactory, LegacyHttpHandler };
 - [ ] **Step 4: 写 adapter.ts**
 
 `packages/protocol/src/inbound/adapter.ts`:
+
 ```ts
 import type { CompatibilityOptions } from '../config.js';
 import type { NormalizedRequest, NormalizedMeta } from '../model/normalized.js';
@@ -704,7 +786,10 @@ export type TransportKind = 'http' | 'stdio';
 
 // 据 CompatibilityOptions 算出该传给 SDK 的 legacy 值
 // HTTP: 'stateless' | 'reject'；stdio: 'serve' | 'reject'
-export function resolveInboundLegacyMode(opts: CompatibilityOptions, kind: TransportKind): 'stateless' | 'serve' | 'reject' {
+export function resolveInboundLegacyMode(
+  opts: CompatibilityOptions,
+  kind: TransportKind,
+): 'stateless' | 'serve' | 'reject' {
   if (!opts.inbound.enabled || opts.inbound.legacyMode === 'reject') return 'reject';
   return kind === 'http' ? 'stateless' : 'serve';
 }
@@ -728,7 +813,12 @@ export class InboundProtocolAdapter {
     return resolveInboundLegacyMode(this.opts, kind);
   }
 
-  normalize(input: { method: string; params: unknown; meta: NormalizedMeta; era: InboundEra }): NormalizedRequest {
+  normalize(input: {
+    method: string;
+    params: unknown;
+    meta: NormalizedMeta;
+    era: InboundEra;
+  }): NormalizedRequest {
     return toNormalizedRequest(input);
   }
 }
@@ -742,8 +832,13 @@ Expected: PASS
 - [ ] **Step 6: 更新 index.ts 导出**
 
 追加：
+
 ```ts
-export { InboundProtocolAdapter, resolveInboundLegacyMode, toNormalizedRequest } from './inbound/adapter.js';
+export {
+  InboundProtocolAdapter,
+  resolveInboundLegacyMode,
+  toNormalizedRequest,
+} from './inbound/adapter.js';
 export type { TransportKind } from './inbound/adapter.js';
 export { createLegacyFallback } from './inbound/legacy-fallback.js';
 ```
@@ -761,6 +856,7 @@ git commit -m "feat(protocol): InboundProtocolAdapter 入站归一化与 legacy 
 ## Task 6: OutboundProtocolAdapter（出站翻译）
 
 **Files:**
+
 - Create: `packages/protocol/src/outbound/modern-translator.ts`
 - Create: `packages/protocol/src/outbound/legacy-translator.ts`
 - Create: `packages/protocol/src/outbound/adapter.ts`
@@ -768,12 +864,14 @@ git commit -m "feat(protocol): InboundProtocolAdapter 入站归一化与 legacy 
 - Modify: `packages/protocol/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: Task 3 `NormalizedCall`/`NormalizedResult`；Task 2 `CompatibilityOptions`
 - Produces: `OutboundProtocolAdapter`（类）、`translateCallForUpstream`（纯函数：据 era 输出 wire 形态的 callTool 参数）、`translateUpstreamResult`（纯函数：把 upstream 返回归一化为 NormalizedResult）
 
 - [ ] **Step 1: 写失败测试**
 
 `packages/protocol/src/outbound/adapter.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { translateCallForUpstream, translateUpstreamResult } from './adapter.js';
@@ -792,7 +890,8 @@ describe('OutboundProtocolAdapter', () => {
 
   it('modern upstream 带 mrtr：顶层 inputResponses + requestState', () => {
     const callMrtr = normalizeCall({
-      toolName: 'foo', arguments: { x: 1 },
+      toolName: 'foo',
+      arguments: { x: 1 },
       mrtr: { requestState: 'rs-token', inputResponses: { k: 'v' } },
     });
     const wire = translateCallForUpstream(callMrtr, 'modern');
@@ -812,11 +911,14 @@ describe('OutboundProtocolAdapter', () => {
   });
 
   it('upstream input_required 归一为 input_required', () => {
-    const r = translateUpstreamResult({
-      resultType: 'input_required',
-      inputRequests: { key: {} },
-      requestState: 'rs',
-    }, 'modern');
+    const r = translateUpstreamResult(
+      {
+        resultType: 'input_required',
+        inputRequests: { key: {} },
+        requestState: 'rs',
+      },
+      'modern',
+    );
     expect(r.kind).toBe('input_required');
   });
 });
@@ -830,6 +932,7 @@ Expected: FAIL
 - [ ] **Step 3: 写 modern-translator.ts**
 
 `packages/protocol/src/outbound/modern-translator.ts`:
+
 ```ts
 import type { NormalizedCall, NormalizedResult } from '../model/normalized.js';
 import { okResult, inputRequiredResult } from '../model/normalized.js';
@@ -860,7 +963,12 @@ export function translateModernResult(raw: {
   if (raw.resultType === 'input_required') {
     return inputRequiredResult(raw.inputRequests ?? {}, { requestState: raw.requestState });
   }
-  return okResult((raw.content as NormalizedResult extends { kind: 'success' } ? never : Array<{ type: string; text?: string }>) ?? [], raw.isError ?? false);
+  return okResult(
+    (raw.content as NormalizedResult extends { kind: 'success' }
+      ? never
+      : Array<{ type: string; text?: string }>) ?? [],
+    raw.isError ?? false,
+  );
 }
 ```
 
@@ -869,6 +977,7 @@ export function translateModernResult(raw: {
 - [ ] **Step 4: 写 legacy-translator.ts**
 
 `packages/protocol/src/outbound/legacy-translator.ts`:
+
 ```ts
 import type { NormalizedCall, NormalizedResult } from '../model/normalized.js';
 import { okResult, errorResult } from '../model/normalized.js';
@@ -888,8 +997,14 @@ export function translateCallForLegacy(call: NormalizedCall): LegacyWireCall {
 // legacy upstream 不支持 input_required（协议层无此字段）
 // 若业务层确实需要 MRTR 而 upstream 是 legacy，应在 adapter 层据 mrtrLegacyDegradation 决策
 // 这里只把普通成功结果归一；input_required 场景由 adapter 调用方处理（返回 errorResult）
-export function translateLegacyResult(raw: { content?: unknown; isError?: boolean }): NormalizedResult {
-  return okResult((raw.content as Array<{ type: string; text?: string }>) ?? [], raw.isError ?? false);
+export function translateLegacyResult(raw: {
+  content?: unknown;
+  isError?: boolean;
+}): NormalizedResult {
+  return okResult(
+    (raw.content as Array<{ type: string; text?: string }>) ?? [],
+    raw.isError ?? false,
+  );
 }
 
 // 当 legacy upstream 被要求做 MRTR 但不支持时，构造归一化错误
@@ -905,12 +1020,22 @@ export function legacyMrtrUnsupportedError(): NormalizedResult {
 - [ ] **Step 5: 写 adapter.ts（统一分发）**
 
 `packages/protocol/src/outbound/adapter.ts`:
+
 ```ts
 import type { CompatibilityOptions } from '../config.js';
 import type { NormalizedCall, NormalizedResult } from '../model/normalized.js';
 import type { UpstreamEra } from '../model/era.js';
-import { translateCallForModern, translateModernResult, type ModernWireCall } from './modern-translator.js';
-import { translateCallForLegacy, translateLegacyResult, legacyMrtrUnsupportedError, type LegacyWireCall } from './legacy-translator.js';
+import {
+  translateCallForModern,
+  translateModernResult,
+  type ModernWireCall,
+} from './modern-translator.js';
+import {
+  translateCallForLegacy,
+  translateLegacyResult,
+  legacyMrtrUnsupportedError,
+  type LegacyWireCall,
+} from './legacy-translator.js';
 
 // 统一出口：据 era 输出 wire 形态
 export type WireCall = ModernWireCall | LegacyWireCall;
@@ -938,7 +1063,9 @@ export class OutboundProtocolAdapter {
 
   // legacy upstream 触发 MRTR 时的处理
   handleLegacyMrtr(): NormalizedResult {
-    return this.opts.outbound.mrtrLegacyDegradation === 'reject' ? legacyMrtrUnsupportedError() : legacyMrtrUnsupportedError();
+    return this.opts.outbound.mrtrLegacyDegradation === 'reject'
+      ? legacyMrtrUnsupportedError()
+      : legacyMrtrUnsupportedError();
     // 注：shim 与 reject 当前都返回错误（legacy 协议层无 input_required）。
     // 真正的 shim 翻译（走 sampling/elicitation）作为 P2，MVP 阶段统一为不支持错误。
   }
@@ -961,11 +1088,20 @@ Expected: PASS
 - [ ] **Step 7: 更新 index.ts 导出**
 
 追加：
+
 ```ts
-export { OutboundProtocolAdapter, translateCallForUpstream, translateUpstreamResult } from './outbound/adapter.js';
+export {
+  OutboundProtocolAdapter,
+  translateCallForUpstream,
+  translateUpstreamResult,
+} from './outbound/adapter.js';
 export type { WireCall, ModernWireCall, LegacyWireCall } from './outbound/adapter.js';
 export { translateCallForModern, translateModernResult } from './outbound/modern-translator.js';
-export { translateCallForLegacy, translateLegacyResult, legacyMrtrUnsupportedError } from './outbound/legacy-translator.js';
+export {
+  translateCallForLegacy,
+  translateLegacyResult,
+  legacyMrtrUnsupportedError,
+} from './outbound/legacy-translator.js';
 ```
 
 - [ ] **Step 8: typecheck + check + Commit**
@@ -981,11 +1117,13 @@ git commit -m "feat(protocol): OutboundProtocolAdapter 出站 era 翻译"
 ## Task 7: MRTR 跨 era 中转（迁移现有逻辑）
 
 **Files:**
+
 - Create: `packages/protocol/src/mrtr/relay.ts`
 - Test: `packages/protocol/src/mrtr/relay.test.ts`
 - Modify: `packages/protocol/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: Task 3 `NormalizedMrtrState`；SDK `createRequestStateCodec`（来自 `@modelcontextprotocol/server`）
 - Produces: `HubMrtrCodec`（类，封装 requestState mint/verify）、`HubState` 类型
 
@@ -994,6 +1132,7 @@ git commit -m "feat(protocol): OutboundProtocolAdapter 出站 era 翻译"
 - [ ] **Step 1: 读现有实现作为迁移依据**
 
 读 `backend/src/api/mcp/group-service.ts:668-720` 和相关 import，记录：
+
 - `HubState` 的精确字段
 - 现有用什么 codec（`createRequestStateCodec`？自建 HMAC？key/ttl 从哪来）
 - mint/verify 的签名
@@ -1006,6 +1145,7 @@ grep -n "requestState\|HubState\|createRequestStateCodec\|mint\|verify" backend/
 - [ ] **Step 2: 写失败测试**
 
 `packages/protocol/src/mrtr/relay.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { HubMrtrCodec } from './relay.js';
@@ -1022,7 +1162,12 @@ describe('HubMrtrCodec', () => {
 
   it('篡改的 token verify 失败返回 undefined', () => {
     const codec = new HubMrtrCodec({ key: 'test-key-32-bytes-long-enough!!!!', ttlSeconds: 300 });
-    const token = codec.mint({ serverId: 's1', toolName: 'foo', upstreamRequestState: '', step: 0 });
+    const token = codec.mint({
+      serverId: 's1',
+      toolName: 'foo',
+      upstreamRequestState: '',
+      step: 0,
+    });
     expect(codec.verify(token + 'tampered')).toBeUndefined();
   });
 });
@@ -1036,6 +1181,7 @@ Expected: FAIL
 - [ ] **Step 4: 写实现（迁移 + 复用 SDK codec）**
 
 `packages/protocol/src/mrtr/relay.ts`:
+
 ```ts
 import { createRequestStateCodec } from '@modelcontextprotocol/server';
 
@@ -1084,6 +1230,7 @@ Expected: PASS
 - [ ] **Step 6: 更新 index.ts 导出**
 
 追加：
+
 ```ts
 export { HubMrtrCodec } from './mrtr/relay.js';
 export type { HubState, HubMrtrCodecOptions } from './mrtr/relay.js';
@@ -1102,6 +1249,7 @@ git commit -m "feat(protocol): HubMrtrCodec 迁移 MRTR requestState mint/verify
 ## Task 8: 配置加载（share schema + core ConfigManager + 环境变量）
 
 **Files:**
+
 - Modify: `packages/share/src/config/schemas/*.ts`（新增 CompatibilityConfigSchema）
 - Modify: `packages/share/src/config/types/*.ts`（新增 CompatibilityConfig 类型）
 - Modify: `packages/share/src/config/index.ts`（导出）
@@ -1109,6 +1257,7 @@ git commit -m "feat(protocol): HubMrtrCodec 迁移 MRTR requestState mint/verify
 - Test: `packages/core/src/config/config-manager.test.ts`（若已有则追加用例）
 
 **Interfaces:**
+
 - Consumes: Task 2 `CompatibilityOptionsSchema`
 - Produces: `SystemConfig.compatibility: CompatibilityConfig`，经 ConfigManager 加载
 
@@ -1135,12 +1284,14 @@ compatibility: CompatibilityOptionsSchema.optional().default({}),
 **解决方案**：不在 share 里直接引用 protocol 的 schema，而是把 `CompatibilityOptionsSchema` 的定义**复制**到 share（或下沉到 share）。考虑到 schema 是配置的单一来源，正确做法是**把 `CompatibilityOptionsSchema` 定义在 share**，protocol 包从 share import。
 
 修订：
+
 - 把 Task 2 的 `config.ts` 改为从 `@mcp-core/mcp-knot-share/config` import schema，protocol 包不再自己定义 schema。
 - 在 `packages/share/src/config/schemas/compatibility.ts` 定义 schema。
 
 - [ ] **Step 3: 写 share 侧 schema**
 
 `packages/share/src/config/schemas/compatibility.ts`:
+
 ```ts
 import { z } from 'zod';
 
@@ -1171,26 +1322,32 @@ export type CompatibilityOptions = z.infer<typeof CompatibilityOptionsSchema>;
 - [ ] **Step 4: 把 protocol 的 config.ts 改为 re-export**
 
 `packages/protocol/src/config.ts`:
+
 ```ts
 // schema 单一来源在 share；protocol 包 re-export 以便消费者从本包引入
 export { CompatibilityOptionsSchema } from '@mcp-core/mcp-knot-share/config';
 export type { CompatibilityOptions } from '@mcp-core/mcp-knot-share/config';
 
 import { CompatibilityOptionsSchema } from '@mcp-core/mcp-knot-share/config';
-export const defaultCompatibilityOptions: CompatibilityOptions = CompatibilityOptionsSchema.parse({});
+export const defaultCompatibilityOptions: CompatibilityOptions = CompatibilityOptionsSchema.parse(
+  {},
+);
 ```
 
 - [ ] **Step 5: 把 compatibility 接入 SystemConfigSchema**
 
 在 system schema 所在文件追加字段（先 grep 定位精确位置）：
+
 ```ts
 compatibility: CompatibilityOptionsSchema.default({}),
 ```
+
 并 import。
 
 - [ ] **Step 6: 更新 share config 导出**
 
 `packages/share/src/config/index.ts` 追加：
+
 ```ts
 export * from './schemas/compatibility.js';
 ```
@@ -1203,6 +1360,7 @@ Expected: Task 2 的测试仍 PASS（因为 schema 行为不变，只是定义�
 - [ ] **Step 8: 在 core ConfigManager 暴露 compatibility 读取**
 
 `packages/core/src/config/config-manager.ts` 的 `AllConfig.system` 类型现已含 `compatibility`（经 schema 推断）。加便捷 getter：
+
 ```ts
 getCompatibility(): CompatibilityOptions {
   return this.allConfig.system.compatibility ?? CompatibilityOptionsSchema.parse({});
@@ -1226,6 +1384,7 @@ git commit -m "feat(config): CompatibilityOptions 接入 SystemConfig，schema �
 ## Task 9: backend 接入入站兼容 + 出站 era 探测
 
 **Files:**
+
 - Modify: `backend/src/api/mcp/mcp-handler-factory.ts:282-289`（legacy 开关改用 adapter）
 - Modify: `backend/src/services/server_manager.ts:99-128`（探测记录 upstreamEra）
 - Modify: `backend/src/services/server_manager.ts:425-518`（callTool 经 outbound adapter）
@@ -1235,24 +1394,30 @@ git commit -m "feat(config): CompatibilityOptions 接入 SystemConfig，schema �
 - Test: `backend/src/api/mcp/mcp-handler-factory.test.ts`（追加，若不存在则新建）
 
 **Interfaces:**
+
 - Consumes: Task 5 `InboundProtocolAdapter`、Task 6 `OutboundProtocolAdapter`、Task 7 `HubMrtrCodec`、Task 4 `UnifiedErrorNormalizer`；Task 8 ConfigManager 的 `getCompatibility()`
 - Produces: backend 入口经 adapter 驱动，legacy 客户端可连
 
 - [ ] **Step 1: backend 加 protocol 包依赖**
 
 读 `backend/package.json`，在 dependencies 加：
+
 ```json
 "@mcp-core/mcp-knot-protocol": "workspace:*"
 ```
+
 然后 `pnpm install`。
 
 - [ ] **Step 2: 改 mcp-handler-factory.ts**
 
 读 `backend/src/api/mcp/mcp-handler-factory.ts:260-289`。当前：
+
 ```ts
 return createMcpHandler(factory, { legacy: 'reject' });
 ```
+
 改为读 CompatibilityOptions 并经 adapter 解析：
+
 ```ts
 import { InboundProtocolAdapter } from '@mcp-core/mcp-knot-protocol';
 // ...获取 compatibility opts（从 ConfigManager 或环境变量，见 Step 3）
@@ -1264,15 +1429,21 @@ return createMcpHandler(factory, { legacy: legacyMode });
 - [ ] **Step 3: 在 backend 入口构造 CompatibilityOptions**
 
 读 `backend/src/config/` 或 app 入口（`backend/src/app.ts`），找到 ConfigManager 实例化的地方。加：
+
 ```ts
 const compatibility = configManager.getCompatibility();
 // 透传到 mcp-handler-factory 的闭包或依赖注入
 ```
+
 若 backend 暂无 ConfigManager 单例可注入，从环境变量读（fallback）：
+
 ```ts
 function readCompatFromEnv() {
   return CompatibilityOptionsSchema.parse({
-    inbound: { enabled: process.env.MCP_INBOUND_LEGACY !== 'reject', legacyMode: process.env.MCP_INBOUND_LEGACY_MODE ?? 'shim' },
+    inbound: {
+      enabled: process.env.MCP_INBOUND_LEGACY !== 'reject',
+      legacyMode: process.env.MCP_INBOUND_LEGACY_MODE ?? 'shim',
+    },
     outbound: { modernOnly: process.env.MCP_OUTBOUND_MODERN_ONLY === 'true' },
   });
 }
@@ -1281,13 +1452,16 @@ function readCompatFromEnv() {
 - [ ] **Step 4: 改 server_manager.ts 出站 era 探测**
 
 读 `backend/src/services/server_manager.ts:99-128, 141-258`。在 client 连接后，显式探测 era 并记录到 server 元数据：
+
 ```ts
 import { OutboundProtocolAdapter } from '@mcp-core/mcp-knot-protocol';
 // connectServer 内，client.connect 成功后：
 const probedEra: UpstreamEra = await detectUpstreamEra(client); // 见下
 serverMeta.era = probedEra;
 ```
+
 `detectUpstreamEra` 实现：用 client 的 `getNegotiatedProtocolVersion()`（若 SDK 暴露）判断，2026-07-28 → modern，否则 legacy。先 grep 确认 SDK client 是否暴露此方法：
+
 ```bash
 grep -n "getNegotiatedProtocolVersion\|getProtocolEra" node_modules/.pnpm/@modelcontextprotocol+client@2.0.0/.../dist/*.d.ts
 ```
@@ -1295,6 +1469,7 @@ grep -n "getNegotiatedProtocolVersion\|getProtocolEra" node_modules/.pnpm/@model
 - [ ] **Step 5: 改 callTool 经 outbound adapter**
 
 读 `server_manager.ts:425-518`。把 `inputResponses`/`requestState` 的直接处理改为经 `OutboundProtocolAdapter.translateCall` / `translateResult`：
+
 ```ts
 const wire = outboundAdapter.translateCall(normalizedCall, serverMeta.era);
 const raw = await client.callTool(wire, { allowInputRequired: true });
@@ -1304,17 +1479,20 @@ const result = outboundAdapter.translateResult(raw, serverMeta.era);
 - [ ] **Step 6: 改 group-service.ts MRTR 经 HubMrtrCodec**
 
 读 `group-service.ts:668-720`。把现有 mint/verify 替换为 `HubMrtrCodec`：
+
 ```ts
 import { HubMrtrCodec } from '@mcp-core/mcp-knot-protocol';
 const codec = new HubMrtrCodec({ key: process.env.MRTR_KEY ?? '...', ttlSeconds: 300 });
 // mint：const token = codec.mint({ serverId, toolName, upstreamRequestState, step });
 // verify：const state = codec.verify(inputRequestState);
 ```
+
 保留现有错误码语义（verify 失败 -32602）。
 
 - [ ] **Step 7: 改 group-router.ts 错误经 normalizer**
 
 读 `group-router.ts:84-122, 152-167`。把自建 JSON-RPC error 包替换为 `UnifiedErrorNormalizer.toJsonRpc()`：
+
 ```ts
 import { UnifiedErrorNormalizer } from '@mcp-core/mcp-knot-protocol';
 const normalizer = new UnifiedErrorNormalizer();
@@ -1324,6 +1502,7 @@ const errBody = normalizer.toJsonRpc(originalError);
 - [ ] **Step 8: 写测试验证 legacy 客户端可连（集成层）**
 
 `backend/src/api/mcp/mcp-handler-factory.test.ts` 追加：
+
 ```ts
 it('compatibility 默认全开时 legacyMode=http stateless', () => {
   const adapter = new InboundProtocolAdapter(defaultCompatibilityOptions);
@@ -1348,6 +1527,7 @@ git commit -m "feat(backend): 接入协议兼容层——入站 legacy shim + �
 ## Task 10: cli 接入入站兼容 + 启动 flag
 
 **Files:**
+
 - Modify: `packages/cli/src/server/cli-mcp-server.ts:163-168`
 - Modify: `packages/cli/src/cli.ts:17-29`（CliOptions 加字段）
 - Modify: `packages/cli/src/cli.ts:29-...`（parseArgs 加分支）
@@ -1355,6 +1535,7 @@ git commit -m "feat(backend): 接入协议兼容层——入站 legacy shim + �
 - Test: `packages/cli/src/cli.test.ts`（追加 flag 解析用例）
 
 **Interfaces:**
+
 - Consumes: Task 5 `InboundProtocolAdapter`；Task 8 `CompatibilityOptionsSchema`
 
 - [ ] **Step 1: cli 加 protocol 包依赖**
@@ -1364,6 +1545,7 @@ git commit -m "feat(backend): 接入协议兼容层——入站 legacy shim + �
 - [ ] **Step 2: 改 cli-mcp-server.ts**
 
 读 `packages/cli/src/server/cli-mcp-server.ts:163-168`。当前 `serveStdio(factory, { legacy: 'reject' })`，改为：
+
 ```ts
 import { InboundProtocolAdapter } from '@mcp-core/mcp-knot-protocol';
 const adapter = new InboundProtocolAdapter(opts);
@@ -1373,6 +1555,7 @@ serveStdio(factory, { legacy: adapter.resolveLegacyMode('stdio') });
 - [ ] **Step 3: CliOptions 加字段**
 
 读 `packages/cli/src/cli.ts:17-29`，加：
+
 ```ts
 interface CliOptions {
   // ...现有字段
@@ -1384,6 +1567,7 @@ interface CliOptions {
 - [ ] **Step 4: parseArgs 加分支**
 
 读 `packages/cli/src/cli.ts` 的 `parseArgs` 函数，在 switch 内加：
+
 ```ts
 case '--no-legacy-inbound': opts.noLegacyInbound = true; break;
 case '--modern-only-upstream': opts.modernOnlyUpstream = true; break;
@@ -1392,17 +1576,20 @@ case '--modern-only-upstream': opts.modernOnlyUpstream = true; break;
 - [ ] **Step 5: 把 flag 映射到 CompatibilityOptions**
 
 在 cli 启动 server 前：
+
 ```ts
 const compat = CompatibilityOptionsSchema.parse({
   inbound: { enabled: !cliOpts.noLegacyInbound },
   outbound: { modernOnly: cliOpts.modernOnlyUpstream ?? false },
 });
 ```
+
 传给 cli-mcp-server。
 
 - [ ] **Step 6: 写 flag 解析测试**
 
 `packages/cli/src/cli.test.ts` 追加：
+
 ```ts
 it('解析 --no-legacy-inbound', () => {
   const opts = parseArgs(['--no-legacy-inbound']);
@@ -1431,10 +1618,12 @@ git commit -m "feat(cli): 接入协议兼容层 + --no-legacy-inbound/--modern-o
 ## Task 11: legacy/modern upstream e2e fixture
 
 **Files:**
+
 - Create: `backend/src/e2e/fixtures/legacy-upstream-server.ts`
 - Create: `backend/src/e2e/fixtures/modern-upstream-server.ts`
 
 **Interfaces:**
+
 - Consumes: `@modelcontextprotocol/server/stdio`（`serveStdio`）
 - Produces: 两个确定性 era 的 stdio upstream 进程脚本，供 e2e 用 `process.execPath --import tsx` 拉起
 
@@ -1443,6 +1632,7 @@ git commit -m "feat(cli): 接入协议兼容层 + --no-legacy-inbound/--modern-o
 - [ ] **Step 1: 读模板**
 
 完整读 `backend/src/e2e/fixtures/mrtr-upstream-server.ts`，理解：
+
 - `serveStdio(factory, { legacy: 'reject' })` 入口
 - `server.registerTool` 注册方式
 - MRTR 的 `inputRequired`/`acceptedContent` 用法
@@ -1450,6 +1640,7 @@ git commit -m "feat(cli): 接入协议兼容层 + --no-legacy-inbound/--modern-o
 - [ ] **Step 2: 写 modern-upstream-server.ts（无 MRTR 的纯 modern）**
 
 `backend/src/e2e/fixtures/modern-upstream-server.ts`:
+
 ```ts
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/server';
@@ -1472,6 +1663,7 @@ serveStdio(() => buildServer(), { legacy: 'reject' }); // 强制 modern
 - [ ] **Step 3: 写 legacy-upstream-server.ts（确定性 legacy）**
 
 `backend/src/e2e/fixtures/legacy-upstream-server.ts`:
+
 ```ts
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/server';
@@ -1499,6 +1691,7 @@ serveStdio(() => buildServer(), { legacy: 'serve' });
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' | node --import tsx backend/src/e2e/fixtures/legacy-upstream-server.ts
 ```
+
 Expected: 返回合法 JSON-RPC initialize 响应（legacy upstream 应答 initialize）。
 
 - [ ] **Step 5: Commit**
@@ -1513,9 +1706,11 @@ git commit -m "test(fixture): 新增确定性 legacy/modern upstream e2e fixture
 ## Task 12: 跨 era e2e（填上 protocol-compliance.test.ts 用例 3 + 新增入站 legacy 用例）
 
 **Files:**
+
 - Modify: `backend/src/e2e/mcp-protocol/protocol-compliance.test.ts`（去 skip，填实现 + 加用例）
 
 **Interfaces:**
+
 - Consumes: Task 11 的 fixture；`backend/src/e2e/mcp-protocol/mrtr.test.ts:62-138` 的子进程拉起骨架
 
 - [ ] **Step 1: 读现有 skip 用例 + mrtr.test.ts 骨架**
@@ -1528,6 +1723,7 @@ sed -n '60,140p' backend/src/e2e/mcp-protocol/mrtr.test.ts
 - [ ] **Step 2: 填上用例 3（出站 era 桥接）**
 
 把 `it.skip(...)` 改为 `it(...)`，照 mrtr.test.ts 的子进程拉起模式：
+
 ```ts
 it('Hub 能连 legacy upstream 并调用其工具', async () => {
   // 1. mkdtempSync 建临时 config 目录
@@ -1572,11 +1768,13 @@ git commit -m "test(e2e): 填上跨 era 桥接用例 + legacy 客户端入站用
 ## Task 13: 接入官方 conformance TCK
 
 **Files:**
+
 - Create: `scripts/conformance/run.sh`（或 npm script）
 - Create: `scripts/conformance/expected-failures.yaml`
 - Modify: `package.json`（加 `test:conformance` script）
 
 **Interfaces:**
+
 - Consumes: `@modelcontextprotocol/conformance`（npx 拉取，不加为依赖）
 
 - [ ] **Step 1: 读官方集成文档**
@@ -1586,6 +1784,7 @@ WebFetch `https://github.com/modelcontextprotocol/conformance/blob/main/SDK_INTE
 - [ ] **Step 2: 写 run.sh**
 
 `scripts/conformance/run.sh`:
+
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1612,6 +1811,7 @@ done
 - [ ] **Step 4: 加 npm script**
 
 根 `package.json` scripts 加：
+
 ```json
 "test:conformance": "bash scripts/conformance/run.sh"
 ```
@@ -1638,6 +1838,7 @@ git commit -m "test(conformance): 接入官方 MCP conformance TCK 双 era 对�
 ## Task 14: 文档与 adoption-overview 更新
 
 **Files:**
+
 - Modify: `docs/superpowers/specs/2026-07-25-mcp-2026-07-28-adoption-overview.md`（全景决策表修订 + 加 P7 链接）
 - Modify: `README.md`（若有兼容性说明段落）
 

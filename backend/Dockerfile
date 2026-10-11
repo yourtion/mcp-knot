@@ -1,73 +1,37 @@
-# MCP Knot API 服务器 Docker 镜像
-
-FROM node:20-alpine AS base
-
-# 安装 pnpm
-RUN npm install -g pnpm
-
-# 设置工作目录
+FROM node:22-alpine AS base
+RUN npm install -g pnpm@10.6.4
 WORKDIR /app
-
-# 复制 package.json 和 pnpm-lock.yaml
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/share/package.json ./packages/share/
+COPY packages/protocol/package.json ./packages/protocol/
 COPY packages/core/package.json ./packages/core/
 COPY backend/package.json ./backend/
-
-# 安装依赖
 RUN pnpm install --frozen-lockfile
 
-# 构建阶段
 FROM base AS builder
-
-# 复制源代码
 COPY packages/share ./packages/share
+COPY packages/protocol ./packages/protocol
 COPY packages/core ./packages/core
 COPY backend ./backend
+RUN pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:api
 
-# 构建所有包
-RUN pnpm build:core
-RUN pnpm build:api
-
-# 生产阶段
-FROM node:20-alpine AS production
-
-# 安装 pnpm
-RUN npm install -g pnpm
-
-# 创建非 root 用户
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S mcp-knot -u 1001
-
-# 设置工作目录
+FROM node:22-alpine AS production
+RUN npm install -g pnpm@10.6.4
 WORKDIR /app
-
-# 复制 package.json 文件
-COPY --chown=mcp-knot:nodejs package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY --chown=mcp-knot:nodejs packages/share/package.json ./packages/share/
-COPY --chown=mcp-knot:nodejs packages/core/package.json ./packages/core/
-COPY --chown=mcp-knot:nodejs backend/package.json ./backend/
-
-# 安装生产依赖
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/share/package.json ./packages/share/
+COPY packages/protocol/package.json ./packages/protocol/
+COPY packages/core/package.json ./packages/core/
+COPY backend/package.json ./backend/
 RUN pnpm install --frozen-lockfile --prod
-
-# 复制构建产物
-COPY --from=builder --chown=mcp-knot:nodejs /app/packages/share/dist ./packages/share/dist
-COPY --from=builder --chown=mcp-knot:nodejs /app/packages/core/dist ./packages/core/dist
-COPY --from=builder --chown=mcp-knot:nodejs /app/backend/dist ./backend/dist
-
-# 创建配置文件目录（用于运行时挂载）
-RUN mkdir -p /app/backend/config && chown -R mcp-knot:nodejs /app/backend/config
-
-# 切换到非 root 用户
-USER mcp-knot
-
-# 暴露端口
-EXPOSE 3001
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
-
-# 启动命令
-CMD ["node", "backend/dist/src/index.js"]
+COPY --from=builder /app/packages/share/dist ./packages/share/dist
+COPY --from=builder /app/packages/protocol/dist ./packages/protocol/dist
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/backend/dist ./backend/dist
+RUN mkdir -p /app/config && chown node:node /app/config
+ENV CONFIG_PATH=/app/config
+USER node
+EXPOSE 8181
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8181/api/ping', res => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+CMD ["node", "backend/dist/backend/src/index.js"]

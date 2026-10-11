@@ -23,6 +23,7 @@
 ## File Structure
 
 **新增文件（8 个）：**
+
 - `backend/src/services/upstream-change-detector.ts` — 双路检测上游工具变更（listChanged 订阅 + 轮询），emit 事件
 - `backend/src/services/upstream-change-detector.unit.test.ts`
 - `backend/src/services/upstream-change-fanout.ts` — serverId 变更 fan-out 到 group 的 handler.bus
@@ -33,6 +34,7 @@
 - `backend/src/e2e/mcp-protocol/mrtr.test.ts` — MRTR e2e
 
 **修改文件（9 个）：**
+
 - `backend/package.json` + `packages/core/package.json` + `packages/cli/package.json` — SDK 版本 beta.5 → 2.0.0
 - `backend/src/services/server_manager.ts` — 连接时声明 capabilities + 注册 notification handler；新增 `executeToolOnServerWithContext`；快照
 - `backend/src/api/mcp/group-service.ts` — handler 识别 `InputRequiredResult`，接入 MRTR；新增 `refreshTools`
@@ -47,9 +49,11 @@
 ## Task 0: 升级 SDK beta.5 → 2.0.0 GA
 
 **Files:**
+
 - Modify: `backend/package.json`, `packages/core/package.json`, `packages/cli/package.json`
 
 **Interfaces:**
+
 - Produces: 所有 `@modelcontextprotocol/*` 依赖升至 `2.0.0`；P1-P6 现有行为保持不变（typecheck + 全量测试全绿）
 
 - [ ] **Step 1: 改 3 个 package.json 的版本号**
@@ -90,6 +94,7 @@ Expected: PASS
 - [ ] **Step 7: 若有 breaking——记录并决策**
 
 若 Step 3-6 任一失败：
+
 1. 在本文件下方记录 breaking 详情（错误信息 + 根因）
 2. 暂停，与用户确认是否继续（回滚条件：影响 P1-P6 现有行为）
 
@@ -112,10 +117,12 @@ P5 前置：notify 总线 / createRequestStateCodec / subscriptions/listen
 纯逻辑组件，TDD 友好。负责检测上游工具集变化（listChanged 实时 + 轮询兜底），通过回调 emit 变更事件。
 
 **Files:**
+
 - Create: `backend/src/services/upstream-change-detector.ts`
 - Test: `backend/src/services/upstream-change-detector.unit.test.ts`
 
 **Interfaces:**
+
 - Produces: `class UpstreamChangeDetector`，方法：
   - `saveSnapshot(serverId: string, tools: { name: string }[]): void` — 保存工具集快照
   - `onUpstreamNotification(serverId: string): void` — 收到 listChanged 时调用，触发比对
@@ -394,11 +401,13 @@ git commit -m "feat(p5): UpstreamChangeDetector — 双路检测上游工具变�
 让 ServerManager 在连接上游时注册 `notifications/tools/list_changed` handler，并把工具列表接入 Detector。
 
 **Files:**
+
 - Modify: `backend/src/services/server_manager.ts:96-114`（Client capabilities）, `:231-274`（discoverServerTools）
 - Modify: `backend/src/services/server_manager.unit.test.ts`（新增 handler 注册断言）
 - Test: 同上
 
 **Interfaces:**
+
 - Consumes: `UpstreamChangeDetector` from Task 1
 - Produces: `ServerManager` 构造新增可选参数 `onChangeDetector?`；`discoverServerTools` 成功后调 `detector.saveSnapshot`；连接成功后调 `client.setNotificationHandler('notifications/tools/list_changed', ...)`
 
@@ -439,10 +448,7 @@ describe('listChanged notification handler（P5）', () => {
       { changeDetector: detector as any },
     );
     await manager.initialize();
-    expect(detector.saveSnapshot).toHaveBeenCalledWith('s1', [
-      { name: 't1' },
-      { name: 't2' },
-    ]);
+    expect(detector.saveSnapshot).toHaveBeenCalledWith('s1', [{ name: 't1' }, { name: 't2' }]);
   });
 });
 ```
@@ -480,12 +486,9 @@ export class ServerManager {
 ```typescript
 // P5: 注册上游 listChanged 通知 handler
 if (this.options.changeDetector) {
-  serverConnection.client.setNotificationHandler(
-    'notifications/tools/list_changed',
-    () => {
-      this.options.changeDetector!.onUpstreamNotification(serverId);
-    },
-  );
+  serverConnection.client.setNotificationHandler('notifications/tools/list_changed', () => {
+    this.options.changeDetector!.onUpstreamNotification(serverId);
+  });
 }
 ```
 
@@ -527,10 +530,12 @@ saveSnapshot 供轮询比对。构造新增可选 changeDetector 参数。"
 订阅 Detector 的变更事件，把 serverId 变更 fan-out 到所有含该 server 的 group。
 
 **Files:**
+
 - Create: `backend/src/services/upstream-change-fanout.ts`
 - Test: `backend/src/services/upstream-change-fanout.unit.test.ts`
 
 **Interfaces:**
+
 - Produces: `class UpstreamChangeFanout`，方法：
   - `handleServerChange(serverId: string): void` — Detector onChange 调用入口（含防抖）
   - `flush(): Promise<void>` — 等待防抖队列排空（test 用）
@@ -694,6 +699,7 @@ debounceMs 内多次变更合并。fan-out 异常隔离（一个 group 失败不
 把 Detector/Fanout 接入启动流程，给 GroupMcpService 加 `refreshTools`，写 e2e。
 
 **Files:**
+
 - Modify: `backend/src/api/mcp/group-service.ts`（新增 `refreshTools`）
 - Modify: `backend/src/services/mcp_hub_service.ts` 或 `service-registry.ts`（接线 Detector+Fanout）
 - Modify: `backend/src/api/mcp/mcp-handler-factory.ts`（暴露 publishToolListChanged 给 Fanout）
@@ -701,6 +707,7 @@ debounceMs 内多次变更合并。fan-out 异常隔离（一个 group 失败不
 - Create: `backend/src/e2e/mcp-protocol/subscriptions.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `GroupMcpService.refreshTools(serverId: string): Promise<void>` — 重新注册该 server 的工具
   - `GroupMcpService` 构造或方法暴露 `getMcpServer()` 已有
@@ -832,10 +839,12 @@ M2 里程碑：subscriptions 主线可交付。"
 MRTR 中转核心，纯逻辑 TDD。用 SDK `createRequestStateCodec` mint Hub 级 requestState。
 
 **Files:**
+
 - Create: `backend/src/services/mrtr-relay-service.ts`
 - Test: `backend/src/services/mrtr-relay-service.unit.test.ts`
 
 **Interfaces:**
+
 - Consumes: `createRequestStateCodec` from `@modelcontextprotocol/server`
 - Produces: `class MrtrRelayService`，方法：
   - `get verify(): (state: string, ctx: unknown) => Promise<HubState>` — 注入 `ServerOptions.requestState.verify`（注意：SDK 签名是 `(state, ctx) => Promise<T>`，verify 是 async 且需 ctx 参数）
@@ -845,6 +854,7 @@ MRTR 中转核心，纯逻辑 TDD。用 SDK `createRequestStateCodec` mint Hub �
 - `HubState` 类型：`{ serverId: string; toolName: string; upstreamRequestState?: string; step: number; exp: number }`
 
 > **已核实（beta.5 类型定义 `index.d.mts:373-391`）**：`RequestStateCodec` 签名为：
+>
 > - `mint(payload: T, ctx?: ServerContext): Promise<string>` — Promise，正确 await
 > - `verify(state: string, ctx: ServerContext): Promise<T>` — **Promise 且 ctx 必填**
 >
@@ -868,10 +878,15 @@ describe('MrtrRelayService', () => {
   describe('relay + resume round-trip', () => {
     it('relay mint 的 state 可被 resume 还原', async () => {
       const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 600 });
-      const result = await relay.relay('s1', 'tool_a', {
-        inputRequests: { confirm: { type: 'elicitation', message: 'sure?' } },
-        requestState: 'upstream-opaque-state',
-      }, 1);
+      const result = await relay.relay(
+        's1',
+        'tool_a',
+        {
+          inputRequests: { confirm: { type: 'elicitation', message: 'sure?' } },
+          requestState: 'upstream-opaque-state',
+        },
+        1,
+      );
       expect(result.resultType).toBe('input_required');
       expect(result.requestState).toBeTypeOf('string');
       expect(result.inputRequests).toBeDefined();
@@ -1064,6 +1079,7 @@ ServerOptions.requestState.verify。含篡改/过期/key 隔离/step 审计字�
 扩展 core 接口 + adapter + server_manager，支持把重试上下文（inputResponses + requestState）透传给上游 callTool。
 
 **Files:**
+
 - Modify: `packages/core/src/services/mcp/service-manager.ts:81-127`（接口加方法）
 - Modify: `backend/src/services/backend-core-service-adapter.ts:46-66`（实现）
 - Modify: `backend/src/services/server_manager.ts`（新增 `executeToolOnServerWithContext`）
@@ -1071,6 +1087,7 @@ ServerOptions.requestState.verify。含篡改/过期/key 隔离/step 审计字�
 - Modify: `backend/src/services/server_manager.unit.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `McpServiceManagerInterface.executeToolCallWithContext(toolName: string, args: unknown, serverId: string, retryContext: { inputResponses?: Record<string, unknown>; requestState?: string }): Promise<ToolResult | InputRequiredResult>`
   - `ServerManager.executeToolOnServerWithContext(serverId: string, toolName: string, args: Record<string, unknown>, retryContext: { inputResponses?: Record<string, unknown>; requestState?: string }): Promise<unknown>`
@@ -1090,7 +1107,10 @@ describe('executeToolCallWithContext（P5）', () => {
     const retryContext = { inputResponses: { confirm: true }, requestState: 'hub-state' };
     await adapter.executeToolCallWithContext('tool_a', { x: 1 }, 's1', retryContext);
     expect(mockServerManager.executeToolOnServerWithContext).toHaveBeenCalledWith(
-      's1', 'tool_a', { x: 1 }, retryContext,
+      's1',
+      'tool_a',
+      { x: 1 },
+      retryContext,
     );
   });
 });
@@ -1172,7 +1192,7 @@ async executeToolOnServerWithContext(
 }
 ```
 
-> **注意（已由 Task 6 实现核实）**：SDK v2 GA `callTool(params, options?)` 是 2 参数（无 resultSchema）。`inputResponses`/`requestState` 是 **callTool params 的顶层成员**（与 `name`/`arguments`/`_meta` 平级），**不是** `options._meta`。证据：SDK 编译产物 `src-D_zzAWoS.mjs:2975` 的 `retryParamsShape = { inputResponses, requestState }` 被 spread 进 `callToolParamsShape` 顶层，`RETRY_PARAMS_KEYS` 注释明确「顶层 params 成员，仅 client-initiated 请求保留」。trace 三件套（traceparent/tracestate/baggage）仍走 `params._meta`，与重试字段共存。**Task 7/9 实现时遵循此真实签名，不要放 _meta。**
+> **注意（已由 Task 6 实现核实）**：SDK v2 GA `callTool(params, options?)` 是 2 参数（无 resultSchema）。`inputResponses`/`requestState` 是 **callTool params 的顶层成员**（与 `name`/`arguments`/`_meta` 平级），**不是** `options._meta`。证据：SDK 编译产物 `src-D_zzAWoS.mjs:2975` 的 `retryParamsShape = { inputResponses, requestState }` 被 spread 进 `callToolParamsShape` 顶层，`RETRY_PARAMS_KEYS` 注释明确「顶层 params 成员，仅 client-initiated 请求保留」。trace 三件套（traceparent/tracestate/baggage）仍走 `params._meta`，与重试字段共存。**Task 7/9 实现时遵循此真实签名，不要放 \_meta。**
 
 - [ ] **Step 6: 运行测试确认通过**
 
@@ -1196,11 +1216,13 @@ core 接口 + adapter + server_manager 新增带 retryContext 的工具调用路
 修复当前 handler 把 `InputRequiredResult`（无 content 字段）错误包成 text 的 bug，接入 MrtrRelayService。
 
 **Files:**
+
 - Modify: `backend/src/api/mcp/group-service.ts:358-430`（registerDynamicTool handler）
 - Modify: `backend/src/api/mcp/group-service.ts`（构造注入 MrtrRelayService）
 - Test: 新增或追加 integration 测试
 
 **Interfaces:**
+
 - Consumes: `MrtrRelayService` from Task 5, `executeToolCallWithContext` from Task 6
 - Produces: handler 正确返回 `CallToolResult | InputRequiredResult`
 
@@ -1253,12 +1275,16 @@ async (args, extra) => {
       : {};
 
     const result = await this.coreServiceManager.executeToolCallWithContext(
-      tool.name, args, tool.serverId, retryContext,
+      tool.name,
+      args,
+      tool.serverId,
+      retryContext,
     );
 
     // P5: 识别上游 InputRequiredResult（修原 bug：不再无脑包 text）
     const isInputRequired =
-      result && typeof result === 'object' &&
+      result &&
+      typeof result === 'object' &&
       (result as { resultType?: string }).resultType === 'input_required';
 
     if (isInputRequired && this.mrtrRelay) {
@@ -1275,13 +1301,15 @@ async (args, extra) => {
       return result as unknown as CallToolResult;
     }
     return {
-      content: [{
-        type: 'text' as const,
-        text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
-      }],
+      content: [
+        {
+          type: 'text' as const,
+          text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        },
+      ],
     };
   });
-}
+};
 ```
 
 构造函数注入 `mrtrRelay?: MrtrRelayService`（可选——未启用 MRTR 时为 undefined，handler 走原逻辑）。
@@ -1309,10 +1337,12 @@ git commit -m "fix(p5): handler 识别 InputRequiredResult + 接入 MRTR 中转
 把 MrtrRelayService 的 verify 注入 createMcpHandler 的 ServerOptions，并在工厂创建时实例化 relay。
 
 **Files:**
+
 - Modify: `backend/src/api/mcp/mcp-handler-factory.ts:113-145`（ServerOptions）
 - Test: 追加 unit/integration 测试
 
 **Interfaces:**
+
 - Consumes: `MrtrRelayService` from Task 5
 - Produces: handler 构造时注入 `requestState.verify`；GroupMcpService 拿到 relay 实例
 
@@ -1369,6 +1399,7 @@ requestState.verify 做 Hub state 验签。"
 真实 MCP client 验证 MRTR 全链路。
 
 **Files:**
+
 - Modify: `backend/src/e2e/test-server.ts`（新增 `confirm_action` 工具）
 - Create: `backend/src/e2e/mcp-protocol/mrtr.test.ts`
 
@@ -1393,11 +1424,17 @@ describe('MRTR（P5 e2e）', () => {
     expect(hubState).toBeDefined();
 
     // 用 inputResponses 重试
-    const second = await client.callTool({
-      name: 'upstream_confirm_action',
-      arguments: {},
-      // 重试参数：requestState + inputResponses（依 SDK v2 client.callTool 实际字段）
-    }, undefined, { /* requestState: hubState, inputResponses: {...} */ });
+    const second = await client.callTool(
+      {
+        name: 'upstream_confirm_action',
+        arguments: {},
+        // 重试参数：requestState + inputResponses（依 SDK v2 client.callTool 实际字段）
+      },
+      undefined,
+      {
+        /* requestState: hubState, inputResponses: {...} */
+      },
+    );
 
     // 断言最终结果
     expect((second as { content?: unknown }).content).toBeDefined();
@@ -1429,6 +1466,7 @@ M3 里程碑：MRTR 主线可交付。"
 ## Task 10: 配置集成 + adoption-overview 更新 + 收尾
 
 **Files:**
+
 - Modify: `packages/share/src/config/schemas/system.schema.ts`（subscriptions/mrtr 配置）
 - Modify: `packages/share/src/config/schemas/group.schema.ts`（组级开关，可选）
 - Modify: `docs/superpowers/specs/2026-07-25-mcp-2026-07-28-adoption-overview.md`（P5 状态）
@@ -1502,6 +1540,7 @@ subscriptions/listen + MRTR 中转两条主线交付。"
 ## Self-Review 结论
 
 **1. Spec 覆盖：**
+
 - SDK 升级 → Task 0 ✓
 - subscriptions 实时路径（listChanged）→ Task 1+2 ✓
 - subscriptions 轮询兜底 → Task 1 ✓
@@ -1515,12 +1554,14 @@ subscriptions/listen + MRTR 中转两条主线交付。"
 - 配置 + 文档 → Task 10 ✓
 
 **2. 类型一致性：**
+
 - `HubState` 全文统一（serverId/toolName/upstreamRequestState/step/exp）✓
 - `executeToolCallWithContext` 签名全文一致 ✓
 - `refreshTools(serverId)` 一致 ✓
 - `MrtrRelayService.relay/resume/verify` 一致 ✓
 
 **3. 已标注的实现时待确认点（非 placeholder，是依赖 GA 版实际 API 的核实点）：**
+
 - Task 4 Step 2：McpServer 运行时工具注销 API（若 GA 无则退化策略已写明）
 - Task 5 Step 3：✅ **已核实**（beta.5 `index.d.mts:373-391`）：`mint(payload, ctx?): Promise<string>`，`verify(state, ctx): Promise<T>`（async + ctx 必填）。计划已据此修正签名与测试。
 - Task 6 Step 5：`client.callTool` 传 inputResponses/requestState 的字段名（GA 升级后核实）

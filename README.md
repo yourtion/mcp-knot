@@ -2,7 +2,7 @@
 
 English | [中文版](README.zh.md)
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 **Tie your MCP servers together.**
 
@@ -48,7 +48,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 20.19+ (Node 22/24 recommended)
 - pnpm package manager
 
 ### Install Dependencies
@@ -419,9 +419,8 @@ bridges the modern **2026-07-28** era and legacy 2025-era MCP on both directions
 - **Outbound** (Hub → upstream server): era is auto-probed per server; Hub
   transparently bridges modern requests to legacy upstreams. Set
   `compatibility.outbound.modernOnly: true` (or CLI `--modern-only-upstream`) to
-  connect only to modern upstreams. _(Note: this flag is currently reserved —
-  the outbound path always uses the probed era; wiring `modernOnly` to force
-  modern-only is tracked as a follow-up.)_
+  connect only to modern upstreams in the backend. The CLI flag is reserved:
+  its core service currently simulates upstream connections and does not enforce it.
 - **MRTR & errors**: cross-era `InputRequiredResult` (MRTR) state and protocol
   errors are normalized into a unified shape regardless of upstream era. A
   legacy upstream that cannot honor `input_required` degrades to a clear
@@ -561,7 +560,19 @@ The project uses GitHub Actions for automated publishing:
 3. **Version Packages PR merged**: Triggers automatic publishing
    - Publish to npm
    - Create GitHub Release
-   - Build Docker images
+   - Optionally publish Docker images (`DOCKER_PUBLISH=true`)
+
+Publishing uses **npm Trusted Publishing (OIDC)** with Node 24, npm 11, and
+`id-token: write`; no npm token is used. Only successful main **push** CI runs can
+release the current main commit. Changesets creates a version PR first; merging
+that PR and passing CI publishes built tarballs, package tags, and GitHub Releases.
+
+Before the first release, create any missing npm packages using an interactive
+`npm login`, then configure each package's Trusted Publisher with user `yourtion`,
+repository `mcp-knot`, workflow **`publish.yml`**, no environment, and permission
+for **`npm publish`**. See [the release setup guide](docs/RELEASING.md) for commands,
+package names, and retry instructions. Automated version PRs may require approving
+their CI runs in GitHub when created with `GITHUB_TOKEN`.
 
 #### Version Type Selection
 

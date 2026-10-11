@@ -18,13 +18,13 @@
 
 总体跟踪 spec 的 P6 章节描述了三块工作（OTel、弃用项清理、日志统一）。经代码核实，**实际范围显著缩小**：
 
-| 块 | 原 spec 描述 | 核实结论 | P6 是否有工作 |
-| --- | --- | --- | --- |
-| **OTel trace context** | 零接入 | 确认零接入（`package.json` 无 `@opentelemetry/*`） | ✅ **P6 核心，全部工作量** |
-| **弃用项清理** | 需清理若干弃用特性 | 全部零实现，已干净（见 §4） | ❌ 无代码工作，仅文档化结论 |
-| **日志统一** | 25+ 处 `console.*` 正在修 | 项目已有完整统一 Logger（`@mcp-core/mcp-hub-share` 的 `UnifiedLogger`），`backend/src` 生产代码 `console.*` = **0 处** | ❌ 无工作，原描述滞后 |
+| 块                     | 原 spec 描述              | 核实结论                                                                                                               | P6 是否有工作               |
+| ---------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **OTel trace context** | 零接入                    | 确认零接入（`package.json` 无 `@opentelemetry/*`）                                                                     | ✅ **P6 核心，全部工作量**  |
+| **弃用项清理**         | 需清理若干弃用特性        | 全部零实现，已干净（见 §4）                                                                                            | ❌ 无代码工作，仅文档化结论 |
+| **日志统一**           | 25+ 处 `console.*` 正在修 | 项目已有完整统一 Logger（`@mcp-core/mcp-hub-share` 的 `UnifiedLogger`），`backend/src` 生产代码 `console.*` = **0 处** | ❌ 无工作，原描述滞后       |
 
-> **修正**：总体跟踪 spec §跨子项目共享待办中"console.* 绕过统一 Logger（25+ 处）归属 P6"一项，核实为已完成，应在 P6 收尾时回填为 ✅。
+> **修正**：总体跟踪 spec §跨子项目共享待办中"console.\* 绕过统一 Logger（25+ 处）归属 P6"一项，核实为已完成，应在 P6 收尾时回填为 ✅。
 
 **因此 P6 实质上 = OTel trace context 传播**。本文档围绕此展开，弃用项与日志以核实结论文档化收尾。
 
@@ -37,13 +37,13 @@
 
 ### 1.4 范围外
 
-| 事项 | 是否 P6 | 理由 |
-| --- | --- | --- |
-| OTel SDK 接入 + exporter 导出（OTLP） | ❌ 范围外 | 决策为仅做 context 传播，不接完整 SDK（见 §2.3） |
-| api-to-mcp REST API 出站 trace 注入 | ❌ 范围外（stretch） | P3 刚动过 `api-to-mcp` 子系统，本轮聚焦 MCP server 出站主链路 |
-| `RedisCacheManager` 实现 | ❌ 范围外 | 跨子项目共享待办，独立基建，不属 P6 核心（见总体 spec §跨子项目共享待办） |
-| Trace 采样 / Span 生成 / 指标 | ❌ 范围外 | Hub 仅传播 context，不生产 trace |
-| 弃用项的代码清理 | ❌ 无需 | 全部零实现，已干净（见 §4） |
+| 事项                                  | 是否 P6              | 理由                                                                      |
+| ------------------------------------- | -------------------- | ------------------------------------------------------------------------- |
+| OTel SDK 接入 + exporter 导出（OTLP） | ❌ 范围外            | 决策为仅做 context 传播，不接完整 SDK（见 §2.3）                          |
+| api-to-mcp REST API 出站 trace 注入   | ❌ 范围外（stretch） | P3 刚动过 `api-to-mcp` 子系统，本轮聚焦 MCP server 出站主链路             |
+| `RedisCacheManager` 实现              | ❌ 范围外            | 跨子项目共享待办，独立基建，不属 P6 核心（见总体 spec §跨子项目共享待办） |
+| Trace 采样 / Span 生成 / 指标         | ❌ 范围外            | Hub 仅传播 context，不生产 trace                                          |
+| 弃用项的代码清理                      | ❌ 无需              | 全部零实现，已干净（见 §4）                                               |
 
 ## 2. 核心设计决策
 
@@ -51,9 +51,9 @@
 
 SEP-414 明确规定 trace context 通过 JSON-RPC `params._meta` 携带，键为 `traceparent`/`tracestate`/`baggage`，遵循 W3C Trace Context 与 W3C Baggage 格式。**这是 transport-agnostic 的选择**——stdio transport 没有 HTTP header，`_meta` 是所有 transport 共有的扩展点。
 
-| 方向 | 载体 | 落点 |
-| --- | --- | --- |
-| 入站（client → Hub） | `_meta` | McpServer tool handler 的 `extra._meta` |
+| 方向                          | 载体    | 落点                                                          |
+| ----------------------------- | ------- | ------------------------------------------------------------- |
+| 入站（client → Hub）          | `_meta` | McpServer tool handler 的 `extra._meta`                       |
 | 出站（Hub → upstream server） | `_meta` | `client.callTool({ name, arguments, _meta })` 的 `_meta` 参数 |
 
 > **不使用 transport 的 `requestInit.headers` 或 `RequestOptions.headers`**：那些是连接级 auth/protocol-version 和 SEP-2243 `Mcp-Param-*` 的通道，且对 stdio transport 无效。研究确认 TS SDK `Client.callTool`/`listTools`/`listResources` 均支持 per-request `_meta`，原样进入出站 JSON-RPC `params._meta`。
@@ -62,11 +62,11 @@ SEP-414 明确规定 trace context 通过 JSON-RPC `params._meta` 携带，键�
 
 context 从入站提取点透传到出站注入点，采用 Node `AsyncLocalStorage`（方案 A）。
 
-| 备选方案 | 评估 | 结论 |
-| --- | --- | --- |
-| **A. AsyncLocalStorage** | 不改 `executeToolCall`/`executeToolOnServer` 签名；Hono/fetch 请求异步链天然在 scope 内；Node 标准 | ✅ **采用** |
-| B. 显式参数传递 | 需改 `GroupMcpService`/`server_manager` 多个核心方法签名；SDK tool handler 边界会打断参数透传 | ❌ 侵入大、不可行 |
-| C. 仅入站提取 + 日志关联 | 不传播到上游，trace 在 Hub 断裂 | ❌ 不满足 SEP-414 传播职责 |
+| 备选方案                 | 评估                                                                                               | 结论                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | -------------------------- |
+| **A. AsyncLocalStorage** | 不改 `executeToolCall`/`executeToolOnServer` 签名；Hono/fetch 请求异步链天然在 scope 内；Node 标准 | ✅ **采用**                |
+| B. 显式参数传递          | 需改 `GroupMcpService`/`server_manager` 多个核心方法签名；SDK tool handler 边界会打断参数透传      | ❌ 侵入大、不可行          |
+| C. 仅入站提取 + 日志关联 | 不传播到上游，trace 在 Hub 断裂                                                                    | ❌ 不满足 SEP-414 传播职责 |
 
 **ALS scope 安全保证**：`store.run(ctx, fn)` 保证 context 只在该请求的异步链内可见。Hub 处理一次工具调用的链路（`handler.fetch` → tool handler → `executeToolCall` → `executeToolOnServer` → `callTool`）是连续的 `await` 链，不脱离 ALS scope。
 
@@ -82,9 +82,9 @@ context 从入站提取点透传到出站注入点，采用 Node `AsyncLocalStor
 
 ### 2.4 决策 4：出站聚焦 MCP server 主链路
 
-| 出站路径 | 是否 P6 | 理由 |
-| --- | --- | --- |
-| Hub → 外部 MCP server（`server_manager.callTool`） | ✅ MVP | 网关主链路，trace 价值最高 |
+| 出站路径                                                | 是否 P6    | 理由                            |
+| ------------------------------------------------------- | ---------- | ------------------------------- |
+| Hub → 外部 MCP server（`server_manager.callTool`）      | ✅ MVP     | 网关主链路，trace 价值最高      |
 | Hub → 外部 REST API（`api-to-mcp` 的 `http-client.ts`） | ❌ stretch | P3 刚动过该子系统，本轮避免回归 |
 
 ## 3. 架构与组件设计
@@ -126,12 +126,12 @@ MCP 客户端
 
 必做 3 项（1 个新文件 + 2 个修改点），外加 1 项可选 stretch：
 
-| 组件 | 位置 | 职责 | 改动类型 | 必做？ |
-| --- | --- | --- | --- | --- |
-| `TraceContextStore` | `backend/src/middleware/trace-context.ts`（**新文件**） | AsyncLocalStorage store + 提取/注入辅助 | 新增 | ✅ 必做 |
-| 入站提取点 | `backend/src/api/mcp/group-service.ts`（工具 handler） | 从 `extra._meta` 提取，ALS 包裹 | 修改 | ✅ 必做 |
-| 出站注入点 | `backend/src/services/server_manager.ts`（`executeToolOnServer`） | 从 ALS 读取，注入 `callTool._meta` | 修改 | ✅ 必做 |
-| 入站 HTTP header 兼容 | `backend/src/api/mcp/group-router.ts`（中间件） | 从 W3C header 提取存 ALS，兼容非 MCP 客户端 | 修改 | ⏸ 可选 stretch |
+| 组件                  | 位置                                                              | 职责                                        | 改动类型 | 必做？         |
+| --------------------- | ----------------------------------------------------------------- | ------------------------------------------- | -------- | -------------- |
+| `TraceContextStore`   | `backend/src/middleware/trace-context.ts`（**新文件**）           | AsyncLocalStorage store + 提取/注入辅助     | 新增     | ✅ 必做        |
+| 入站提取点            | `backend/src/api/mcp/group-service.ts`（工具 handler）            | 从 `extra._meta` 提取，ALS 包裹             | 修改     | ✅ 必做        |
+| 出站注入点            | `backend/src/services/server_manager.ts`（`executeToolOnServer`） | 从 ALS 读取，注入 `callTool._meta`          | 修改     | ✅ 必做        |
+| 入站 HTTP header 兼容 | `backend/src/api/mcp/group-router.ts`（中间件）                   | 从 W3C header 提取存 ALS，兼容非 MCP 客户端 | 修改     | ⏸ 可选 stretch |
 
 ### 3.3 组件 1：`TraceContextStore`（新文件）
 
@@ -182,20 +182,14 @@ export function hasTraceContext(ctx: TraceContext): boolean;
 
 ```typescript
 // 伪代码：改动示意
-this.mcpServer.registerTool(
-  toolName,
-  { inputSchema: z.object(zodSchema) },
-  async (args, extra) => {
-    const traceCtx = extractFromMeta(extra?._meta);
-    return runWithTraceContext(traceCtx, async () => {
-      // ── 原有 handler 逻辑保持不变 ──
-      const result = await this.coreServiceManager.executeToolCall(
-        tool.name, args, tool.serverId,
-      );
-      // ...（返回格式转换逻辑不变）
-    });
-  },
-);
+this.mcpServer.registerTool(toolName, { inputSchema: z.object(zodSchema) }, async (args, extra) => {
+  const traceCtx = extractFromMeta(extra?._meta);
+  return runWithTraceContext(traceCtx, async () => {
+    // ── 原有 handler 逻辑保持不变 ──
+    const result = await this.coreServiceManager.executeToolCall(tool.name, args, tool.serverId);
+    // ...（返回格式转换逻辑不变）
+  });
+});
 ```
 
 **说明**：
@@ -249,37 +243,37 @@ const response = await server.client.callTool(callParams);
 
 对照 MCP `2026-07-28` Deprecation，逐项核实项目现状，全部已干净，**P6 无需任何代码清理**。记录结论避免后续重复评估。
 
-| 弃用项 | 协议状态 | 核实方法 | 结论 |
-| --- | --- | --- | --- |
-| `includeContext` 的 `"thisServer"`/`"allServers"` 取值 | Deprecated（SEP-2596） | `grep -rn "includeContext" backend/src packages/core/src`（排除 test） | ✅ 零使用（命中的 `allServers` 均为无关局部变量名），无需清理 |
-| Roots / Sampling / Logging 特性 | Deprecated（SEP-2577） | `grep -rn "roots/list\|sampling/createMessage\|elicitation/create"` | ✅ 零实现，直接不采用 |
-| Tasks wire vocab（`tasks/list`/`TaskStatus`/`CreateTaskResult`） | 移入扩展（SEP-2663） | `grep -rn "tasks/list\|CreateTaskResult\|TaskStatus"` | ✅ 零实现 |
-| HTTP+SSE 传输（`/sse` 端点） | Deprecated（SEP-2596） | `grep -rn "'/sse'\|\"/sse\"" backend/src` | ✅ 生产代码已删（P1 处理）；仅 `test-app.ts:323` 残留（测试用途，保留） |
-| `ping` / `logging/setLevel` / `notifications/roots/list_changed` | 协议已移除（SEP-2575） | `grep -rn "logging/setLevel\|notifications/roots/list_changed"` | ✅ 无残留（`sse_event_manager.ts:461` 的 `type:'ping'` 是 Dashboard 业务 SSE 心跳，与 MCP `ping` RPC 无关） |
-| DCR（RFC7591） | Deprecated（PR#2858） | P2 已采用 Client ID Metadata Documents | ✅ 已规避 |
+| 弃用项                                                           | 协议状态               | 核实方法                                                               | 结论                                                                                                        |
+| ---------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `includeContext` 的 `"thisServer"`/`"allServers"` 取值           | Deprecated（SEP-2596） | `grep -rn "includeContext" backend/src packages/core/src`（排除 test） | ✅ 零使用（命中的 `allServers` 均为无关局部变量名），无需清理                                               |
+| Roots / Sampling / Logging 特性                                  | Deprecated（SEP-2577） | `grep -rn "roots/list\|sampling/createMessage\|elicitation/create"`    | ✅ 零实现，直接不采用                                                                                       |
+| Tasks wire vocab（`tasks/list`/`TaskStatus`/`CreateTaskResult`） | 移入扩展（SEP-2663）   | `grep -rn "tasks/list\|CreateTaskResult\|TaskStatus"`                  | ✅ 零实现                                                                                                   |
+| HTTP+SSE 传输（`/sse` 端点）                                     | Deprecated（SEP-2596） | `grep -rn "'/sse'\|\"/sse\"" backend/src`                              | ✅ 生产代码已删（P1 处理）；仅 `test-app.ts:323` 残留（测试用途，保留）                                     |
+| `ping` / `logging/setLevel` / `notifications/roots/list_changed` | 协议已移除（SEP-2575） | `grep -rn "logging/setLevel\|notifications/roots/list_changed"`        | ✅ 无残留（`sse_event_manager.ts:461` 的 `type:'ping'` 是 Dashboard 业务 SSE 心跳，与 MCP `ping` RPC 无关） |
+| DCR（RFC7591）                                                   | Deprecated（PR#2858）  | P2 已采用 Client ID Metadata Documents                                 | ✅ 已规避                                                                                                   |
 
 ## 5. 日志统一核实结论（文档化，无代码改动）
 
 **核实**：项目已有完整统一 Logger 系统——`packages/share/src/logger.ts` 提供 `UnifiedLogger`，`backend/src/utils/logger.ts` 和 `packages/core/src/utils/logger.ts` 均基于其实现并全量接入。
 
-| 位置 | `console.*` 数量 | 性质 | 处理 |
-| --- | --- | --- | --- |
-| `backend/src`（生产代码，排除 test/e2e/integration） | **0** | — | ✅ 已干净 |
-| `packages/core/src`（排除 test-utils/mock） | 1（`mock-api-server.ts:184`） | mock 测试服务器 | 保留（测试用） |
-| `packages/cli/src` | 55 | CLI 工具 stdout 输出（`--version`/`--help`/banner） | 保留（CLI 合理走 stdout，不应走结构化 logger） |
-| `packages/share/src` | 14 | logger 实现本身（`ConsoleWriter`）+ CLI banner 方法 | 保留（logger 底层实现） |
+| 位置                                                 | `console.*` 数量              | 性质                                                | 处理                                           |
+| ---------------------------------------------------- | ----------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| `backend/src`（生产代码，排除 test/e2e/integration） | **0**                         | —                                                   | ✅ 已干净                                      |
+| `packages/core/src`（排除 test-utils/mock）          | 1（`mock-api-server.ts:184`） | mock 测试服务器                                     | 保留（测试用）                                 |
+| `packages/cli/src`                                   | 55                            | CLI 工具 stdout 输出（`--version`/`--help`/banner） | 保留（CLI 合理走 stdout，不应走结构化 logger） |
+| `packages/share/src`                                 | 14                            | logger 实现本身（`ConsoleWriter`）+ CLI banner 方法 | 保留（logger 底层实现）                        |
 
-**结论**：P6 日志统一**无工作可做**。原总体 spec 描述"25+ 处 console.* 正在修"为滞后信息。
+**结论**：P6 日志统一**无工作可做**。原总体 spec 描述"25+ 处 console.\* 正在修"为滞后信息。
 
 ## 6. 测试策略
 
 ### 6.1 测试矩阵
 
-| 层 | 文件 | 覆盖点 | 类型 |
-| --- | --- | --- | --- |
-| 单元 | `trace-context.unit.test.ts`（新） | `extractFromMeta`/`extractFromHeaders` 字符串提取；`runWithTraceContext` scope 隔离（并发请求不串）；`getCurrentTraceContext` scope 外返回 `{}`；`hasTraceContext` 判断；空 context 不阻断 | 新增 |
-| 单元 | `server_manager.unit.test.ts`（扩展） | ALS 有 context 时 `callTool` 收到 `_meta` 且三件套正确；无 context 时 `callTool` 无 `_meta`；`_meta` 不含 `undefined` 值 | 扩展 |
-| e2e | `trace-context-propagation.e2e.test.ts`（新） | 客户端带 `_meta.traceparent` → Hub → mock 上游 server 断言收到的 `params._meta.traceparent` 与发送一致（未丢失/未篡改）；无 context 时上游不收 `_meta` | 新增 |
+| 层   | 文件                                          | 覆盖点                                                                                                                                                                                     | 类型 |
+| ---- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| 单元 | `trace-context.unit.test.ts`（新）            | `extractFromMeta`/`extractFromHeaders` 字符串提取；`runWithTraceContext` scope 隔离（并发请求不串）；`getCurrentTraceContext` scope 外返回 `{}`；`hasTraceContext` 判断；空 context 不阻断 | 新增 |
+| 单元 | `server_manager.unit.test.ts`（扩展）         | ALS 有 context 时 `callTool` 收到 `_meta` 且三件套正确；无 context 时 `callTool` 无 `_meta`；`_meta` 不含 `undefined` 值                                                                   | 扩展 |
+| e2e  | `trace-context-propagation.e2e.test.ts`（新） | 客户端带 `_meta.traceparent` → Hub → mock 上游 server 断言收到的 `params._meta.traceparent` 与发送一致（未丢失/未篡改）；无 context 时上游不收 `_meta`                                     | 新增 |
 
 ### 6.2 关键 e2e 断言
 
@@ -294,24 +288,24 @@ e2e 仿照 P3/P4 的 mock 上游 server 模式：
 
 ### 6.3 DoD（完成定义）
 
-| DoD 项 | 验证方法 |
-| --- | --- |
-| `TraceContextStore` 单元测试全绿 | `pnpm test trace-context` |
-| `server_manager` 出站注入测试全绿 | `pnpm test server_manager` |
-| trace 传播 e2e 通过 | `pnpm test:e2e trace-context`（或对应 e2e 命令） |
-| typecheck 通过 | `pnpm typecheck` |
-| 全量测试无回归 | `pnpm test` 全绿 |
-| 弃用项/日志核实结论已回填总体 spec | 总体 spec §跨子项目共享待办 console.* 项标 ✅，P6 状态更新 |
+| DoD 项                             | 验证方法                                                    |
+| ---------------------------------- | ----------------------------------------------------------- |
+| `TraceContextStore` 单元测试全绿   | `pnpm test trace-context`                                   |
+| `server_manager` 出站注入测试全绿  | `pnpm test server_manager`                                  |
+| trace 传播 e2e 通过                | `pnpm test:e2e trace-context`（或对应 e2e 命令）            |
+| typecheck 通过                     | `pnpm typecheck`                                            |
+| 全量测试无回归                     | `pnpm test` 全绿                                            |
+| 弃用项/日志核实结论已回填总体 spec | 总体 spec §跨子项目共享待办 console.\* 项标 ✅，P6 状态更新 |
 
 ## 7. 风险与缓解
 
-| 风险 | 缓解 |
-| --- | --- |
-| ALS 跨异步边界丢失（如脱离 scope 的 `setTimeout`/回调） | Hub 工具调用链是连续 `await`（`handler.fetch` → `callTool`），不脱离 scope；`server_manager` 的 `callTool` 是直接 await。单测验证 scope 隔离 |
-| SDK `extra._meta` 接口在 beta 版本变更 | 提取用 optional chaining 防御（`extra?._meta`）；SDK GA 时复查 |
-| 注入的 `_meta` 与 SDK 自动生成的 `_meta`（progressToken）冲突 | 手写 `_meta` 只含 trace 三件套，不碰 progressToken；SDK 合并 `_meta` 而非覆盖，无冲突 |
-| 入站 `_meta` 与 HTTP header 双源冲突 | 以 `_meta` 为准（SEP-414 官方载体）；header 仅作 fallback |
-| stretch（HTTP header 兼容）增加复杂度 | 标为可选，时间紧可先不做；`_meta` 路径独立可用 |
+| 风险                                                          | 缓解                                                                                                                                         |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| ALS 跨异步边界丢失（如脱离 scope 的 `setTimeout`/回调）       | Hub 工具调用链是连续 `await`（`handler.fetch` → `callTool`），不脱离 scope；`server_manager` 的 `callTool` 是直接 await。单测验证 scope 隔离 |
+| SDK `extra._meta` 接口在 beta 版本变更                        | 提取用 optional chaining 防御（`extra?._meta`）；SDK GA 时复查                                                                               |
+| 注入的 `_meta` 与 SDK 自动生成的 `_meta`（progressToken）冲突 | 手写 `_meta` 只含 trace 三件套，不碰 progressToken；SDK 合并 `_meta` 而非覆盖，无冲突                                                        |
+| 入站 `_meta` 与 HTTP header 双源冲突                          | 以 `_meta` 为准（SEP-414 官方载体）；header 仅作 fallback                                                                                    |
+| stretch（HTTP header 兼容）增加复杂度                         | 标为可选，时间紧可先不做；`_meta` 路径独立可用                                                                                               |
 
 ## 8. 实现顺序建议
 
@@ -320,17 +314,17 @@ e2e 仿照 P3/P4 的 mock 上游 server 模式：
 3. **入站提取点**（`group-service.ts` 工具 handler）—— 连通入站到出站。
 4. **e2e**（trace 传播端到端）—— 验证完整链路。
 5. **（可选）HTTP header 兼容中间件**。
-6. **回填总体 spec**（弃用项/日志核实结论、P6 状态、console.* 待办项标 ✅）。
+6. **回填总体 spec**（弃用项/日志核实结论、P6 状态、console.\* 待办项标 ✅）。
 
 ## 9. 现有挂载点（实现参考）
 
-| 文件 | 行 | 现状 | P6 改动 |
-| --- | --- | --- | --- |
-| `backend/src/api/mcp/group-service.ts` | ~622 | `registerTool(toolName, {inputSchema}, async (args) => {...})` | handler 加 `extra` 参，包裹 `runWithTraceContext` |
-| `backend/src/services/server_manager.ts` | ~307 | `server.client.callTool({ name, arguments })` | 条件注入 `_meta` |
-| `backend/src/api/mcp/mcp-handler-factory.ts` | — | handler 工厂，无需感知 trace | 无改动（ALS 透传透明） |
-| `backend/src/api/mcp/group-router.ts` | 138 | POST 路由 | （可选）加 header 提取中间件 |
-| `packages/core/src/utils/logger.ts` / `backend/src/utils/logger.ts` | — | 统一 Logger 已就绪 | 无改动 |
+| 文件                                                                | 行   | 现状                                                           | P6 改动                                           |
+| ------------------------------------------------------------------- | ---- | -------------------------------------------------------------- | ------------------------------------------------- |
+| `backend/src/api/mcp/group-service.ts`                              | ~622 | `registerTool(toolName, {inputSchema}, async (args) => {...})` | handler 加 `extra` 参，包裹 `runWithTraceContext` |
+| `backend/src/services/server_manager.ts`                            | ~307 | `server.client.callTool({ name, arguments })`                  | 条件注入 `_meta`                                  |
+| `backend/src/api/mcp/mcp-handler-factory.ts`                        | —    | handler 工厂，无需感知 trace                                   | 无改动（ALS 透传透明）                            |
+| `backend/src/api/mcp/group-router.ts`                               | 138  | POST 路由                                                      | （可选）加 header 提取中间件                      |
+| `packages/core/src/utils/logger.ts` / `backend/src/utils/logger.ts` | —    | 统一 Logger 已就绪                                             | 无改动                                            |
 
 ## 10. 架构修正：连通 group-service → 真实上游调用（实现期发现）
 
@@ -340,12 +334,13 @@ e2e 仿照 P3/P4 的 mock 上游 server 模式：
 
 项目存在两套工具执行体系，P6 的入站点与出站点分属两套：
 
-| 体系 | 组成 | 服务路径 | 连接/执行 | 是否真实 |
-| --- | --- | --- | --- | --- |
-| **体系 A：backend McpHubService** | `McpHubService` → `ToolManager` → backend `ServerManager`（真实 `client.callTool`） | REST `/api/tools`（`getHubService()`） | 真实 stdio/SSE/streaming transport + 真实 `callTool`/`listTools` | ✅ 真实 |
-| **体系 B：core McpServiceManager** | `getCoreServiceManager()` = `new McpServiceManager()`（core 包类） | `group-service.ts` 工具 handler（`/:group/mcp` 端点）+ groups API | `simulateServerConnection`（假连接）+ `mockTools`（假工具）+ mock `executeToolOnServer`（假结果） | ❌ **全 mock 占位** |
+| 体系                               | 组成                                                                                | 服务路径                                                          | 连接/执行                                                                                         | 是否真实            |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------- |
+| **体系 A：backend McpHubService**  | `McpHubService` → `ToolManager` → backend `ServerManager`（真实 `client.callTool`） | REST `/api/tools`（`getHubService()`）                            | 真实 stdio/SSE/streaming transport + 真实 `callTool`/`listTools`                                  | ✅ 真实             |
+| **体系 B：core McpServiceManager** | `getCoreServiceManager()` = `new McpServiceManager()`（core 包类）                  | `group-service.ts` 工具 handler（`/:group/mcp` 端点）+ groups API | `simulateServerConnection`（假连接）+ `mockTools`（假工具）+ mock `executeToolOnServer`（假结果） | ❌ **全 mock 占位** |
 
 **核实证据**：
+
 - `getCoreServiceManager()`（`backend/src/services/service-registry.ts:92-106`）返回 `new McpServiceManager()`（core 包类），不经 backend `ServerManager`。
 - core `McpServiceManager.executeToolOnServer`（`packages/core/src/services/mcp/service-manager.ts:579`）注释"暂时返回模拟结果"，返回 `ToolResult { success, data: { message: "工具 X 在服务器 Y 上执行成功" } }`，无 `content` 字段，不调真实 `client.callTool`。
 - core `McpServiceManager.initializeServer`（L506）同样 mock（`simulateServerConnection`，注释"暂时模拟连接成功"）。
@@ -361,6 +356,7 @@ e2e 仿照 P3/P4 的 mock 上游 server 模式：
 让 `group-service` 继续依赖 core 的 `McpServiceManagerInterface`（抽象接口，不变），但在注入点（`initCoreServiceManager`）注入一个 **backend 适配器**（实现 `McpServiceManagerInterface`），内部委托给真实的 backend `McpHubService`/`ServerManager`。core 的 mock `McpServiceManager` 类不再用于注入（保留为 core 包内部，避免破坏其他潜在依赖）。
 
 **设计要点**：
+
 - **单一注入点**：只改 `initCoreServiceManager`（`service-registry.ts:92`），把 `new McpServiceManager()` 换成 `new BackendCoreServiceAdapter(hubService)`。`getCoreServiceManager()` 的所有消费者（group-service、groups API）自动拿到真实数据。
 - **适配器实现 `McpServiceManagerInterface` 的 9 个方法**，委托给 `McpHubService`/`ServerManager`：
   - `executeToolCall(toolName, args, serverId)` → 委托 backend `ServerManager.executeToolOnServer`（P6 Task 2 已注入 trace `_meta`），返回 MCP 原生结果（带 `content`）。
@@ -371,6 +367,7 @@ e2e 仿照 P3/P4 的 mock 上游 server 模式：
 ### 10.4 为什么不直接让 group-service 改用 McpHubService
 
 考虑过更简单的"group-service 直接调 `getHubService().callTool`"，但否决：
+
 - `group-service` 现依赖 `McpServiceManagerInterface`（core 抽象接口），直接换成 `McpHubService`（具体类）会降低抽象、增加耦合，且 groups API 也用 `getCoreServiceManager()`（只读状态），需要一致的真实数据源。
 - 注入式适配器保持 `McpServiceManagerInterface` 契约不变，所有消费者零改动（除注入点），是更小、更一致的改动。
 

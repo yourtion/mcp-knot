@@ -93,13 +93,13 @@ describe('OutboundProtocolAdapter 类方法', () => {
       expect(adapter.effectiveEra('legacy')).toBe('legacy');
     });
 
-    it('modernOnly=true 时强制 modern，即使探测到 legacy', () => {
+    it('modernOnly=true 时拒绝 legacy，保留 modern', () => {
       const opts = {
         ...defaultCompatibilityOptions,
         outbound: { ...defaultCompatibilityOptions.outbound, modernOnly: true },
       };
       const adapter = new OutboundProtocolAdapter(opts);
-      expect(adapter.effectiveEra('legacy')).toBe('modern');
+      expect(() => adapter.effectiveEra('legacy')).toThrow(/Legacy upstream is disabled/);
       expect(adapter.effectiveEra('modern')).toBe('modern');
     });
   });
@@ -134,22 +134,12 @@ describe('OutboundProtocolAdapter 类方法', () => {
   });
 
   describe('translateCall 经 effectiveEra 收敛', () => {
-    it('modernOnly=true 时，即使传 legacy era 也产出 modern wire（带 inputResponses 能力）', () => {
-      const opts = {
+    it('modernOnly=true 时禁止向 legacy 上游发送现代 MRTR 字段', () => {
+      const adapter = new OutboundProtocolAdapter({
         ...defaultCompatibilityOptions,
         outbound: { ...defaultCompatibilityOptions.outbound, modernOnly: true },
-      };
-      const adapter = new OutboundProtocolAdapter(opts);
-      const callMrtr = normalizeCall({
-        toolName: 'foo',
-        arguments: {},
-        mrtr: { requestState: 'rs', inputResponses: { k: 'v' } },
       });
-      // 传 'legacy' era，但 modernOnly 应强制走 modern translator → wire 带 requestState
-      const wire = adapter.translateCall(callMrtr, 'legacy');
-      expect(wire.name).toBe('foo');
-      expect(wire.requestState).toBe('rs');
-      expect(wire.inputResponses).toEqual({ k: 'v' });
+      expect(() => adapter.translateCall(call, 'legacy')).toThrow(/Legacy upstream is disabled/);
     });
 
     it('默认配置下 legacy era 产出 legacy wire（剥离 MRTR 字段）', () => {
@@ -167,17 +157,14 @@ describe('OutboundProtocolAdapter 类方法', () => {
   });
 
   describe('translateResult 经 effectiveEra 收敛', () => {
-    it('modernOnly=true 时，即使传 legacy era 也按 modern 归一（识别 input_required）', () => {
-      const opts = {
+    it('关闭出站兼容时拒绝 legacy 响应', () => {
+      const adapter = new OutboundProtocolAdapter({
         ...defaultCompatibilityOptions,
-        outbound: { ...defaultCompatibilityOptions.outbound, modernOnly: true },
-      };
-      const adapter = new OutboundProtocolAdapter(opts);
-      const r = adapter.translateResult(
-        { resultType: 'input_required', inputRequests: { key: {} }, requestState: 'rs' },
-        'legacy',
+        outbound: { ...defaultCompatibilityOptions.outbound, enabled: false },
+      });
+      expect(() => adapter.translateResult({ content: [] }, 'legacy')).toThrow(
+        /Legacy upstream is disabled/,
       );
-      expect(r.kind).toBe('input_required');
     });
   });
 

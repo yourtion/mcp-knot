@@ -11,6 +11,11 @@
   ],
   "license": "ISC",
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourtion/mcp-knot.git",
+    "directory": "packages/core"
+  },
   "files": [
     "dist",
     "README.md"

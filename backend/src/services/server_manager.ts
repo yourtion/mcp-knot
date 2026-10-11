@@ -14,31 +14,9 @@ import { createServerAuthProvider } from './mcp-server-auth-provider.js';
 
 import type { ServerManager as IServerManager, ServerConnection, Tool } from '../types/mcp-knot.js';
 import type { UpstreamEra } from '../types/mcp-knot.js';
+import type { CompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 import type { ServerConfig } from '@mcp-core/mcp-knot-share';
 import type { Client as SdkClient } from '@modelcontextprotocol/client';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// P7 协议兼容层：出站 era 探测 + OutboundProtocolAdapter。
-//
-// SDK Client 暴露 getProtocolEra()（见 client 2.0.0 d.mts:2107）：connect 完成后
-// 返回 'modern'（2026-07-28+，经 server/discover 协商成功）或 'legacy'（2025-era
-// initialize 握手），未连接时 undefined。本模块在 connectServer 成功后调它探测并
-// 记录到 ServerConnection.era，供 callTool 路径经 OutboundProtocolAdapter 翻译。
-//
-// OutboundProtocolAdapter 单例：进程级共享（compatibility 选项进程级一致，
-// 见 mcp-handler-factory.getCompatibilityOptions）。MVP 用 defaultCompatibilityOptions
-// （全开）。modernOnly 不会改变探测值（仅 effectiveEra 在翻译时强制 modern），
-// 故探测仍记录真实 upstream era 便于诊断。
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * 进程级出站 adapter 单例。
- *
- * compatibility 选项进程级一致，单例避免每请求重建 adapter。
- * MVP 用 defaultCompatibilityOptions（全开）；modernOnly=true 时 effectiveEra
- * 强制 modern，但不影响探测记录的真实 upstream era。
- */
-const outboundAdapter = new OutboundProtocolAdapter(defaultCompatibilityOptions);
 
 /**
  * 探测上游协议 era。connect 成功后调用，记录到 ServerConnection.era。
@@ -75,6 +53,7 @@ function probeUpstreamEra(client: SdkClient, serverId: string): UpstreamEra {
  * 便于测试注入部分 mock，也避免与 UpstreamChangeDetector 实现强耦合。
  */
 export interface ServerManagerOptions {
+  compatibility?: CompatibilityOptions;
   changeDetector?: {
     saveSnapshot: (serverId: string, tools: { name: string }[]) => void;
     onUpstreamNotification: (serverId: string) => void;
@@ -82,6 +61,8 @@ export interface ServerManagerOptions {
 }
 
 export class ServerManager implements IServerManager {
+  private readonly outboundAdapter: OutboundProtocolAdapter;
+  private readonly compatibility: CompatibilityOptions;
   private servers: Map<string, ServerConnection> = new Map();
   private serverConfigs: Map<string, ServerConfig> = new Map();
 
@@ -111,6 +92,8 @@ export class ServerManager implements IServerManager {
     serverConfigs: Record<string, ServerConfig>,
     private readonly options: ServerManagerOptions = {},
   ) {
+    this.compatibility = options.compatibility ?? defaultCompatibilityOptions;
+    this.outboundAdapter = new OutboundProtocolAdapter(this.compatibility);
     // Store server configurations
     for (const [serverId, config] of Object.entries(serverConfigs)) {
       this.serverConfigs.set(serverId, config);
@@ -167,8 +150,13 @@ export class ServerManager implements IServerManager {
           capabilities: { elicitation: {}, sampling: {}, roots: {} },
           // 出站保留兼容：探测到 modern server（2026-07-28）走 server/discover，
           // 否则回退到 legacy initialize。SDK 默认是 'legacy'（只发旧握手），
-          // 必须显式设 'auto' 才能连上纯 modern server。
-          versionNegotiation: { mode: 'auto' },
+          // 默认 auto 兼容两种 era；禁用 legacy 时固定到 modern 协议。
+          versionNegotiation: {
+            mode:
+              this.compatibility.outbound.modernOnly || !this.compatibility.outbound.enabled
+                ? { pin: '2026-07-28' }
+                : 'auto',
+          },
           // P5 MRTR：禁用上游客户端的 input_required 自动 fulfil。Hub 是中转层，
           // 不就地处理上游的 elicitation/sampling/roots 请求，而是把 input_required
           // 透传给下游客户端（真实用户交互）。auto-fulfil（默认）会试图调本地 handler，
@@ -220,6 +208,12 @@ export class ServerManager implements IServerManager {
       // P7：探测上游协议 era（modern/legacy），记录到 server 元数据供 callTool 翻译用。
       // 探测 fail-open：失败/undefined 时退化为 'modern'（不破坏现有 modern 链路）。
       serverConnection.era = probeUpstreamEra(serverConnection.client, serverId);
+      try {
+        this.outboundAdapter.effectiveEra(serverConnection.era);
+      } catch (error) {
+        await serverConnection.client.close();
+        throw error;
+      }
       logger.info('上游 era 探测完成（P7）', { serverId, era: serverConnection.era });
 
       logger.logServerConnection(serverId, 'connected');
@@ -534,7 +528,7 @@ export class ServerManager implements IServerManager {
       if (retryContext.inputResponses !== undefined) {
         mrtr.inputResponses = retryContext.inputResponses;
       }
-      const wire = outboundAdapter.translateCall(
+      const wire = this.outboundAdapter.translateCall(
         {
           toolName,
           arguments: args,

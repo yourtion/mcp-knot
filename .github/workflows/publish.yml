@@ -1,135 +1,107 @@
 name: Publish Packages
 
 on:
-  push:
-    branches:
-      - main
-  # 当 Version Packages PR 标题为 "chore: version packages" 时触发
-  pull_request:
-    branches:
-      - main
-    types: [closed]
+  workflow_run:
+    workflows: [CI Pipeline]
+    branches: [main]
+    types: [completed]
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
-env:
-  NODE_VERSION: '18'
-  PNPM_VERSION: '9'
+concurrency:
+  group: release-main
+  cancel-in-progress: false
 
 jobs:
-  # 发布到 npm
-  publish:
-    name: Publish to npm
+  release:
+    name: Version packages or publish to npm
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
-    # 只在 PR 关闭且标题匹配时运行
-    if: |
-      github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.pull_request.merged == true &&
-      contains(github.head_commit.message, 'chore: version packages')
-    outputs:
-      published: ${{ steps.publish.outputs.published }}
-      publishedPackages: ${{ steps.publish.outputs.publishedPackages }}
-    steps:
-      - name: Checkout 代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: 设置 Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: 安装依赖
-        run: pnpm install --frozen-lockfile
-
-      - name: 发布到 npm
-        id: publish
-        run: pnpm release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # 创建 GitHub Release
-  github-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: publish
-    if: needs.publish.outputs.published == 'true'
+    timeout-minutes: 20
     permissions:
       contents: write
+      pull-requests: write
+      id-token: write
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
     steps:
-      - name: Checkout 代码
-        uses: actions/checkout@v4
-
-      - name: 创建 GitHub Release
-        uses: softprops/action-gh-release@v1
+      - uses: actions/checkout@v4
         with:
-          body: |
-            ## Changes in this Release
-
-            For detailed changes, please check the individual package CHANGELOGs.
-
-            ### Published Packages
-            ${{ needs.publish.outputs.publishedPackages }}
+          ref: main
+          fetch-depth: 0
+      - name: Verify CI tested the current main commit
+        id: head
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$TESTED_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping stale CI run; a newer main commit must pass CI first."
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.head.outputs.current == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.head.outputs.current == 'true'
+        with:
+          node-version: '24'
+      - run: pnpm install --frozen-lockfile
+        if: steps.head.outputs.current == 'true'
+      - name: Use npm with OIDC support
+        if: steps.head.outputs.current == 'true'
+        run: npm install --global npm@11
+      - name: Configure tokenless registry authentication
+        if: steps.head.outputs.current == 'true'
+        run: echo "registry=https://registry.npmjs.org/" > "$HOME/.npmrc"
+      - name: Create version PR or build and publish packages
+        id: changesets
+        if: steps.head.outputs.current == 'true'
+        uses: changesets/action@v1
+        with:
+          version: pnpm version
+          publish: pnpm release
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+          createGithubReleases: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 发布 Docker 镜像
   docker-publish:
-    name: Publish Docker Images
+    name: Publish Docker images (optional)
+    needs: release
+    if: needs.release.outputs.published == 'true' && vars.DOCKER_PUBLISH == 'true'
     runs-on: ubuntu-latest
-    needs: publish
-    if: needs.publish.outputs.published == 'true'
+    timeout-minutes: 30
     strategy:
       matrix:
-        image:
-          - name: api
+        image: [api, web]
+        include:
+          - image: api
             dockerfile: backend/Dockerfile
-            context: .
-          - name: web
+          - image: web
             dockerfile: frontend/Dockerfile
-            context: .
     steps:
-      - name: Checkout 代码
-        uses: actions/checkout@v4
-
-      - name: 设置 Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 登录 Docker Hub
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: 获取版本号
-        id: get_version
-        run: |
-          if [ "${{ matrix.image.name }}" == "api" ]; then
-            VERSION=$(node -p "require('./backend/package.json').version")
-          else
-            VERSION=$(node -p "require('./frontend/package.json').version")
-          fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: 构建并推送镜像
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.image.context }}
-          file: ${{ matrix.image.dockerfile }}
+          context: .
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: |
-            mcp-knot/${{ matrix.image.name }}:latest
-            mcp-knot/${{ matrix.image.name }}:${{ steps.get_version.outputs.VERSION }}
+            ${{ secrets.DOCKER_USERNAME }}/mcp-knot-${{ matrix.image }}:latest
+            ${{ secrets.DOCKER_USERNAME }}/mcp-knot-${{ matrix.image }}:sha-${{ github.event.workflow_run.head_sha }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

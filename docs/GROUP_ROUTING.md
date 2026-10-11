@@ -191,9 +191,7 @@ curl -X POST http://localhost:8181/development/mcp \
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
-    "content": [
-      { "type": "text", "text": "# My Project\n\nThis is a sample README file..." }
-    ]
+    "content": [{ "type": "text", "text": "# My Project\n\nThis is a sample README file..." }]
   }
 }
 ```

@@ -35,18 +35,18 @@ mcp-knot --validate -c config.json
 
 ### 常用选项
 
-| 选项 | 说明 |
-| --- | --- |
-| `-h, --help` | 显示帮助信息 |
-| `-v, --verbose` | 启用详细日志输出（`-v` 是 verbose） |
-| `--version` | 显示版本信息（无短写） |
-| `-c, --config <path>` | 指定配置文件路径（默认：`./mcp_server.json`） |
-| `--generate-config` | 生成配置文件模板（配合 `--template` 指定类型） |
-| `--validate` | 验证配置文件 |
-| `--list-templates` | 列出所有配置模板 |
-| `--list-presets` | 列出所有服务器预设 |
-| `--init` / `--init-all` | 初始化配置文件（`--init-all` 含组配置） |
-| `--overwrite` | 覆盖已存在的配置文件 |
+| 选项                    | 说明                                           |
+| ----------------------- | ---------------------------------------------- |
+| `-h, --help`            | 显示帮助信息                                   |
+| `-v, --verbose`         | 启用详细日志输出（`-v` 是 verbose）            |
+| `--version`             | 显示版本信息（无短写）                         |
+| `-c, --config <path>`   | 指定配置文件路径（默认：`./mcp_server.json`）  |
+| `--generate-config`     | 生成配置文件模板（配合 `--template` 指定类型） |
+| `--validate`            | 验证配置文件                                   |
+| `--list-templates`      | 列出所有配置模板                               |
+| `--list-presets`        | 列出所有服务器预设                             |
+| `--init` / `--init-all` | 初始化配置文件（`--init-all` 含组配置）        |
+| `--overwrite`           | 覆盖已存在的配置文件                           |
 
 完整选项见 `mcp-knot --help`。
 

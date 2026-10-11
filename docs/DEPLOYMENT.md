@@ -48,10 +48,10 @@ MCP Knot 由两个服务组成：
 
 ## 端口与服务
 
-| 服务 | 容器名 | 内部端口 | 主机映射端口 | 说明 |
-| --- | --- | --- | --- | --- |
-| 前端 | `mcp-knot-web` | 80 | **8180** | Nginx |
-| 后端 | `mcp-knot-api` | 8181 | **8181** | Node.js |
+| 服务 | 容器名         | 内部端口 | 主机映射端口 | 说明    |
+| ---- | -------------- | -------- | ------------ | ------- |
+| 前端 | `mcp-knot-web` | 80       | **8180**     | Nginx   |
+| 后端 | `mcp-knot-api` | 8181     | **8181**     | Node.js |
 
 > **注意**：后端监听端口由 `system.json` 的 `server.port` 控制，默认 `8181`。代码**不读** `PORT` 环境变量，若需改端口请修改 `system.json`，不要用 `PORT=xxx` 启动。
 
@@ -190,12 +190,12 @@ pm2 startup
 
 配置目录下有 4 个 JSON 文件（示例文件后缀为 `.json.example`，**不是** `.json.default`）：
 
-| 文件 | 作用 |
-| --- | --- |
+| 文件              | 作用                                                             |
+| ----------------- | ---------------------------------------------------------------- |
 | `mcp_server.json` | MCP 服务器定义（stdio/streaming 类型、命令、参数、env、enabled） |
-| `group.json` | MCP 服务器分组 |
-| `system.json` | 系统配置（端口、CORS、日志、监控、限流等） |
-| `api-tools.json` | API 工具配置路径 |
+| `group.json`      | MCP 服务器分组                                                   |
+| `system.json`     | 系统配置（端口、CORS、日志、监控、限流等）                       |
+| `api-tools.json`  | API 工具配置路径                                                 |
 
 ### system.json 示例
 
@@ -239,10 +239,10 @@ pm2 startup
 
 ### 代码实际识别的变量
 
-| 变量 | 作用 | 说明 |
-| --- | --- | --- |
+| 变量          | 作用         | 说明                                                            |
+| ------------- | ------------ | --------------------------------------------------------------- |
 | `CONFIG_PATH` | 配置文件目录 | 覆盖默认的 `<cwd>/config`。**这是唯一被代码识别的配置目录变量** |
-| `NODE_ENV` | 运行环境 | 设为 `production` |
+| `NODE_ENV`    | 运行环境     | 设为 `production`                                               |
 
 ### 代码**不**识别的变量
 
@@ -424,14 +424,14 @@ find /backup/mcp-knot -name "config_*.tar.gz" -mtime +30 -delete
 
 `scripts/` 目录下的脚本（均从仓库根运行）：
 
-| 脚本 | 作用 |
-| --- | --- |
+| 脚本                           | 作用                                                                                                           |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
 | `scripts/deploy-production.sh` | 生产环境一键部署（含备份/测试/构建/PM2 重启），支持 `--skip-backup`、`--skip-tests`、`--skip-build`、`--force` |
-| `scripts/deploy.sh` | Docker Compose 部署入口，支持 `--dev`、`--config DIR` |
-| `scripts/docker-build.sh` | 构建 API/前端镜像，支持 `--tag`、`--push`、`--platform` |
-| `scripts/build.sh` | 本地构建（依赖/检查/测试/构建全部包） |
-| `scripts/health-check.sh` | 综合健康检查（PM2 进程、HTTP 端点、内存/CPU/磁盘、日志、配置文件），支持 `--verbose`、`--json` |
-| `scripts/restore-backup.sh` | 从备份恢复配置，用法 `./scripts/restore-backup.sh <backup_file>` |
+| `scripts/deploy.sh`            | Docker Compose 部署入口，支持 `--dev`、`--config DIR`                                                          |
+| `scripts/docker-build.sh`      | 构建 API/前端镜像，支持 `--tag`、`--push`、`--platform`                                                        |
+| `scripts/build.sh`             | 本地构建（依赖/检查/测试/构建全部包）                                                                          |
+| `scripts/health-check.sh`      | 综合健康检查（PM2 进程、HTTP 端点、内存/CPU/磁盘、日志、配置文件），支持 `--verbose`、`--json`                 |
+| `scripts/restore-backup.sh`    | 从备份恢复配置，用法 `./scripts/restore-backup.sh <backup_file>`                                               |
 
 示例：
 

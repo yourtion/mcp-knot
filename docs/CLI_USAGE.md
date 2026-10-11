@@ -32,20 +32,20 @@ npm install -g mcp-core-mcp-knot-cli-1.0.0.tgz
 mcp-knot [选项] [配置文件路径]
 ```
 
-| 选项 | 说明 |
-| --- | --- |
-| `-h, --help` | 显示帮助信息 |
-| `-v, --verbose` | 启用详细日志输出（注意：`-v` 是 verbose，不是 version） |
-| `--version` | 显示版本信息（无短写） |
-| `-c, --config <path>` | 指定配置文件路径（默认：`./mcp_server.json`） |
-| `--generate-config` | 生成配置文件模板（输出到 stdout） |
-| `--template <type>` | 指定模板类型：`basic` / `advanced` / `development` / `production` |
-| `--validate` | 验证配置文件 |
-| `--list-templates` | 列出所有可用的配置模板 |
-| `--list-presets` | 列出所有可用的服务器预设 |
-| `--init` | 快速初始化配置文件（包含 fetch / time / sequential-thinking） |
-| `--init-all` | 初始化所有配置文件（包含组配置） |
-| `--overwrite` | 覆盖已存在的配置文件（与 `--init` / `--init-all` / `--generate-config` 配合使用） |
+| 选项                  | 说明                                                                              |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `-h, --help`          | 显示帮助信息                                                                      |
+| `-v, --verbose`       | 启用详细日志输出（注意：`-v` 是 verbose，不是 version）                           |
+| `--version`           | 显示版本信息（无短写）                                                            |
+| `-c, --config <path>` | 指定配置文件路径（默认：`./mcp_server.json`）                                     |
+| `--generate-config`   | 生成配置文件模板（输出到 stdout）                                                 |
+| `--template <type>`   | 指定模板类型：`basic` / `advanced` / `development` / `production`                 |
+| `--validate`          | 验证配置文件                                                                      |
+| `--list-templates`    | 列出所有可用的配置模板                                                            |
+| `--list-presets`      | 列出所有可用的服务器预设                                                          |
+| `--init`              | 快速初始化配置文件（包含 fetch / time / sequential-thinking）                     |
+| `--init-all`          | 初始化所有配置文件（包含组配置）                                                  |
+| `--overwrite`         | 覆盖已存在的配置文件（与 `--init` / `--init-all` / `--generate-config` 配合使用） |
 
 > 说明：CLI **没有** `--debug` / `-d` 或 `--log-level` / `-l` 选项。需要更详细的日志请使用 `-v` / `--verbose`。如果不带任何子命令式选项（如 `--validate`），则进入服务器启动流程。
 

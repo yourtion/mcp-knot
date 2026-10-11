@@ -21,13 +21,13 @@
 
 ## File Structure
 
-| 文件 | 责任 | 类型 |
-| --- | --- | --- |
-| `backend/src/middleware/trace-context.ts` | `AsyncLocalStorage` store + 提取/注入辅助函数 | 新增 |
-| `backend/src/middleware/trace-context.unit.test.ts` | TraceContextStore 单元测试 | 新增 |
-| `backend/src/services/server_manager.ts` | `executeToolOnServer` 出站注入 `_meta` | 修改 |
-| `backend/src/services/server_manager.unit.test.ts` | 扩展：断言 callTool 收到 `_meta` / 无 context 不加 | 修改 |
-| `backend/src/api/mcp/group-service.ts` | 工具 handler 入站提取 + ALS 包裹 | 修改 |
+| 文件                                                         | 责任                                                      | 类型 |
+| ------------------------------------------------------------ | --------------------------------------------------------- | ---- |
+| `backend/src/middleware/trace-context.ts`                    | `AsyncLocalStorage` store + 提取/注入辅助函数             | 新增 |
+| `backend/src/middleware/trace-context.unit.test.ts`          | TraceContextStore 单元测试                                | 新增 |
+| `backend/src/services/server_manager.ts`                     | `executeToolOnServer` 出站注入 `_meta`                    | 修改 |
+| `backend/src/services/server_manager.unit.test.ts`           | 扩展：断言 callTool 收到 `_meta` / 无 context 不加        | 修改 |
+| `backend/src/api/mcp/group-service.ts`                       | 工具 handler 入站提取 + ALS 包裹                          | 修改 |
 | `backend/src/api/mcp/trace-context-integration.unit.test.ts` | 集成测试：入站 `_meta` → ALS → 回显（连通入站到读取链路） | 新增 |
 
 ---
@@ -35,10 +35,12 @@
 ### Task 1: TraceContextStore（新文件 + 单元测试）
 
 **Files:**
+
 - Create: `backend/src/middleware/trace-context.ts`
 - Test: `backend/src/middleware/trace-context.unit.test.ts`
 
 **Interfaces:**
+
 - Produces: `TraceContext`（interface）、`extractFromMeta(meta?)`、`extractFromHeaders(headers)`、`runWithTraceContext(ctx, fn)`、`getCurrentTraceContext()`、`hasTraceContext(ctx)`。后续 Task 2/3 消费这些函数。
 
 - [ ] **Step 1: Write the failing test**
@@ -299,10 +301,12 @@ git commit -m "feat(p6): add TraceContextStore for OTel trace context propagatio
 ### Task 2: 出站注入（server_manager + 单元测试扩展）
 
 **Files:**
+
 - Modify: `backend/src/services/server_manager.ts`（`executeToolOnServer` 的 `callTool` 调用，约 L302-310）
 - Test: `backend/src/services/server_manager.unit.test.ts`（扩展 `executeToolOnServer` describe 块）
 
 **Interfaces:**
+
 - Consumes: `getCurrentTraceContext()`、`hasTraceContext(ctx)`（来自 Task 1）。
 - Produces: `executeToolOnServer` 现在会在 ALS 有 context 时给 `client.callTool` 传 `_meta`。
 
@@ -313,65 +317,62 @@ git commit -m "feat(p6): add TraceContextStore for OTel trace context propagatio
 在 `backend/src/services/server_manager.unit.test.ts` 的 `describe('executeToolOnServer', ...)` 块内（L192-240 之间），追加三个用例。先在文件顶部加 import：
 
 ```typescript
-import {
-  runWithTraceContext,
-  type TraceContext,
-} from '../middleware/trace-context.js';
+import { runWithTraceContext, type TraceContext } from '../middleware/trace-context.js';
 ```
 
 在 `describe('executeToolOnServer', () => { ... })` 内追加：
 
 ```typescript
-    it('ALS 有 context 时 callTool 收到 _meta（trace 三件套注入）', async () => {
-      const mockResult = { content: [{ type: 'text', text: 'Success' }] };
-      mockClient.callTool.mockResolvedValue(mockResult);
-      const ctx: TraceContext = {
-        traceparent: '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01',
-        tracestate: 'congo=t61rcWkgMzE',
-        baggage: 'userId=am9',
-      };
+it('ALS 有 context 时 callTool 收到 _meta（trace 三件套注入）', async () => {
+  const mockResult = { content: [{ type: 'text', text: 'Success' }] };
+  mockClient.callTool.mockResolvedValue(mockResult);
+  const ctx: TraceContext = {
+    traceparent: '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01',
+    tracestate: 'congo=t61rcWkgMzE',
+    baggage: 'userId=am9',
+  };
 
-      const result = await runWithTraceContext(ctx, () =>
-        serverManager.executeToolOnServer('test-server-1', 'test-tool', { arg1: 'value1' }),
-      );
+  const result = await runWithTraceContext(ctx, () =>
+    serverManager.executeToolOnServer('test-server-1', 'test-tool', { arg1: 'value1' }),
+  );
 
-      expect(result).toEqual(mockResult);
-      expect(mockClient.callTool).toHaveBeenCalledWith({
-        name: 'test-tool',
-        arguments: { arg1: 'value1' },
-        _meta: {
-          traceparent: '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01',
-          tracestate: 'congo=t61rcWkgMzE',
-          baggage: 'userId=am9',
-        },
-      });
-    });
+  expect(result).toEqual(mockResult);
+  expect(mockClient.callTool).toHaveBeenCalledWith({
+    name: 'test-tool',
+    arguments: { arg1: 'value1' },
+    _meta: {
+      traceparent: '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01',
+      tracestate: 'congo=t61rcWkgMzE',
+      baggage: 'userId=am9',
+    },
+  });
+});
 
-    it('ALS context 部分字段缺失时 _meta 只含存在的字段', async () => {
-      mockClient.callTool.mockResolvedValue({ content: [] });
-      const ctx: TraceContext = { traceparent: '00-trace-span-01' };
+it('ALS context 部分字段缺失时 _meta 只含存在的字段', async () => {
+  mockClient.callTool.mockResolvedValue({ content: [] });
+  const ctx: TraceContext = { traceparent: '00-trace-span-01' };
 
-      await runWithTraceContext(ctx, () =>
-        serverManager.executeToolOnServer('test-server-1', 'test-tool', {}),
-      );
+  await runWithTraceContext(ctx, () =>
+    serverManager.executeToolOnServer('test-server-1', 'test-tool', {}),
+  );
 
-      expect(mockClient.callTool).toHaveBeenCalledWith({
-        name: 'test-tool',
-        arguments: {},
-        _meta: { traceparent: '00-trace-span-01' },
-      });
-    });
+  expect(mockClient.callTool).toHaveBeenCalledWith({
+    name: 'test-tool',
+    arguments: {},
+    _meta: { traceparent: '00-trace-span-01' },
+  });
+});
 
-    it('ALS 无 context 时 callTool 不含 _meta（零回归）', async () => {
-      mockClient.callTool.mockResolvedValue({ content: [] });
-      // 不在 runWithTraceContext scope 内
-      await serverManager.executeToolOnServer('test-server-1', 'test-tool', { a: 1 });
+it('ALS 无 context 时 callTool 不含 _meta（零回归）', async () => {
+  mockClient.callTool.mockResolvedValue({ content: [] });
+  // 不在 runWithTraceContext scope 内
+  await serverManager.executeToolOnServer('test-server-1', 'test-tool', { a: 1 });
 
-      expect(mockClient.callTool).toHaveBeenCalledWith({
-        name: 'test-tool',
-        arguments: { a: 1 },
-      });
-    });
+  expect(mockClient.callTool).toHaveBeenCalledWith({
+    name: 'test-tool',
+    arguments: { a: 1 },
+  });
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -390,32 +391,32 @@ import { getCurrentTraceContext, hasTraceContext } from '../middleware/trace-con
 修改 `executeToolOnServer` 内的 `callTool` 调用（当前约 L307-310）。**原代码**：
 
 ```typescript
-      const response = await server.client.callTool({
-        name: toolName,
-        arguments: args,
-      });
+const response = await server.client.callTool({
+  name: toolName,
+  arguments: args,
+});
 ```
 
 **改为**：
 
 ```typescript
-      const callParams: {
-        name: string;
-        arguments: Record<string, unknown>;
-        _meta?: Record<string, string>;
-      } = {
-        name: toolName,
-        arguments: args,
-      };
-      // P6/SEP-414：从当前请求作用域（ALS）读取 trace context，注入到上游 callTool 的 _meta。
-      // 无 context 时不加 _meta，保持无 trace 请求的零回归。
-      const traceCtx = getCurrentTraceContext();
-      if (hasTraceContext(traceCtx)) {
-        callParams._meta = Object.fromEntries(
-          Object.entries(traceCtx).filter(([, v]) => v !== undefined),
-        ) as Record<string, string>;
-      }
-      const response = await server.client.callTool(callParams);
+const callParams: {
+  name: string;
+  arguments: Record<string, unknown>;
+  _meta?: Record<string, string>;
+} = {
+  name: toolName,
+  arguments: args,
+};
+// P6/SEP-414：从当前请求作用域（ALS）读取 trace context，注入到上游 callTool 的 _meta。
+// 无 context 时不加 _meta，保持无 trace 请求的零回归。
+const traceCtx = getCurrentTraceContext();
+if (hasTraceContext(traceCtx)) {
+  callParams._meta = Object.fromEntries(
+    Object.entries(traceCtx).filter(([, v]) => v !== undefined),
+  ) as Record<string, string>;
+}
+const response = await server.client.callTool(callParams);
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -435,13 +436,16 @@ git commit -m "feat(p6): inject trace context _meta into upstream callTool"
 ### Task 3: 入站提取（group-service 工具 handler）
 
 **Files:**
+
 - Modify: `backend/src/api/mcp/group-service.ts`（`registerGroupDynamicTools` 内的 `registerTool` handler，约 L620-667）
 
 **Interfaces:**
+
 - Consumes: `extractFromMeta(meta?)`、`runWithTraceContext(ctx, fn)`（来自 Task 1）。
 - Produces: 动态工具 handler 现在从 SDK `extra._meta` 提取 trace context 并在 ALS scope 内执行后续逻辑，使 Task 2 的出站注入能读到 context。
 
 **关键约束**：
+
 - MCP SDK v2 的 `registerTool(name, { inputSchema }, handler)` 的 handler 签名是 `(args, extra) => result`，`extra` 含 `_meta`、`requestId` 等。用 optional chaining `extra?._meta` 防御 SDK 版本差异。
 - 入站提取**只在动态工具 handler 做**（`tools/call` 是触发上游调用的主链路）。`group_status`/`list_group_tools` 内置工具不调上游 server，不包裹。
 - **不改 handler 的返回值类型或业务逻辑**——只是把原有逻辑包进 `runWithTraceContext`。
@@ -558,12 +562,14 @@ git commit -m "feat(p6): extract trace context from inbound _meta in tool handle
 
 ---
 
-### Task 4: 集成测试（入站 _meta → ALS → 回显，连通主链路）
+### Task 4: 集成测试（入站 \_meta → ALS → 回显，连通主链路）
 
 **Files:**
+
 - Test: `backend/src/api/mcp/trace-context-integration.unit.test.ts`（新增）
 
 **Interfaces:**
+
 - Consumes: `runWithTraceContext`、`getCurrentTraceContext`（Task 1）；验证 Task 3 的入站提取逻辑（在隔离的单元层面模拟 handler 行为）。
 
 **测试策略说明**：真正的 e2e（真实 MCP 客户端带 `_meta` → Hub → 真实上游 server 断言 `_meta`）受限于当前 e2e fixture：`default` 组上游是 `echo` stdio server（不暴露工具，`callTool` 不可达）。因此用**集成单元测试**验证入站提取→ALS→出站读取这条链路在进程内连通：模拟一个"回显工具"（handler 读 `getCurrentTraceContext()` 并返回），验证 SDK `extra._meta` 经 `extractFromMeta` + `runWithTraceContext` 后能在 handler 内被 `getCurrentTraceContext` 读到。出站 `callTool._meta` 注入由 Task 2 单元测试覆盖。
@@ -621,9 +627,12 @@ describe('P6 trace context 集成：入站 _meta → ALS → 出站读取', () =
       baggage: 'userId=am9',
     };
 
-    const { echoedTrace, receivedArgs } = await simulateToolHandler({ q: 'hello' }, {
-      _meta: clientMeta,
-    });
+    const { echoedTrace, receivedArgs } = await simulateToolHandler(
+      { q: 'hello' },
+      {
+        _meta: clientMeta,
+      },
+    );
 
     expect(receivedArgs).toEqual({ q: 'hello' });
     expect(echoedTrace).toEqual(clientMeta);
@@ -631,9 +640,12 @@ describe('P6 trace context 集成：入站 _meta → ALS → 出站读取', () =
   });
 
   it('客户端只带 traceparent 时，handler 内读到部分 context', async () => {
-    const { echoedTrace } = await simulateToolHandler({}, {
-      _meta: { traceparent: '00-trace-span-01' },
-    });
+    const { echoedTrace } = await simulateToolHandler(
+      {},
+      {
+        _meta: { traceparent: '00-trace-span-01' },
+      },
+    );
     expect(echoedTrace.traceparent).toBe('00-trace-span-01');
     expect(echoedTrace.tracestate).toBeUndefined();
     expect(echoedTrace.baggage).toBeUndefined();
@@ -655,14 +667,9 @@ describe('P6 trace context 集成：入站 _meta → ALS → 出站读取', () =
   });
 
   it('并发工具调用 _meta 互不串扰', async () => {
-    const run = (tp: string) =>
-      simulateToolHandler({ id: tp }, { _meta: { traceparent: tp } });
+    const run = (tp: string) => simulateToolHandler({ id: tp }, { _meta: { traceparent: tp } });
 
-    const [a, b, c] = await Promise.all([
-      run('00-A-1-01'),
-      run('00-B-1-01'),
-      run('00-C-1-01'),
-    ]);
+    const [a, b, c] = await Promise.all([run('00-A-1-01'), run('00-B-1-01'), run('00-C-1-01')]);
 
     expect(a.echoedTrace.traceparent).toBe('00-A-1-01');
     expect(b.echoedTrace.traceparent).toBe('00-B-1-01');
@@ -688,6 +695,7 @@ git commit -m "test(p6): integration test for inbound _meta → ALS → outbound
 ### Task 5: 全量验证 + 回填总体 spec
 
 **Files:**
+
 - 无代码改动；验证 + 文档更新。
 
 - [ ] **Step 1: 全量 typecheck**
@@ -708,13 +716,15 @@ Expected: PASS（P6 不改 e2e fixture，现有 e2e 零回归）。若 e2e 环�
 - [ ] **Step 4: 弃用项/日志核实 grep 复核**
 
 Run（预期全部零或仅 test 残留，确认 P6 无需清理）：
+
 ```bash
 grep -rn "includeContext" backend/src packages/core/src --include="*.ts" | grep -v node_modules | grep -v "\.test\.ts"
 grep -rn "roots/list\|sampling/createMessage\|elicitation/create" backend/src packages/core/src --include="*.ts" | grep -v node_modules | grep -v "\.test\.ts"
 grep -rn "tasks/list\|CreateTaskResult\|TaskStatus" backend/src packages/core/src --include="*.ts" | grep -v node_modules | grep -v "\.test\.ts"
 grep -rn "console\." backend/src --include="*.ts" | grep -v node_modules | grep -v "\.test\.ts" | grep -v "/test/" | grep -v "/e2e/" | grep -v "/integration/" | grep -v "test-app.ts"
 ```
-Expected: 前三条 0 命中（或仅无关变量名）；第四条 0 命中（backend 生产 console.* 已干净）。
+
+Expected: 前三条 0 命中（或仅无关变量名）；第四条 0 命中（backend 生产 console.\* 已干净）。
 
 - [ ] **Step 5: 回填总体跟踪 spec**
 
@@ -724,7 +734,7 @@ Expected: 前三条 0 命中（或仅无关变量名）；第四条 0 命中（b
 
 2. **各子项目实现进度表**（§各子项目实现进度，P6 行）：填分支与关键 commit、进度描述（如"✅ 实现完成（typecheck + N tests 全绿，含 P6 trace context 单元+集成测试）"）。
 
-3. **跨子项目共享待办**（§跨子项目共享待办，console.* 行）：状态列改为 `✅ 已核实：backend/src 生产 console.* = 0，原描述滞后；CLI/share 的 console.* 是合理 stdout/logger 实现`；归属/何时做列标 `—`。
+3. **跨子项目共享待办**（§跨子项目共享待办，console._ 行）：状态列改为 `✅ 已核实：backend/src 生产 console._ = 0，原描述滞后；CLI/share 的 console.\* 是合理 stdout/logger 实现`；归属/何时做列标 `—`。
 
 - [ ] **Step 6: Commit spec 回填**
 
@@ -740,15 +750,18 @@ git commit -m "docs(p6): backfill adoption-overview — P6 complete, console.* a
 > **背景（spec §10）**：原 Task 1-5 完成后，最终 review 发现 P6 入站点（group-service）与出站点（ServerManager）分属两套不连通的工具执行体系——group-service 走 core 的 mock `McpServiceManager`，ServerManager 是 backend 真实实现。Task 6/7 用注入式适配器连通两者，让 trace 链路（与 MCP 端点真实工具调用）同时生效。
 
 **Files:**
+
 - Create: `backend/src/services/backend-core-service-adapter.ts`
 - Test: `backend/src/services/backend-core-service-adapter.unit.test.ts`
 - Modify: `backend/src/services/mcp_hub_service.ts`（L72 `private serverManager` → 暴露 getter）
 
 **Interfaces:**
+
 - Consumes: `McpServiceManagerInterface`（core 契约，`@mcp-core/mcp-hub-core`）；backend `ServerManager`（`getAllServers`/`getServerTools`/`executeToolOnServer`/`getServerStatus`/`initialize`/`shutdown`）。
 - Produces: `BackendCoreServiceAdapter implements McpServiceManagerInterface`，供 Task 7 注入到 `initCoreServiceManager`。
 
 **关键约束**：
+
 - 适配器 `executeToolCall` 运行时**直接透传** backend `ServerManager.executeToolOnServer` 的 MCP 原生结果（带 `content`/`isError`），不转成 core `ToolResult` 的 `{success, data}`——因为 `group-service` handler 用 `'content' in result` 判定返回格式。类型上声明返回 core `ToolResult`（其 `data: unknown` 兼容），但实际返回 MCP 结果。
 - `getAllTools` 聚合所有 server 的工具（遍历 `getAllServers` 调 `getServerTools`），返回 `ToolInfo[]`（backend `Tool` 字段是 `ToolInfo` 超集，结构兼容）。
 - 适配器委托的 `ServerManager.executeToolOnServer` 已含 P6 Task 2 的 trace `_meta` 注入（读 ALS），故 trace 链路自动打通。
@@ -808,12 +821,8 @@ describe('BackendCoreServiceAdapter', () => {
   });
 
   it('getAllTools 聚合所有 server 的工具（结构兼容 ToolInfo）', async () => {
-    const toolsA: Tool[] = [
-      { name: 'a_tool', inputSchema: {}, serverId: 'srv-a' },
-    ];
-    const toolsB: Tool[] = [
-      { name: 'b_tool', inputSchema: {}, serverId: 'srv-b' },
-    ];
+    const toolsA: Tool[] = [{ name: 'a_tool', inputSchema: {}, serverId: 'srv-a' }];
+    const toolsB: Tool[] = [{ name: 'b_tool', inputSchema: {}, serverId: 'srv-b' }];
     const sm = makeMockServerManager({
       getAllServers: vi.fn().mockReturnValue(
         new Map<string, ServerConnection>([
@@ -821,9 +830,11 @@ describe('BackendCoreServiceAdapter', () => {
           ['srv-b', { id: 'srv-b', status: 'connected' as ServerStatus } as ServerConnection],
         ]),
       ),
-      getServerTools: vi.fn().mockImplementation((serverId: string) =>
-        serverId === 'srv-a' ? Promise.resolve(toolsA) : Promise.resolve(toolsB),
-      ),
+      getServerTools: vi
+        .fn()
+        .mockImplementation((serverId: string) =>
+          serverId === 'srv-a' ? Promise.resolve(toolsA) : Promise.resolve(toolsB),
+        ),
     });
     const adapter = new BackendCoreServiceAdapter(sm);
 
@@ -869,9 +880,9 @@ describe('BackendCoreServiceAdapter', () => {
 
   it('isToolAvailable 检查 server 的 tools 是否含该工具', async () => {
     const sm = makeMockServerManager({
-      getServerTools: vi.fn().mockResolvedValue([
-        { name: 'find-me', inputSchema: {}, serverId: 's' },
-      ]),
+      getServerTools: vi
+        .fn()
+        .mockResolvedValue([{ name: 'find-me', inputSchema: {}, serverId: 's' }]),
     });
     const adapter = new BackendCoreServiceAdapter(sm);
     expect(await adapter.isToolAvailable('find-me', 's')).toBe(true);
@@ -922,10 +933,7 @@ import type {
   Tool,
 } from '../types/mcp-hub.js';
 import type { ServerManager } from './server_manager.js';
-import type {
-  ServerConfig,
-  McpServerConfig,
-} from '@mcp-core/mcp-hub-share';
+import type { ServerConfig, McpServerConfig } from '@mcp-core/mcp-hub-share';
 import type { ServiceStatus, ToolInfo, ToolResult } from '@mcp-core/mcp-hub-core';
 
 export class BackendCoreServiceAdapter implements McpServiceManagerInterface {
@@ -955,11 +963,7 @@ export class BackendCoreServiceAdapter implements McpServiceManagerInterface {
     return (await this.serverManager.getServerTools(serverId)) as unknown as ToolInfo[];
   }
 
-  async executeToolCall(
-    toolName: string,
-    args: unknown,
-    serverId?: string,
-  ): Promise<ToolResult> {
+  async executeToolCall(toolName: string, args: unknown, serverId?: string): Promise<ToolResult> {
     if (!serverId) {
       throw new Error(
         `BackendCoreServiceAdapter.executeToolCall 需要 serverId（工具 ${toolName} 未绑定 server）`,
@@ -1048,13 +1052,16 @@ git commit -m "feat(p6): add BackendCoreServiceAdapter to bridge core interface 
 ### Task 7: 接线注入点 + 端到端验证
 
 **Files:**
+
 - Modify: `backend/src/services/service-registry.ts`（`initCoreServiceManager` L92-106）
 
 **Interfaces:**
+
 - Consumes: `BackendCoreServiceAdapter`（Task 6）、`getHubService`（已存在）。
 - Produces: `getCoreServiceManager()` 返回注入真实 ServerManager 的适配器，使 group-service / groups API 拿到真实数据，P6 trace 链路端到端打通。
 
 **关键约束**：
+
 - 只改 `initCoreServiceManager`：把 `new McpServiceManager()` 换成 `new BackendCoreServiceAdapter(hubService.getServerManager())`。
 - `hubService` 来自 `getHubService()`（已初始化，其 ServerManager 已连上游）。若 hubService 尚未初始化，需先 `getHubService()`（其内部会惰性初始化）。
 - 保持 `getCoreServiceManager()` 的签名与返回类型不变（消费者零改动）。返回类型仍是 `McpServiceManager`——这里需调整为返回适配器（实现同一接口）。**注意类型**：`coreServiceManager` 单例变量当前类型是 `McpServiceManager`，改为 `McpServiceManagerInterface` 或 `BackendCoreServiceAdapter`。
@@ -1064,21 +1071,27 @@ git commit -m "feat(p6): add BackendCoreServiceAdapter to bridge core interface 
 在 `backend/src/services/service-registry.ts`：
 
 1. 顶部加 import：
+
 ```typescript
 import { BackendCoreServiceAdapter } from './backend-core-service-adapter.js';
 ```
 
 2. 把单例变量类型从 `McpServiceManager` 改为接口类型（保持消费端类型兼容）。**原**：
+
 ```typescript
 let coreServiceManager: McpServiceManager | null = null;
 ```
+
 **改为**：
+
 ```typescript
 let coreServiceManager: McpServiceManagerInterface | null = null;
 ```
+
 （需补 import `McpServiceManagerInterface`，且更新各函数返回类型为 `McpServiceManagerInterface`。）
 
 3. 改 `initCoreServiceManager`。**原代码**（L92-106）：
+
 ```typescript
 export async function initCoreServiceManager(): Promise<McpServiceManager> {
   if (coreServiceManager) {
@@ -1097,7 +1110,9 @@ export async function initCoreServiceManager(): Promise<McpServiceManager> {
   return coreServiceManager;
 }
 ```
+
 **改为**：
+
 ```typescript
 export async function initCoreServiceManager(): Promise<McpServiceManagerInterface> {
   if (coreServiceManager) {
@@ -1130,6 +1145,7 @@ Expected: PASS（现有 542+ 测试全绿；适配器新增测试通过）。注
 - [ ] **Step 4: 端到端 trace 传播验证（手工或新增集成断言）**
 
 验证 P6 trace 链路端到端连通（此时 group-service → 适配器 → ServerManager 已连）：
+
 - 确认 `group-service` handler 调 `coreServiceManager.executeToolCall` 时，实际走到 backend `ServerManager.executeToolOnServer`（而非 core mock）。
 - 可新增一个集成断言：在 ALS scope 内调 `adapter.executeToolCall`，mock `ServerManager.executeToolOnServer` 断言收到的 `_meta`（复用 Task 2 的 server_manager 注入测试逻辑）。
 
@@ -1147,6 +1163,7 @@ git commit -m "feat(p6): inject BackendCoreServiceAdapter into initCoreServiceMa
 ## Self-Review（计划自审，执行者无需操作）
 
 **Spec 覆盖**：
+
 - §1.3 范围内 4 项：入站提取（Task 3）、ALS 透传（Task 1）、出站注入（Task 2）、HTTP header 兼容（spec 标可选 stretch，**本计划不实现**——spec §3.6 已注明可选，核心 `_meta` 路径独立可用，符合 MVP）。✅
 - §4 弃用项清理：无代码工作，Task 5 Step 4 grep 复核 + spec §4 已文档化结论。✅
 - §5 日志统一：无代码工作，Task 5 Step 4 grep 复核 + spec §5 已文档化。✅

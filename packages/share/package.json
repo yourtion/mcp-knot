@@ -6,6 +6,11 @@
   "keywords": [],
   "license": "ISC",
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourtion/mcp-knot.git",
+    "directory": "packages/share"
+  },
   "files": [
     "dist",
     "README.md"

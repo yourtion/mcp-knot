@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文版
 
-> *Knot* —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
+> _Knot_ —— 纽带、交织点。多个 MCP server 像散落的线，MCP Knot 把它们打成一个结，成为所有工具交汇的轻量枢纽。
 
 **把你的 MCP server 系在一起。**
 
@@ -46,7 +46,7 @@ MCP Knot 采用模块化 monorepo 架构，包含以下包：
 
 ### 前置要求
 
-- Node.js 20+
+- Node.js 20.19+（推荐 Node 22/24）
 - pnpm 包管理器
 
 ### 安装依赖
@@ -462,7 +462,17 @@ MCP Knot 使用 [Changesets](https://github.com/changesets/changesets) 进行版
 3. **合并 Version Packages PR**：触发自动发布
    - 发布到 npm
    - 创建 GitHub Release
-   - 构建 Docker 镜像
+   - 可选发布 Docker 镜像（`DOCKER_PUBLISH=true`）
+
+发包使用 **npm Trusted Publishing（OIDC）**，配置 Node 24、npm 11 和
+`id-token: write`，无需 npm token。只有 main 的 push CI 成功且仍对应当前 main
+提交时才会执行发布；先创建版本 PR，该 PR 合入并通过 CI 后自动发布构建好的包、
+包版本标签和 GitHub Release。
+
+首次发布前，需要用交互式 `npm login` 创建缺失的 npm 包，再逐包设置 Trusted
+Publisher：用户 `yourtion`、仓库 `mcp-knot`、工作流 **`publish.yml`**、环境留空，
+允许 **`npm publish`**。完整命令与重试说明见[发布配置指南](docs/RELEASING.md)。
+使用 `GITHUB_TOKEN` 自动创建的版本 PR，可能需要在 GitHub 上批准其 CI 运行。
 
 #### 版本类型选择
 

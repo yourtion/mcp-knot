@@ -353,7 +353,7 @@ curl -X POST http://localhost:8181/development/mcp \
 代码读取 `<cwd>/config/*.json`，具体由 `backend/src/utils/config.ts` 的 `getConfigDir()` 决定：
 
 ```ts
-process.env.CONFIG_PATH || path.resolve(process.cwd(), 'config')
+process.env.CONFIG_PATH || path.resolve(process.cwd(), 'config');
 ```
 
 - 从仓库根执行 `pnpm start:api` → 读取 `./config/`（不是 `backend/config/`）。
@@ -363,12 +363,12 @@ process.env.CONFIG_PATH || path.resolve(process.cwd(), 'config')
 
 共 4 个：
 
-| 文件 | 作用 |
-| --- | --- |
-| `mcp_server.json` | MCP 服务器定义 |
-| `group.json` | 组配置 |
-| `system.json` | 系统、认证、用户、监控等 |
-| `api-tools.json` | API 到 MCP 工具配置 |
+| 文件              | 作用                     |
+| ----------------- | ------------------------ |
+| `mcp_server.json` | MCP 服务器定义           |
+| `group.json`      | 组配置                   |
+| `system.json`     | 系统、认证、用户、监控等 |
+| `api-tools.json`  | API 到 MCP 工具配置      |
 
 #### 配置文件未找到
 
@@ -482,26 +482,26 @@ location /api/ {
 
 ### 常见错误速查
 
-| 错误 | 可能原因 | 处理 |
-| --- | --- | --- |
-| `EADDRINUSE :::8181` | 端口被占用 | `lsof -i :8181` 后清理，或改 `system.json` 的 `server.port` |
-| `Cannot find module '@mcp-core/...'` | 依赖未装/未构建 | `pnpm install && pnpm build` |
-| `Configuration file not found` | 配置目录/文件缺失 | 检查 `CONFIG_PATH` 与 `config/` 目录 |
-| `MCP server timeout` | 上游超时 | 增大 `mcp_server.json` 的 `timeout` |
-| `Tool 'x' not allowed in group` | 组工具过滤 | 把工具加入组的 `allowedTools` |
-| 404 on `/:groupId/mcp` | 组不存在/未启用 | 检查 `group.json`，确认 `enabled` |
-| `EACCES: permission denied` | 文件权限 | `chmod`/`chown`，或调整容器运行用户 |
+| 错误                                 | 可能原因          | 处理                                                        |
+| ------------------------------------ | ----------------- | ----------------------------------------------------------- |
+| `EADDRINUSE :::8181`                 | 端口被占用        | `lsof -i :8181` 后清理，或改 `system.json` 的 `server.port` |
+| `Cannot find module '@mcp-core/...'` | 依赖未装/未构建   | `pnpm install && pnpm build`                                |
+| `Configuration file not found`       | 配置目录/文件缺失 | 检查 `CONFIG_PATH` 与 `config/` 目录                        |
+| `MCP server timeout`                 | 上游超时          | 增大 `mcp_server.json` 的 `timeout`                         |
+| `Tool 'x' not allowed in group`      | 组工具过滤        | 把工具加入组的 `allowedTools`                               |
+| 404 on `/:groupId/mcp`               | 组不存在/未启用   | 检查 `group.json`，确认 `enabled`                           |
+| `EACCES: permission denied`          | 文件权限          | `chmod`/`chown`，或调整容器运行用户                         |
 
 ### 关键端点
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/health` | 健康检查（根路径） |
-| POST | `/:groupId/mcp` | 唯一 MCP 入口（JSON-RPC，带 `Mcp-Method` 头） |
-| GET | `/api/groups` / `/api/groups/:groupId` | 组列表 / 组详情 |
-| PUT | `/api/groups/:groupId` | 更新组（注意是 PUT） |
-| GET | `/api/dashboard/system-info` | 系统信息（需登录） |
-| GET | `/api/dashboard/memory` | 内存信息（需登录） |
+| 方法 | 路径                                   | 说明                                          |
+| ---- | -------------------------------------- | --------------------------------------------- |
+| GET  | `/health`                              | 健康检查（根路径）                            |
+| POST | `/:groupId/mcp`                        | 唯一 MCP 入口（JSON-RPC，带 `Mcp-Method` 头） |
+| GET  | `/api/groups` / `/api/groups/:groupId` | 组列表 / 组详情                               |
+| PUT  | `/api/groups/:groupId`                 | 更新组（注意是 PUT）                          |
+| GET  | `/api/dashboard/system-info`           | 系统信息（需登录）                            |
+| GET  | `/api/dashboard/memory`                | 内存信息（需登录）                            |
 
 > 已移除/不存在的端点：全局 `/mcp`、`/mcp/list_tools`、`/:group/mcp/list_tools`、`/mcp/call_tool`、`/:group/mcp/call_tool`、`/api/system/metrics`、`/api/system/info`。
 

@@ -635,6 +635,18 @@ describe('MRTR handler（P5）', () => {
     return { handler: dynamic[2], executeToolCallWithContext, mrtrRelay: opts.mrtrRelay };
   }
 
+  it('上游执行异常必须标记为工具错误', async () => {
+    const { handler, executeToolCallWithContext } = await setupWithTool({
+      upstreamResult: undefined,
+    });
+    executeToolCallWithContext.mockRejectedValue(new Error('upstream failed'));
+    const result = await handler({}, makeExtra({ requestStateValue: undefined }));
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: expect.stringContaining('upstream failed') }],
+    });
+  });
+
   it('上游返回 input_required 时正确透传 InputRequiredResult（不包成 text）', async () => {
     const mrtrRelay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 600 });
     const upstream = {

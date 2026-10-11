@@ -10,22 +10,22 @@
 
 ## 路由总览
 
-| 前缀 | 说明 | 认证 |
-| --- | --- | --- |
-| `/api/auth` | 认证（登录/登出/刷新/当前用户） | 部分需要 |
-| `/api/config` | 系统配置管理（查询/更新/验证/历史/备份/恢复） | JWT |
-| `/api/dashboard` | 仪表板（统计、系统信息、内存、日志、SSE 等） | JWT |
-| `/api/debug` | 调试（MCP 协议消息、工具测试、性能/错误分析） | 无 |
-| `/api/servers` | MCP 服务器 CRUD 与连接控制 | JWT |
-| `/api/tools` | 工具查询与执行（基础） | JWT |
-| `/api/tools-admin` | 工具管理（历史/监控/健康/性能/错误/统计） | JWT |
-| `/api/groups` | 组管理（路径参数统一为 `:groupId`） | JWT |
-| `/api/performance` | 全局性能监控 | 无 |
-| `/api/api-to-mcp` | API 转 MCP 配置管理 | JWT |
-| `/api/oauth` | 内置 OAuth AS（`/token`、`/jwks`） | 无 |
-| `/.well-known/*` | OAuth Protected Resource / AS metadata | 无 |
-| `/:group/mcp` | **组级 MCP JSON-RPC 入口（唯一）** | OAuth RS |
-| `/:group/status`、`/:group/tools` | 组状态/工具（REST） | 组校验 |
+| 前缀                              | 说明                                          | 认证     |
+| --------------------------------- | --------------------------------------------- | -------- |
+| `/api/auth`                       | 认证（登录/登出/刷新/当前用户）               | 部分需要 |
+| `/api/config`                     | 系统配置管理（查询/更新/验证/历史/备份/恢复） | JWT      |
+| `/api/dashboard`                  | 仪表板（统计、系统信息、内存、日志、SSE 等）  | JWT      |
+| `/api/debug`                      | 调试（MCP 协议消息、工具测试、性能/错误分析） | 无       |
+| `/api/servers`                    | MCP 服务器 CRUD 与连接控制                    | JWT      |
+| `/api/tools`                      | 工具查询与执行（基础）                        | JWT      |
+| `/api/tools-admin`                | 工具管理（历史/监控/健康/性能/错误/统计）     | JWT      |
+| `/api/groups`                     | 组管理（路径参数统一为 `:groupId`）           | JWT      |
+| `/api/performance`                | 全局性能监控                                  | 无       |
+| `/api/api-to-mcp`                 | API 转 MCP 配置管理                           | JWT      |
+| `/api/oauth`                      | 内置 OAuth AS（`/token`、`/jwks`）            | 无       |
+| `/.well-known/*`                  | OAuth Protected Resource / AS metadata        | 无       |
+| `/:group/mcp`                     | **组级 MCP JSON-RPC 入口（唯一）**            | OAuth RS |
+| `/:group/status`、`/:group/tools` | 组状态/工具（REST）                           | 组校验   |
 
 > 说明：2026-07-28 协议升级后，全局 `/mcp` 端点已移除。所有 MCP 调用统一走组路由 `/:group/mcp`。
 
@@ -128,9 +128,7 @@ curl -X POST http://localhost:8181/development/mcp \
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
-    "content": [
-      { "type": "text", "text": "# My Project\n\n..." }
-    ],
+    "content": [{ "type": "text", "text": "# My Project\n\n..." }],
     "isError": false
   }
 }
@@ -149,22 +147,22 @@ curl -X POST http://localhost:8181/development/mcp \
 
 路径参数统一为 `:groupId`。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/groups` | 列出所有组 |
-| POST | `/api/groups` | 创建组 |
-| GET | `/api/groups/:groupId` | 组详情 |
-| PUT | `/api/groups/:groupId` | 更新组（注意是 PUT，非 PATCH） |
-| DELETE | `/api/groups/:groupId` | 删除组 |
-| GET | `/api/groups/:groupId/health` | 组健康检查 |
-| GET | `/api/groups/:groupId/tools` | 组已配置工具 |
-| GET | `/api/groups/:groupId/available-tools` | 组可用工具（含过滤） |
-| GET | `/api/groups/:groupId/servers` | 组的服务器列表 |
-| POST | `/api/groups/:groupId/tools` | 配置组工具过滤 |
-| POST | `/api/groups/:groupId/validate-tool-access` | 验证工具访问权限 |
-| POST/GET/DELETE | `/api/groups/:groupId/validation-key` | 设置/查询/删除验证密钥 |
-| POST | `/api/groups/:groupId/validate-key` | 验证密钥有效性 |
-| POST | `/api/groups/:groupId/generate-validation-key` | 生成新验证密钥 |
+| 方法            | 路径                                           | 说明                           |
+| --------------- | ---------------------------------------------- | ------------------------------ |
+| GET             | `/api/groups`                                  | 列出所有组                     |
+| POST            | `/api/groups`                                  | 创建组                         |
+| GET             | `/api/groups/:groupId`                         | 组详情                         |
+| PUT             | `/api/groups/:groupId`                         | 更新组（注意是 PUT，非 PATCH） |
+| DELETE          | `/api/groups/:groupId`                         | 删除组                         |
+| GET             | `/api/groups/:groupId/health`                  | 组健康检查                     |
+| GET             | `/api/groups/:groupId/tools`                   | 组已配置工具                   |
+| GET             | `/api/groups/:groupId/available-tools`         | 组可用工具（含过滤）           |
+| GET             | `/api/groups/:groupId/servers`                 | 组的服务器列表                 |
+| POST            | `/api/groups/:groupId/tools`                   | 配置组工具过滤                 |
+| POST            | `/api/groups/:groupId/validate-tool-access`    | 验证工具访问权限               |
+| POST/GET/DELETE | `/api/groups/:groupId/validation-key`          | 设置/查询/删除验证密钥         |
+| POST            | `/api/groups/:groupId/validate-key`            | 验证密钥有效性                 |
+| POST            | `/api/groups/:groupId/generate-validation-key` | 生成新验证密钥                 |
 
 > **不存在** `/api/groups/:groupId/stats`、`/api/groups/:groupId/logs`。组级统计/日志请用 `/api/performance`、`/api/dashboard/logs` 或 `/api/tools-admin/*`。
 
@@ -240,15 +238,15 @@ POST   /api/groups/:groupId/validate-key         # 验证密钥
 
 ## 服务器管理 API
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/servers` | 服务器列表 |
-| POST | `/api/servers` | 创建服务器 |
-| PUT | `/api/servers/:id` | 更新服务器 |
-| DELETE | `/api/servers/:id` | 删除服务器 |
-| POST | `/api/servers/:id/connect` | 连接服务器 |
-| POST | `/api/servers/:id/disconnect` | 断开服务器 |
-| POST | `/api/servers/test` | 测试配置有效性 |
+| 方法   | 路径                          | 说明           |
+| ------ | ----------------------------- | -------------- |
+| GET    | `/api/servers`                | 服务器列表     |
+| POST   | `/api/servers`                | 创建服务器     |
+| PUT    | `/api/servers/:id`            | 更新服务器     |
+| DELETE | `/api/servers/:id`            | 删除服务器     |
+| POST   | `/api/servers/:id/connect`    | 连接服务器     |
+| POST   | `/api/servers/:id/disconnect` | 断开服务器     |
+| POST   | `/api/servers/test`           | 测试配置有效性 |
 
 ### 列表响应示例
 
@@ -311,24 +309,24 @@ POST /api/servers/test
 
 ### 基础（`/api/tools`）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/tools` | 工具列表（`serverId`、`groupId` 可选过滤） |
-| GET | `/api/tools/:toolName` | 工具详情 |
-| POST | `/api/tools/:toolName/execute` | 执行工具 |
+| 方法 | 路径                           | 说明                                       |
+| ---- | ------------------------------ | ------------------------------------------ |
+| GET  | `/api/tools`                   | 工具列表（`serverId`、`groupId` 可选过滤） |
+| GET  | `/api/tools/:toolName`         | 工具详情                                   |
+| POST | `/api/tools/:toolName/execute` | 执行工具                                   |
 
 ### 高级（`/api/tools-admin`）
 
 提供工具监控、性能分析、健康检查等管理功能，均基于内存中的执行历史。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/tools-admin/history` | 执行历史（`limit`/`offset`/`toolName`/`serverId`/`groupId`） |
-| GET | `/api/tools-admin/monitoring` | 工具状态监控（按服务器分组） |
-| GET | `/api/tools-admin/health` | 工具健康检查（含错误率、最近错误） |
-| GET | `/api/tools-admin/performance` | 性能分析（`timeRange`：`1h`/`6h`/`24h`/`7d`，含 p50/p95/p99） |
-| GET | `/api/tools-admin/errors` | 错误日志与汇总（Top 20 错误） |
-| GET | `/api/tools-admin/stats` | 执行统计（Top 10 工具） |
+| 方法 | 路径                           | 说明                                                          |
+| ---- | ------------------------------ | ------------------------------------------------------------- |
+| GET  | `/api/tools-admin/history`     | 执行历史（`limit`/`offset`/`toolName`/`serverId`/`groupId`）  |
+| GET  | `/api/tools-admin/monitoring`  | 工具状态监控（按服务器分组）                                  |
+| GET  | `/api/tools-admin/health`      | 工具健康检查（含错误率、最近错误）                            |
+| GET  | `/api/tools-admin/performance` | 性能分析（`timeRange`：`1h`/`6h`/`24h`/`7d`，含 p50/p95/p99） |
+| GET  | `/api/tools-admin/errors`      | 错误日志与汇总（Top 20 错误）                                 |
+| GET  | `/api/tools-admin/stats`       | 执行统计（Top 10 工具）                                       |
 
 ### 执行工具
 
@@ -347,14 +345,14 @@ POST /api/tools/:toolName/execute
 
 ## 配置管理 API
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/config` | 获取配置（`category`：`system`/`servers`/`groups`/`auth`） |
-| PUT | `/api/config` | 更新配置 |
-| POST | `/api/config/validate` | 验证配置 |
-| GET | `/api/config/history` | 配置变更历史（`limit`） |
-| POST | `/api/config/backup` | 创建备份 |
-| POST | `/api/config/restore` | 从备份恢复 |
+| 方法 | 路径                   | 说明                                                       |
+| ---- | ---------------------- | ---------------------------------------------------------- |
+| GET  | `/api/config`          | 获取配置（`category`：`system`/`servers`/`groups`/`auth`） |
+| PUT  | `/api/config`          | 更新配置                                                   |
+| POST | `/api/config/validate` | 验证配置                                                   |
+| GET  | `/api/config/history`  | 配置变更历史（`limit`）                                    |
+| POST | `/api/config/backup`   | 创建备份                                                   |
+| POST | `/api/config/restore`  | 从备份恢复                                                 |
 
 ### 更新配置
 
@@ -381,18 +379,18 @@ PUT /api/config
 
 主要端点（均需 JWT）：
 
-| 路径 | 说明 |
-| --- | --- |
-| `/api/dashboard/stats` | 系统概览统计 |
-| `/api/dashboard/health`、`/health-detailed` | 系统健康 |
-| `/api/dashboard/logs`（GET/DELETE） | 系统日志（`limit`/`level`/`since`） |
-| `/api/dashboard/activities` | 最近活动 |
-| `/api/dashboard/performance` | 性能概览 |
-| `/api/dashboard/system-info` | **系统信息**（版本、平台、运行时、特性、限制） |
-| `/api/dashboard/memory`、`/memory/trend`、`/memory/snapshot`、`/memory/gc` | 内存监控与管理 |
-| `/api/dashboard/resources` | 资源使用 |
-| `/api/dashboard/events`、`/sse-stats` | 事件与 SSE 统计 |
-| `/api/dashboard/test-alert`、`/test-tool-execution`、`/test-server-status`、`/add-log` | 测试/注入端点 |
+| 路径                                                                                   | 说明                                           |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `/api/dashboard/stats`                                                                 | 系统概览统计                                   |
+| `/api/dashboard/health`、`/health-detailed`                                            | 系统健康                                       |
+| `/api/dashboard/logs`（GET/DELETE）                                                    | 系统日志（`limit`/`level`/`since`）            |
+| `/api/dashboard/activities`                                                            | 最近活动                                       |
+| `/api/dashboard/performance`                                                           | 性能概览                                       |
+| `/api/dashboard/system-info`                                                           | **系统信息**（版本、平台、运行时、特性、限制） |
+| `/api/dashboard/memory`、`/memory/trend`、`/memory/snapshot`、`/memory/gc`             | 内存监控与管理                                 |
+| `/api/dashboard/resources`                                                             | 资源使用                                       |
+| `/api/dashboard/events`、`/sse-stats`                                                  | 事件与 SSE 统计                                |
+| `/api/dashboard/test-alert`、`/test-tool-execution`、`/test-server-status`、`/add-log` | 测试/注入端点                                  |
 
 > 旧文档的 `/api/system/info`、`/api/system/metrics` **不存在**，实际为 `/api/dashboard/system-info` 等。
 
@@ -428,12 +426,12 @@ POST /api/dashboard/memory/snapshot  # 保存快照
 
 ## 调试 API（`/api/debug`）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/debug/mcp-messages` | MCP 协议消息（`limit`/`serverId`/`type`） |
-| POST | `/api/debug/tool-test` | 测试工具执行 |
-| GET | `/api/debug/performance-stats` | 性能统计 |
-| GET | `/api/debug/error-analysis` | 错误模式分析 |
+| 方法 | 路径                           | 说明                                      |
+| ---- | ------------------------------ | ----------------------------------------- |
+| GET  | `/api/debug/mcp-messages`      | MCP 协议消息（`limit`/`serverId`/`type`） |
+| POST | `/api/debug/tool-test`         | 测试工具执行                              |
+| GET  | `/api/debug/performance-stats` | 性能统计                                  |
+| GET  | `/api/debug/error-analysis`    | 错误模式分析                              |
 
 ### 测试工具执行
 
@@ -456,40 +454,40 @@ POST /api/debug/tool-test
 
 全局性能指标（由性能中间件采集）。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/performance/stats` | 统计（`timeWindow`） |
-| GET | `/api/performance/stats/by-endpoint` | 按端点分组统计 |
-| GET | `/api/performance/slow-requests` | 慢请求（`threshold`，默认 1000ms） |
-| GET | `/api/performance/recent-errors` | 最近错误（`limit`，默认 10） |
-| GET | `/api/performance/metrics` | 所有指标 |
-| DELETE | `/api/performance/metrics` | 清除指标 |
-| GET | `/api/performance/report` | 综合报告（聚合上述） |
+| 方法   | 路径                                 | 说明                               |
+| ------ | ------------------------------------ | ---------------------------------- |
+| GET    | `/api/performance/stats`             | 统计（`timeWindow`）               |
+| GET    | `/api/performance/stats/by-endpoint` | 按端点分组统计                     |
+| GET    | `/api/performance/slow-requests`     | 慢请求（`threshold`，默认 1000ms） |
+| GET    | `/api/performance/recent-errors`     | 最近错误（`limit`，默认 10）       |
+| GET    | `/api/performance/metrics`           | 所有指标                           |
+| DELETE | `/api/performance/metrics`           | 清除指标                           |
+| GET    | `/api/performance/report`            | 综合报告（聚合上述）               |
 
 ## API 转 MCP（`/api/api-to-mcp`）
 
 将外部 HTTP API 配置为 MCP 工具。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/api-to-mcp/configs` | 配置列表 |
-| POST | `/api/api-to-mcp/configs` | 创建配置 |
-| GET | `/api/api-to-mcp/configs/:id` | 配置详情 |
-| PUT | `/api/api-to-mcp/configs/:id` | 更新配置 |
-| DELETE | `/api/api-to-mcp/configs/:id` | 删除配置 |
-| POST | `/api/api-to-mcp/configs/:id/test` | 测试配置（触发出站调用） |
+| 方法   | 路径                               | 说明                     |
+| ------ | ---------------------------------- | ------------------------ |
+| GET    | `/api/api-to-mcp/configs`          | 配置列表                 |
+| POST   | `/api/api-to-mcp/configs`          | 创建配置                 |
+| GET    | `/api/api-to-mcp/configs/:id`      | 配置详情                 |
+| PUT    | `/api/api-to-mcp/configs/:id`      | 更新配置                 |
+| DELETE | `/api/api-to-mcp/configs/:id`      | 删除配置                 |
+| POST   | `/api/api-to-mcp/configs/:id/test` | 测试配置（触发出站调用） |
 
 ## OAuth（`/api/oauth` 与 `/.well-known/*`）
 
 内置授权服务器（AS）与资源服务器（RS）元数据。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/api/oauth/token` | Token 端点（`grant_type=client_credentials`，form 编码） |
-| GET | `/api/oauth/jwks` | JWK Set 公钥（RFC7517） |
-| GET | `/.well-known/oauth-protected-resource` | Protected Resource metadata（RFC9728） |
-| GET | `/.well-known/oauth-authorization-server` | AS metadata（RFC8414） |
-| GET | `/.well-known/oauth-protected-resource/:group/mcp` | 组级 RS metadata |
+| 方法 | 路径                                               | 说明                                                     |
+| ---- | -------------------------------------------------- | -------------------------------------------------------- |
+| POST | `/api/oauth/token`                                 | Token 端点（`grant_type=client_credentials`，form 编码） |
+| GET  | `/api/oauth/jwks`                                  | JWK Set 公钥（RFC7517）                                  |
+| GET  | `/.well-known/oauth-protected-resource`            | Protected Resource metadata（RFC9728）                   |
+| GET  | `/.well-known/oauth-authorization-server`          | AS metadata（RFC8414）                                   |
+| GET  | `/.well-known/oauth-protected-resource/:group/mcp` | 组级 RS metadata                                         |
 
 ### 获取 Token
 
@@ -527,21 +525,21 @@ GET /health
 
 ### 常见错误代码
 
-| 错误代码 | HTTP | 描述 |
-| --- | --- | --- |
-| `AUTH_LOGIN_FAILED` | 401 | 登录失败 |
-| `AUTH_INVALID_CREDENTIALS` | 401 | 用户名或密码错误 |
-| `AUTH_MISSING_TOKEN` / `AUTH_INVALID_TOKEN` / `AUTH_TOKEN_EXPIRED` | 401 | 令牌相关 |
-| `AUTH_ACCOUNT_LOCKED` | 423 | 账户被锁定 |
-| `GROUP_NOT_FOUND` | 404 | 指定的组不存在 |
-| `TOOL_NOT_FOUND` | 404 | 指定的工具不存在 |
-| `TOOL_NOT_ALLOWED` | 403 | 工具不在组的允许列表中 |
-| `INVALID_VALIDATION_KEY` | 401 | 验证密钥无效或缺失 |
-| `INVALID_ARGUMENTS` | 400 | 工具参数无效 |
-| `SERVER_ERROR` | 500 | MCP 服务器内部错误 |
-| `SERVICE_UNAVAILABLE` | 503 | 服务不可用 |
-| `TIMEOUT` | 408 | 请求超时 |
-| `RATE_LIMIT_EXCEEDED` | 429 | 请求频率超限 |
+| 错误代码                                                           | HTTP | 描述                   |
+| ------------------------------------------------------------------ | ---- | ---------------------- |
+| `AUTH_LOGIN_FAILED`                                                | 401  | 登录失败               |
+| `AUTH_INVALID_CREDENTIALS`                                         | 401  | 用户名或密码错误       |
+| `AUTH_MISSING_TOKEN` / `AUTH_INVALID_TOKEN` / `AUTH_TOKEN_EXPIRED` | 401  | 令牌相关               |
+| `AUTH_ACCOUNT_LOCKED`                                              | 423  | 账户被锁定             |
+| `GROUP_NOT_FOUND`                                                  | 404  | 指定的组不存在         |
+| `TOOL_NOT_FOUND`                                                   | 404  | 指定的工具不存在       |
+| `TOOL_NOT_ALLOWED`                                                 | 403  | 工具不在组的允许列表中 |
+| `INVALID_VALIDATION_KEY`                                           | 401  | 验证密钥无效或缺失     |
+| `INVALID_ARGUMENTS`                                                | 400  | 工具参数无效           |
+| `SERVER_ERROR`                                                     | 500  | MCP 服务器内部错误     |
+| `SERVICE_UNAVAILABLE`                                              | 503  | 服务不可用             |
+| `TIMEOUT`                                                          | 408  | 请求超时               |
+| `RATE_LIMIT_EXCEEDED`                                              | 429  | 请求频率超限           |
 
 ## 速率限制
 

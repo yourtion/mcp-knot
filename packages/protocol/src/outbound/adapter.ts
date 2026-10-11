@@ -35,9 +35,11 @@ export function translateUpstreamResult(raw: unknown, era: UpstreamEra): Normali
 export class OutboundProtocolAdapter {
   constructor(private readonly opts: CompatibilityOptions) {}
 
-  // 若 modernOnly=true，强制视 upstream 为 modern（只允许连 modern）
+  // 关闭兼容时拒绝 legacy，不改变已协商的 era。
   effectiveEra(probed: UpstreamEra): UpstreamEra {
-    if (this.opts.outbound.modernOnly) return 'modern';
+    if (probed === 'legacy' && (this.opts.outbound.modernOnly || !this.opts.outbound.enabled)) {
+      throw new Error('Legacy upstream is disabled by compatibility.outbound configuration');
+    }
     return probed;
   }
 

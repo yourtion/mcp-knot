@@ -169,7 +169,7 @@
 #### 后端
 
 - Hono 4.12.32
-- @modelcontextprotocol/* v2（core/server/client/node/hono 等独立包，由原 `@modelcontextprotocol/sdk` 单包拆分而来）
+- @modelcontextprotocol/\* v2（core/server/client/node/hono 等独立包，由原 `@modelcontextprotocol/sdk` 单包拆分而来）
 - jsonwebtoken 9.0.2
 - bcryptjs 3.0.2
 

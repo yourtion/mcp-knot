@@ -21,11 +21,11 @@ P5 原为「主动推迟」状态（观望客户端生态），4 个复查触发
 
 ## 范围（brainstorming 已确认）
 
-| 子能力 | 本轮范围 |
-|---|---|
-| **subscriptions/listen** | 上游工具变更检测（listChanged 订阅 + 60s 轮询兜底，两者结合）→ fan-out 到含该 server 的所有 group → 客户端经 `subscriptions/listen` stream 收 `tools_list_changed` |
-| **MRTR（InputRequiredResult）** | Hub 主动管理状态（方案 A）：Hub mint 自己的 requestState 作为 opaque 句柄，内部映射到上游 server + 上游原始 state；重试时 verify 还原并透传 inputResponses |
-| **SDK 升级** | beta.5 → 2.0.0 GA，作为 P5 首个 task |
+| 子能力                          | 本轮范围                                                                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **subscriptions/listen**        | 上游工具变更检测（listChanged 订阅 + 60s 轮询兜底，两者结合）→ fan-out 到含该 server 的所有 group → 客户端经 `subscriptions/listen` stream 收 `tools_list_changed` |
+| **MRTR（InputRequiredResult）** | Hub 主动管理状态（方案 A）：Hub mint 自己的 requestState 作为 opaque 句柄，内部映射到上游 server + 上游原始 state；重试时 verify 还原并透传 inputResponses         |
+| **SDK 升级**                    | beta.5 → 2.0.0 GA，作为 P5 首个 task                                                                                                                               |
 
 ### 明确不纳入本轮
 
@@ -81,11 +81,11 @@ P5 原为「主动推迟」状态（观望客户端生态），4 个复查触发
 
 3 个新组件，各自单一职责、可独立测试。
 
-| 组件 | 位置 | 职责 | 依赖 |
-|---|---|---|---|
-| `UpstreamChangeDetector` | `backend/src/services/upstream-change-detector.ts` | 双路检测上游工具变更：订阅 `notifications/tools/list_changed`（实时）+ 60s 快照比对（兜底）。变更时 emit 事件 | `ServerManager` |
-| `UpstreamChangeFanout` | `backend/src/services/upstream-change-fanout.ts` | 订阅 Detector 事件，把 serverId 变更 fan-out 到所有含该 server 的 group 的 `handler.bus` | `GroupMcpService` 注册表、`groupHandlers` Map |
-| `MrtrRelayService` | `backend/src/services/mrtr-relay-service.ts` | MRTR 中转：mint/verify Hub 级 requestState，映射 Hub↔上游 state，透传 inputResponses | `createRequestStateCodec`（SDK）、`coreServiceManager` |
+| 组件                     | 位置                                               | 职责                                                                                                          | 依赖                                                   |
+| ------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `UpstreamChangeDetector` | `backend/src/services/upstream-change-detector.ts` | 双路检测上游工具变更：订阅 `notifications/tools/list_changed`（实时）+ 60s 快照比对（兜底）。变更时 emit 事件 | `ServerManager`                                        |
+| `UpstreamChangeFanout`   | `backend/src/services/upstream-change-fanout.ts`   | 订阅 Detector 事件，把 serverId 变更 fan-out 到所有含该 server 的 group 的 `handler.bus`                      | `GroupMcpService` 注册表、`groupHandlers` Map          |
+| `MrtrRelayService`       | `backend/src/services/mrtr-relay-service.ts`       | MRTR 中转：mint/verify Hub 级 requestState，映射 Hub↔上游 state，透传 inputResponses                          | `createRequestStateCodec`（SDK）、`coreServiceManager` |
 
 ## 改造点
 
@@ -304,12 +304,12 @@ async executeToolCallWithContext(
 
 beta.5（2026-07-21）→ GA（2026-07-27）间隔仅 6 天，主要是 bug fix + API 稳定化，预期 breaking change 极少。但不能假设——用既有测试体系做验证：
 
-| 验证层 | 命令 | 关注点 |
-|---|---|---|
-| typecheck | `pnpm typecheck` | 类型 API 变更（最可能 breaking 点） |
-| unit tests | `pnpm test` | 行为回归 |
-| e2e tests | e2e suite | P1-P6 已建的协议层测试（传输/OAuth/缓存/trace）|
-| codemod 标记 | `grep '@mcp-codemod-error'` | 确认无新增迁移残留 |
+| 验证层       | 命令                        | 关注点                                          |
+| ------------ | --------------------------- | ----------------------------------------------- |
+| typecheck    | `pnpm typecheck`            | 类型 API 变更（最可能 breaking 点）             |
+| unit tests   | `pnpm test`                 | 行为回归                                        |
+| e2e tests    | e2e suite                   | P1-P6 已建的协议层测试（传输/OAuth/缓存/trace） |
+| codemod 标记 | `grep '@mcp-codemod-error'` | 确认无新增迁移残留                              |
 
 ### 升级流程
 
@@ -345,15 +345,16 @@ mrtr: {
 
 ### 测试分层（遵循项目既有体系）
 
-| 层 | 目标 | 工具 | P5 新增 |
-|---|---|---|---|
-| **Unit** | 单组件逻辑，无外部依赖 | vitest | 3 个新组件 + 改造点的纯逻辑 |
-| **Integration** | 组件协作，mock 边界 | vitest | subscriptions 全链路、MRTR 多轮 |
-| **E2E** | 真实协议交互 | vitest e2e + test-server | 客户端视角验证 subscriptions/MRTR |
+| 层              | 目标                   | 工具                     | P5 新增                           |
+| --------------- | ---------------------- | ------------------------ | --------------------------------- |
+| **Unit**        | 单组件逻辑，无外部依赖 | vitest                   | 3 个新组件 + 改造点的纯逻辑       |
+| **Integration** | 组件协作，mock 边界    | vitest                   | subscriptions 全链路、MRTR 多轮   |
+| **E2E**         | 真实协议交互           | vitest e2e + test-server | 客户端视角验证 subscriptions/MRTR |
 
 ### Unit 测试（每个新组件独立可测）
 
 **`UpstreamChangeDetector`**
+
 - 工具集签名比对：增/删工具触发，改描述不触发
 - 快照保存与比对逻辑
 - listChanged 回调 → emit 事件
@@ -362,6 +363,7 @@ mrtr: {
 - 异常隔离：handler 抛错不影响其他 server
 
 **`UpstreamChangeFanout`**
+
 - serverId → group 映射（多 group 含同一 server）
 - bus.publish 调用验证
 - dirty 标记：无 handler 的 group 不 publish
@@ -369,6 +371,7 @@ mrtr: {
 - 过滤：group.config.servers 不含 serverId 不触发
 
 **`MrtrRelayService`**
+
 - `relay()`：input_required → mint hubState，字段完整
 - `relay()`：非 input_required（正常结果）原样返回
 - `resumeIfNeeded()`：verify 通过 → 还原 serverId/toolName/upstreamState
@@ -380,11 +383,13 @@ mrtr: {
 ### Integration 测试（组件协作）
 
 **Subscriptions 全链路：**
+
 - mock 上游 server（用项目的 test-server 设施）发 `tools/list_changed`
 - 验证：Detector 收到 → Fanout 找到 group → handler.bus.publish 被调用
 - 轮询兜底：mock 不推送的上游，手动推进定时器 → 验证 fan-out
 
 **MRTR 多轮中转：**
+
 - mock 上游首次返回 input_required
 - 验证：Hub mint hubState → 客户端（测试模拟）带 hubState + inputResponses 重试 → Hub verify → 透传上游 → 上游返回最终结果
 - 多轮：上游连续 2 次 input_required → 验证 step 递增、state 更新
@@ -392,12 +397,14 @@ mrtr: {
 ### E2E 测试（真实协议交互）
 
 **`subscriptions/listen` e2e：**
+
 - 用真实 MCP client 连 Hub，开 `client.listen({ toolsListChanged: true })`
 - 触发上游工具变更（通过 test-server 注入）
 - 断言客户端收到 `notifications/tools/list_changed`
 - 验证后续 `listTools()` 返回新工具集
 
 **MRTR e2e：**
+
 - 用真实 MCP client 调一个返回 input_required 的工具（test-server 提供该工具）
 - 断言收到 `InputRequiredResult` 带 hubState
 - 用 inputResponses 重试，断言最终结果正确
@@ -405,21 +412,22 @@ mrtr: {
 ### test-server 扩展
 
 项目的 `backend/src/e2e/test-server.ts` 需新增两个测试工具：
+
 1. `dynamic_tool_list`：可运行时增删工具，触发 listChanged
 2. `confirm_action`：首次返回 input_required，确认后返回结果——演示 MRTR
 
 ### DoD 锚点（测试矩阵）
 
-| DoD 项 | 验证方式 |
-|---|---|
-| SDK GA 升级无回归 | typecheck + 全量 unit + 全量 e2e 全绿 |
-| subscriptions 实时路径 | e2e：上游 listChanged → 客户端收到通知 |
-| subscriptions 轮询兜底 | integration：定时器推进 → fan-out |
-| MRTR 单轮中转 | e2e：input_required → 重试 → 结果 |
-| MRTR 多轮中转 | integration：连续 input_required，step 递增 |
-| requestState 安全 | unit：篡改/过期 state 被 verify 拒绝 |
-| 配置开关生效 | unit：enabled=false → 无 fan-out、无轮询 |
-| 向后兼容 | 现有 e2e（P1-P6）全绿，无订阅客户端不受影响 |
+| DoD 项                 | 验证方式                                    |
+| ---------------------- | ------------------------------------------- |
+| SDK GA 升级无回归      | typecheck + 全量 unit + 全量 e2e 全绿       |
+| subscriptions 实时路径 | e2e：上游 listChanged → 客户端收到通知      |
+| subscriptions 轮询兜底 | integration：定时器推进 → fan-out           |
+| MRTR 单轮中转          | e2e：input_required → 重试 → 结果           |
+| MRTR 多轮中转          | integration：连续 input_required，step 递增 |
+| requestState 安全      | unit：篡改/过期 state 被 verify 拒绝        |
+| 配置开关生效           | unit：enabled=false → 无 fan-out、无轮询    |
+| 向后兼容               | 现有 e2e（P1-P6）全绿，无订阅客户端不受影响 |
 
 ## 实现顺序
 
@@ -481,12 +489,12 @@ Task 10: 配置集成 + adoption-overview 文档更新 + 收尾
 
 ## 已知约束与风险
 
-| 约束/风险 | 说明 | 缓解 |
-|---|---|---|
-| 多实例 requestState key | Hub 多实例部署时，A 实例 mint 的 state 在 B 实例 verify 失败 | 留 `mrtr.stateKey` 配置项；单实例默认部署无此问题；多实例需运维显式配 |
+| 约束/风险                             | 说明                                                                               | 缓解                                                                                                                                 |
+| ------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 多实例 requestState key               | Hub 多实例部署时，A 实例 mint 的 state 在 B 实例 verify 失败                       | 留 `mrtr.stateKey` 配置项；单实例默认部署无此问题；多实例需运维显式配                                                                |
 | handler 复用同一 McpServer 的既有偏离 | `mcp-handler-factory.ts:115-123` 注释标注 factory 复用同一 McpServer 偏离 SDK 契约 | P5 功能（bus/notify、requestState）在当前模式下可工作；若 GA 版对此收紧，P1 follow-up 抽 `buildServer(groupId)` 每次返回新实例需提前 |
-| 轮询开销 | 60s 轮询对所有不推送的上游 server 调 listTools | 智能跳过（已推送 server 降频）；配置可调间隔/关闭 |
-| 客户端生态尚未跟进 | subscriptions/listen/MRTR 的客户端支持率未知 | 本轮做网关侧基础设施，客户端跟进后即可兑现；e2e 用真实 MCP client 验证协议正确性 |
+| 轮询开销                              | 60s 轮询对所有不推送的上游 server 调 listTools                                     | 智能跳过（已推送 server 降频）；配置可调间隔/关闭                                                                                    |
+| 客户端生态尚未跟进                    | subscriptions/listen/MRTR 的客户端支持率未知                                       | 本轮做网关侧基础设施，客户端跟进后即可兑现；e2e 用真实 MCP client 验证协议正确性                                                     |
 
 ## 参考资料
 

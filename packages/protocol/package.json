@@ -2,13 +2,26 @@
   "name": "@mcp-core/mcp-knot-protocol",
   "version": "0.0.1",
   "description": "MCP Knot 协议兼容层：双向 era 翻译、归一化模型、统一错误",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourtion/mcp-knot.git",
+    "directory": "packages/protocol"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "README.md"],
-  "publishConfig": { "access": "public" },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",

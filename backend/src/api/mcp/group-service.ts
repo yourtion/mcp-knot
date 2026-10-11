@@ -757,6 +757,7 @@ export class GroupMcpService {
               });
 
               return {
+                isError: true,
                 content: [
                   {
                     type: 'text' as const,

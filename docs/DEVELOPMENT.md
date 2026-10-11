@@ -17,7 +17,7 @@
 
 ### 前置要求
 
-- **Node.js**: 20 或更高版本（`package.json` 中 `engines.node` 要求 `>=20`）
+- **Node.js**: 20.19 或更高版本（推荐 Node 22/24）（`package.json` 中 `engines.node` 要求 `>=20.19.0`）
 - **pnpm**: 10.x（仓库指定 `packageManager: pnpm@10.6.4`，启用 corepack 即可自动切换）
 - **Git**: 2.x
 
@@ -51,6 +51,7 @@ mcp-knot/
 ├── packages/
 │   ├── core/     # @mcp-core/mcp-knot-core  核心 MCP 逻辑（服务管理、连接、工具执行）
 │   ├── cli/      # @mcp-core/mcp-knot-cli    通过 stdin/stdout 通信的独立 MCP 服务器
+│   ├── protocol/ # @mcp-core/mcp-knot-protocol 协议兼容层
 │   └── share/    # @mcp-core/mcp-knot-share  共享类型和工具
 ├── backend/      # @mcp-core/mcp-knot-api    基于 Hono 的 API 服务器（HTTP/SSE）
 ├── frontend/     # @mcp-core/mcp-knot-web    Vue.js + Rsbuild 管理界面
@@ -62,8 +63,9 @@ mcp-knot/
 **包依赖关系**（避免循环依赖）：
 
 - `core` 依赖 `share`
-- `cli` 依赖 `core`、`share`
-- `backend`（api）依赖 `core`、`share`
+- `protocol` 依赖 `share`
+- `cli` 依赖 `core`、`protocol`、`share`
+- `backend`（api）依赖 `core`、`protocol`、`share`
 - `frontend`（web）依赖 `share`
 
 ## 开发工作流
@@ -72,23 +74,23 @@ mcp-knot/
 
 所有命令均从仓库根目录执行（实际通过 `pnpm --filter` 转发到对应包）。
 
-| 场景 | 命令 |
-| --- | --- |
-| 启动后端开发（热重载） | `pnpm dev:api` |
-| 启动前端开发 | `pnpm dev:fe` |
-| 启动 CLI 开发 | `pnpm dev:cli` |
-| 构建所有包 | `pnpm build` |
-| 生产构建（按依赖顺序） | `pnpm build:production` |
-| 单包构建 | `pnpm build:core` / `build:api` / `build:cli` / `build:fe` |
-| Lint + 格式化（含 `--fix`，会改写文件） | `pnpm check` |
-| CI 门禁（readonly，仅检查不改写） | `pnpm check:ci` |
-| 全量 lint + 格式化（`--fix`） | `pnpm check:all` |
-| 运行所有测试 | `pnpm test` |
-| 生产启动后端 | `pnpm start:api` |
-| 生产启动 CLI | `pnpm start:cli` |
-| 清理所有包的 dist/coverage | `pnpm clean` |
-| 连带清理所有 node_modules | `pnpm clean:all` |
-| MCP Inspector | `pnpm inspector` |
+| 场景                                    | 命令                                                       |
+| --------------------------------------- | ---------------------------------------------------------- |
+| 启动后端开发（热重载）                  | `pnpm dev:api`                                             |
+| 启动前端开发                            | `pnpm dev:fe`                                              |
+| 启动 CLI 开发                           | `pnpm dev:cli`                                             |
+| 构建所有包                              | `pnpm build`                                               |
+| 生产构建（按依赖顺序）                  | `pnpm build:production`                                    |
+| 单包构建                                | `pnpm build:core` / `build:api` / `build:cli` / `build:fe` |
+| Lint + 格式化（含 `--fix`，会改写文件） | `pnpm check`                                               |
+| CI 门禁（readonly，仅检查不改写）       | `pnpm check:ci`                                            |
+| 全量 lint + 格式化（`--fix`）           | `pnpm check:all`                                           |
+| 运行所有测试                            | `pnpm test`                                                |
+| 生产启动后端                            | `pnpm start:api`                                           |
+| 生产启动 CLI                            | `pnpm start:cli`                                           |
+| 清理所有包的 dist/coverage              | `pnpm clean`                                               |
+| 连带清理所有 node_modules               | `pnpm clean:all`                                           |
+| MCP Inspector                           | `pnpm inspector`                                           |
 
 ### 开发端口
 
@@ -117,7 +119,7 @@ pnpm --filter @mcp-core/mcp-knot-cli test:e2e
 
 项目使用 Vitest 4.x，采用集中的 projects 配置（`vitest.config.ts`），按粒度划分多个 project：
 
-- `share` / `core` / `cli`：包内单元测试
+- `share` / `protocol` / `core` / `cli`：包内单元测试
 - `api-unit` / `api-integration`：后端单元与集成测试
 - `api-e2e`：完整 MCP 协议端到端测试（使用 mock server，位于 `backend/src/e2e/`）
 - `frontend`：前端组件测试
@@ -126,14 +128,14 @@ pnpm --filter @mcp-core/mcp-knot-cli test:e2e
 
 ### 测试命令
 
-| 场景 | 命令 |
-| --- | --- |
-| 运行所有测试 | `pnpm test` |
-| 监视模式 | `pnpm test:watch` |
-| 仅 E2E | `pnpm test:e2e` |
-| 带覆盖率 | `pnpm test:coverage` |
-| 调试模式（`VITEST_DEBUG=true`） | `pnpm test:debug` |
-| 运行单个文件 | `pnpm test path/to/file.test.ts` |
+| 场景                            | 命令                             |
+| ------------------------------- | -------------------------------- |
+| 运行所有测试                    | `pnpm test`                      |
+| 监视模式                        | `pnpm test:watch`                |
+| 仅 E2E                          | `pnpm test:e2e`                  |
+| 带覆盖率                        | `pnpm test:coverage`             |
+| 调试模式（`VITEST_DEBUG=true`） | `pnpm test:debug`                |
+| 运行单个文件                    | `pnpm test path/to/file.test.ts` |
 
 ### 测试约定
 
@@ -155,12 +157,12 @@ return process.env.CONFIG_PATH || path.resolve(process.cwd(), 'config');
 
 从仓库根目录启动时读取 `./config/`，包含以下文件：
 
-| 文件 | 作用 |
-| --- | --- |
-| `mcp_server.json` | MCP 服务器定义（命令、参数、环境变量等） |
-| `group.json` | 服务器分组与访问规则（allow/deny、验证密钥等） |
-| `system.json` | 系统设置（如 `server.port`，缺省回退 8181） |
-| `api-tools.json` | 可选，将外部 HTTP API 转为 MCP 工具的集成配置 |
+| 文件              | 作用                                           |
+| ----------------- | ---------------------------------------------- |
+| `mcp_server.json` | MCP 服务器定义（命令、参数、环境变量等）       |
+| `group.json`      | 服务器分组与访问规则（allow/deny、验证密钥等） |
+| `system.json`     | 系统设置（如 `server.port`，缺省回退 8181）    |
+| `api-tools.json`  | 可选，将外部 HTTP API 转为 MCP 工具的集成配置  |
 
 首次启动若配置缺失，核心包的 `DefaultConfigGenerator` 会生成初始模板。
 
@@ -223,7 +225,7 @@ pnpm changeset:check   # 检查 changeset 状态（CI 用）
 pnpm release           # 发布到 npm（通常由 GitHub Actions 自动完成）
 ```
 
-通常的协作方式：开发者在 PR 中带上 changeset；PR 合入 `main` 后，CI 自动生成「Version Packages」PR；该 PR 合入后触发自动发布到 npm、创建 GitHub Release 并构建 Docker 镜像。
+通常的协作方式：开发者在 PR 中带上 changeset；PR 合入 `main` 后，CI 自动生成「Version Packages」PR；该 PR 合入后触发自动发布到 npm、创建 GitHub Release ，并按需发布 Docker 镜像。发包通过 OIDC 认证，无需 npm token；首次配置与包初始化见 [RELEASING.md](RELEASING.md)。
 
 ## 相关文档
 
