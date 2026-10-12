@@ -3,7 +3,7 @@
  * 提供各种配置模板和示例
  */
 
-import type { CliConfig } from '../types';
+import type { CliConfig } from '../types/index.js';
 
 /**
  * 配置模板类型

@@ -186,8 +186,7 @@ pnpm check:ci         # readonly 复验，必须通过
 pnpm test             # 所有测试通过
 pnpm build            # 构建通过
 
-# 5. 如果改动了发布包，追加一个 changeset（见「发布流程」）
-pnpm changeset
+# 5. 重要变更更新 docs/RELEASE_NOTES.md
 
 # 6. 提交并推送，使用 Conventional Commits 格式
 git add .
@@ -208,24 +207,25 @@ git push origin feature/your-feature
 - [ ] `pnpm build` 构建成功
 - [ ] 新代码有对应测试，且未破坏原有测试
 - [ ] 相关文档已同步更新
-- [ ] 若改动发布包，已附 changeset
+- [ ] 重要面向用户的变更已记录
 - [ ] 提交信息遵循 Conventional Commits
 - [ ] 无合并冲突
 
 ## 发布流程
 
-本项目使用 [Changesets](https://github.com/changesets/changesets) 管理版本与发布，**CHANGELOG 由 changesets 自动生成，不要手写维护**。完整流程参见 [README 的 Release Process 章节](../README.md#release-process)。
-
-关键命令：
+四个公开包统一版本，不再要求开发者添加 changeset。重要变更记录在 RELEASE_NOTES.md。
+功能合入并通过 main CI 后，维护者在干净且已同步的 main 上执行：
 
 ```bash
-pnpm changeset         # 在开发时为本次改动生成一个 changeset
-pnpm version           # 消费 changesets，更新版本号与 CHANGELOG
-pnpm changeset:check   # 检查 changeset 状态（CI 用）
-pnpm release           # 发布到 npm（通常由 GitHub Actions 自动完成）
+pnpm run release:prepare patch  # minor / major / X.Y.Z
+# 审核版本提交与本地 tag
+pnpm run release:push
 ```
 
-通常的协作方式：开发者在 PR 中带上 changeset；PR 合入 `main` 后，CI 自动生成「Version Packages」PR；该 PR 合入后触发自动发布到 npm、创建 GitHub Release ，并按需发布 Docker 镜像。发包通过 OIDC 认证，无需 npm token；首次配置与包初始化见 [RELEASING.md](RELEASING.md)。
+prepare 先验证、提交四包版本，再打本地 tag；push 精确推送 main 与该 tag。
+Tag 工作流测试构建、检查 tarball、通过 OIDC 发包，全部成功后创建 GitHub Release。
+`pnpm run release:validate` 和 `pnpm run release:dry-run` 可安全本地验证而不发版。
+首次设置、版本选择及重试详见 [RELEASING.md](RELEASING.md)。
 
 ## 相关文档
 

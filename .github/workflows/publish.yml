@@ -1,79 +1,64 @@
 name: Publish Packages
 
 on:
-  workflow_run:
-    workflows: [CI Pipeline]
-    branches: [main]
-    types: [completed]
+  push:
+    tags: ['v*.*.*']
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-main
+  group: release
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Version packages or publish to npm
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+    name: Validate and publish release tag
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: write
-      pull-requests: write
       id-token: write
-    outputs:
-      published: ${{ steps.changesets.outputs.published }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
           fetch-depth: 0
-      - name: Verify CI tested the current main commit
-        id: head
-        env:
-          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ "$(git rev-parse HEAD)" = "$TESTED_SHA" ]; then
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Skipping stale CI run; a newer main commit must pass CI first."
-          fi
-      - uses: pnpm/action-setup@v4
-        if: steps.head.outputs.current == 'true'
       - uses: actions/setup-node@v4
-        if: steps.head.outputs.current == 'true'
         with:
           node-version: '24'
+      - name: Verify tag, four package versions and release commit
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/release.cjs check "$RELEASE_TAG"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
-        if: steps.head.outputs.current == 'true'
+      - run: pnpm run release:validate
       - name: Use npm with OIDC support
-        if: steps.head.outputs.current == 'true'
         run: npm install --global npm@11
       - name: Configure tokenless registry authentication
-        if: steps.head.outputs.current == 'true'
         run: echo "registry=https://registry.npmjs.org/" > "$HOME/.npmrc"
-      - name: Create version PR or build and publish packages
-        id: changesets
-        if: steps.head.outputs.current == 'true'
-        uses: changesets/action@v1
-        with:
-          version: pnpm version
-          publish: pnpm release
-          commit: 'chore: version packages'
-          title: 'chore: version packages'
-          createGithubReleases: true
+      - name: Publish validated tarballs in dependency order
+        run: node scripts/publish-packages.cjs
+      - name: Complete GitHub Release after all npm packages succeed
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # Listing errors propagate; authentication/network errors are not absence.
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')
+          if printf '%s\n' "$existing" | grep -Fx "$RELEASE_TAG" > /dev/null; then
+            gh release edit "$RELEASE_TAG" --draft=false
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi
 
   docker-publish:
     name: Publish Docker images (optional)
     needs: release
-    if: needs.release.outputs.published == 'true' && vars.DOCKER_PUBLISH == 'true'
+    if: vars.DOCKER_PUBLISH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -87,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.ref }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -101,7 +86,7 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/mcp-knot-${{ matrix.image }}:latest
-            ${{ secrets.DOCKER_USERNAME }}/mcp-knot-${{ matrix.image }}:sha-${{ github.event.workflow_run.head_sha }}
+            ${{ secrets.DOCKER_USERNAME }}/mcp-knot-${{ matrix.image }}:${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
