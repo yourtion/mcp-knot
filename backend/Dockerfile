@@ -18,16 +18,16 @@ RUN pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:api
 FROM node:22-alpine AS production
 RUN npm install -g pnpm@10.6.4
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/share/package.json ./packages/share/
-COPY packages/protocol/package.json ./packages/protocol/
-COPY packages/core/package.json ./packages/core/
-COPY backend/package.json ./backend/
+COPY --chown=node:node package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY --chown=node:node packages/share/package.json ./packages/share/
+COPY --chown=node:node packages/protocol/package.json ./packages/protocol/
+COPY --chown=node:node packages/core/package.json ./packages/core/
+COPY --chown=node:node backend/package.json ./backend/
 RUN pnpm install --frozen-lockfile --prod
-COPY --from=builder /app/packages/share/dist ./packages/share/dist
-COPY --from=builder /app/packages/protocol/dist ./packages/protocol/dist
-COPY --from=builder /app/packages/core/dist ./packages/core/dist
-COPY --from=builder /app/backend/dist ./backend/dist
+COPY --from=builder --chown=node:node /app/packages/share/dist ./packages/share/dist
+COPY --from=builder --chown=node:node /app/packages/protocol/dist ./packages/protocol/dist
+COPY --from=builder --chown=node:node /app/packages/core/dist ./packages/core/dist
+COPY --from=builder --chown=node:node /app/backend/dist ./backend/dist
 RUN mkdir -p /app/config && chown node:node /app/config
 ENV CONFIG_PATH=/app/config
 USER node

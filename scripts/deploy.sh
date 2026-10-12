@@ -1,137 +1,65 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# MCP Knot 部署脚本
+# Docker Compose deployment; published images require an explicit release tag.
+set -euo pipefail
 
-set -e
+ENVIRONMENT=production
+CONFIG_DIR=./config
+RELEASE_VERSION=
 
-# 默认参数
-ENVIRONMENT="production"
-CONFIG_DIR="./config"
-COMPOSE_FILE="docker-compose.yml"
-
-# 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --env)
-            ENVIRONMENT="$2"
-            shift 2
-            ;;
-        --config)
-            CONFIG_DIR="$2"
-            shift 2
-            ;;
-        --dev)
-            ENVIRONMENT="development"
-            COMPOSE_FILE="docker-compose.dev.yml"
-            shift
-            ;;
+        --env) ENVIRONMENT=${2:?Missing environment}; shift 2 ;;
+        --config) CONFIG_DIR=${2:?Missing config directory}; shift 2 ;;
+        --release) RELEASE_VERSION=${2:?Missing vX.Y.Z image tag}; shift 2 ;;
+        --dev) ENVIRONMENT=development; shift ;;
         --help)
-            echo "用法: $0 [选项]"
-            echo "选项:"
-            echo "  --env ENV        设置环境 (production|development, 默认: production)"
-            echo "  --config DIR     配置文件目录 (默认: ./config)"
-            echo "  --dev            使用开发环境配置"
-            echo "  --help           显示帮助信息"
-            exit 0
-            ;;
-        *)
-            echo "未知选项: $1"
-            exit 1
-            ;;
+            echo "用法: bash $0 [--config DIR] [--dev | --release vX.Y.Z]"
+            echo "默认从源码构建；--release 从 GHCR 拉取指定版本；--dev 使用热重载。"
+            exit 0 ;;
+        *) echo "未知选项: $1" >&2; exit 1 ;;
     esac
 done
 
-echo "🚀 开始部署 MCP Knot..."
-echo "  环境: $ENVIRONMENT"
-echo "  配置目录: $CONFIG_DIR"
-echo "  Compose 文件: $COMPOSE_FILE"
+case "$ENVIRONMENT" in
+    production|development) ;;
+    *) echo "环境必须是 production 或 development" >&2; exit 1 ;;
+esac
 
-# 检查配置文件
-if [ ! -d "$CONFIG_DIR" ]; then
-    echo "❌ 配置目录不存在: $CONFIG_DIR"
-    exit 1
+COMPOSE_FILE=docker-compose.yml
+if [[ "$ENVIRONMENT" == development ]]; then
+    [[ -z "$RELEASE_VERSION" ]] || { echo "--dev 与 --release 不能同时使用" >&2; exit 1; }
+    COMPOSE_FILE=docker-compose.dev.yml
+elif [[ -n "$RELEASE_VERSION" ]]; then
+    [[ "$RELEASE_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+        echo "发布镜像版本必须是完整的 vX.Y.Z" >&2; exit 1;
+    }
+    export MCP_KNOT_VERSION="$RELEASE_VERSION"
+    COMPOSE_FILE=docker-compose.release.yml
 fi
 
-# 检查必需的配置文件
-REQUIRED_CONFIGS=("mcp_service.json")
-if [ "$ENVIRONMENT" = "production" ]; then
-    REQUIRED_CONFIGS+=("group.json")
-fi
-
-for config in "${REQUIRED_CONFIGS[@]}"; do
-    if [ ! -f "$CONFIG_DIR/$config" ]; then
-        echo "❌ 缺少配置文件: $CONFIG_DIR/$config"
-        exit 1
-    fi
+for config in mcp_server.json group.json system.json; do
+    [[ -f "$CONFIG_DIR/$config" ]] || { echo "缺少配置文件: $CONFIG_DIR/$config" >&2; exit 1; }
 done
+export MCP_KNOT_CONFIG_DIR
+MCP_KNOT_CONFIG_DIR=$(cd "$CONFIG_DIR" && pwd)
 
-# 创建必要的目录
-echo "📁 创建必要的目录..."
-mkdir -p logs
-mkdir -p workspace
-
-# 停止现有服务
-echo "🛑 停止现有服务..."
-docker-compose -f $COMPOSE_FILE down --remove-orphans
-
-# 拉取最新镜像（生产环境）
-if [ "$ENVIRONMENT" = "production" ]; then
-    echo "📥 拉取最新镜像..."
-    docker-compose -f $COMPOSE_FILE pull
-fi
-
-# 启动服务
-echo "🚀 启动服务..."
-docker-compose -f $COMPOSE_FILE up -d
-
-# 等待服务启动
-echo "⏳ 等待服务启动..."
-sleep 10
-
-# 检查服务状态
-echo "🔍 检查服务状态..."
-docker-compose -f $COMPOSE_FILE ps
-
-# 健康检查
-echo "🏥 执行健康检查..."
-if [ "$ENVIRONMENT" = "production" ]; then
-    # 检查 API 服务
-    if curl -f http://localhost:3000/health > /dev/null 2>&1; then
-        echo "✅ API 服务健康"
-    else
-        echo "❌ API 服务不健康"
-        docker-compose -f $COMPOSE_FILE logs mcp-knot-api
-        exit 1
-    fi
-
-    # 检查前端服务
-    if curl -f http://localhost:8080 > /dev/null 2>&1; then
-        echo "✅ 前端服务健康"
-    else
-        echo "❌ 前端服务不健康"
-        docker-compose -f $COMPOSE_FILE logs mcp-knot-web
-        exit 1
-    fi
-fi
-
-echo "✅ 部署完成！"
-
-# 显示访问信息
-echo ""
-echo "📋 服务访问信息:"
-if [ "$ENVIRONMENT" = "production" ]; then
-    echo "  - API 服务: http://localhost:3000"
-    echo "  - 前端界面: http://localhost:8080"
-    echo "  - 健康检查: http://localhost:3000/health"
-    echo "  - API 文档: http://localhost:3000/api/docs"
+docker compose -f "$COMPOSE_FILE" config --quiet
+if [[ -n "$RELEASE_VERSION" ]]; then
+    docker compose -f "$COMPOSE_FILE" pull
+    docker compose -f "$COMPOSE_FILE" up -d --no-build --wait --wait-timeout 120
+elif [[ "$ENVIRONMENT" == production ]]; then
+    docker compose -f "$COMPOSE_FILE" up -d --build --wait --wait-timeout 120
 else
-    echo "  - API 开发服务: http://localhost:3000"
-    echo "  - 前端开发服务: http://localhost:8080"
+    docker compose -f "$COMPOSE_FILE" up -d --build
 fi
 
-echo ""
-echo "📝 有用的命令:"
-echo "  - 查看日志: docker-compose -f $COMPOSE_FILE logs -f"
-echo "  - 停止服务: docker-compose -f $COMPOSE_FILE down"
-echo "  - 重启服务: docker-compose -f $COMPOSE_FILE restart"
-echo "  - 查看状态: docker-compose -f $COMPOSE_FILE ps"
+docker compose -f "$COMPOSE_FILE" ps
+if [[ "$ENVIRONMENT" == production ]]; then
+    # Check the same-origin proxy as well as the container healthchecks.
+    curl --fail --silent --show-error http://localhost:8180/api/ping
+    curl --fail --silent --show-error http://localhost:8180/api/health
+    curl --fail --silent --show-error --output /dev/null http://localhost:8180/
+fi
+echo "前端: http://localhost:8180；API: http://localhost:8181；存活检查: /api/ping"
+echo "日志: docker compose -f $COMPOSE_FILE logs -f"

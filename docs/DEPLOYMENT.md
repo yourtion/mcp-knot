@@ -29,7 +29,7 @@ MCP Knot 由两个服务组成：
 │  浏览器/客户端 │ ──────▶ │ mcp-knot-web      │  (Nginx + 前端静态文件)
 └──────────────┘         │ 端口 8180          │
                           └────────┬─────────┘
-                                   │ 反向代理 /api、/mcp、/sse
+                                   │ 反向代理 /api、/:group/mcp
                           ┌────────▼─────────┐
                           │ mcp-knot-api      │  (Node.js 后端)
                           │ 端口 8181          │
@@ -42,7 +42,7 @@ MCP Knot 由两个服务组成：
 
 组件说明：
 
-1. **mcp-knot-web**：Nginx 托管构建后的 Vue 前端，并将 API/MCP/SSE 请求代理到后端。
+1. **mcp-knot-web**：Nginx 托管构建后的 Vue 前端，并将 API/MCP 请求代理到后端。
 2. **mcp-knot-api**：Node.js 应用，承载所有业务逻辑和 MCP 服务。
 3. **配置文件**：4 个 JSON 文件，见 [配置管理](#配置管理)。
 
@@ -80,53 +80,111 @@ MCP Knot 由两个服务组成：
 
 ### 方式 1：Docker Compose（推荐）
 
-仓库已提供 `docker-compose.yml`，定义了 `mcp-knot-web`（8180）和 `mcp-knot-api`（8181）两个服务。
+仓库提供三个 Compose 文件，均保留 API 8181 与 Web 8180 的入口：
+
+| 文件                         | 用途                                           |
+| ---------------------------- | ---------------------------------------------- |
+| `docker-compose.release.yml` | 从 GHCR 拉取明确指定的发布镜像，不执行本地构建 |
+| `docker-compose.yml`         | 从当前源码构建生产镜像                         |
+| `docker-compose.dev.yml`     | 从源码运行开发服务与热重载                     |
 
 #### 1. 准备配置文件
 
 ```bash
-# 在仓库根目录
+# 在仓库根目录；仅首次部署复制，不覆盖已有配置
 mkdir -p config
-cp backend/config/*.json.example config/
-# 重命名为实际配置文件
-cd config
-for f in *.json.example; do mv "$f" "${f%.example}"; done
-cd ..
+for source in backend/config/*.json.example; do
+  target="config/$(basename "${source%.example}")"
+  if [ ! -e "$target" ]; then cp "$source" "$target"; fi
+done
 ```
 
-四个必需文件：`mcp_server.json`、`group.json`、`system.json`、`api-tools.json`。
+配置目录含 `mcp_server.json`、`group.json`、`system.json` 和可选的 `api-tools.json`。
+请按实际环境编辑示例：默认示例含 `uvx`/`npx`/远程 MCP 上游，镜像不自带 `uvx`，
+未准备好这些上游时请禁用或删除对应服务器及组引用。先设置生产认证与访问控制再对外暴露。
+配置验证要求至少保留一个服务器定义；暂时不用上游时可把定义设为 `enabled: false`。
+`system.json.example` 的 `{}` 选择默认端口 8181；自定义系统配置必须满足完整的
+`SystemConfigSchema`，仅写 `server.port` 的不完整对象会在启动时被拒绝。
 
-#### 2. 构建并启动
+API 镜像以 `node` 用户（UID/GID 1000）运行，`CONFIG_PATH=/app/config`。
+两个生产 Compose 文件都把 `${MCP_KNOT_CONFIG_DIR:-./config}` **可读写**挂载到 `/app/config`，
+不再挂载到 `/app/backend/config`。代码会创建缺失配置并持久化 Web 管理界面的修改，
+因此宿主目录及配置文件须允许 UID 1000 读写；Linux 维护者可对专用配置目录执行：
 
 ```bash
-# 构建镜像（或用 scripts/docker-build.sh）
-docker compose build
-
-# 启动
-docker compose up -d
-
-# 查看状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f
+sudo chown -R 1000:1000 ./config
+sudo chmod -R u+rwX,go-rwx ./config
 ```
 
-启动后：
+如选择只读配置，请自行加 `read_only: true` 并提前准备全部配置；配置写入、首次创建和
+Web 编辑将受限。日志默认输出到 stdout，通过 `docker compose logs` 查看。
+启用组 validation 时，调用方还需向 Compose 提供已有的 `VALIDATION_KEY_SECRET`（至少 32 字符）。
 
-- 前端：<http://localhost:8180>
-- 后端 API：<http://localhost:8181>
-- 健康检查：<http://localhost:8181/health>
+#### 2. 拉取发布镜像并启动（推荐）
 
-> 仓库内的 `docker-compose.yml` 把宿主机 `./backend/config` 只读挂载到容器内。如果按上一步把配置放在仓库根的 `./config`，请把 compose 里的卷挂载改为 `./config:/app/backend/config:ro`，或设置 `CONFIG_PATH` 指向容器内对应目录。
-
-#### 3. 开发环境
-
-开发模式使用 `docker-compose.dev.yml`（服务名带 `-dev` 后缀，源码热重载）：
+先确认目标版本的 API/Web 镜像均已发布；`v0.1.0` 的 npm 发布不代表 GHCR 已有该版本。
+首次 GHCR 包默认私有，维护者须分别把 API/Web 包改为 Public 才能匿名拉取，详见
+[GHCR 发布配置](RELEASING.md#ghcr-镜像可选)。本流程不创建登录凭据。
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d
+# 示例版本，替换为实际已发布的完整 vX.Y.Z 镜像 tag
+export MCP_KNOT_VERSION=v0.1.1
+# 可选：指定已有配置目录；默认 ./config
+export MCP_KNOT_CONFIG_DIR=./config
+
+docker compose -f docker-compose.release.yml config --quiet
+docker compose -f docker-compose.release.yml pull
+docker compose -f docker-compose.release.yml up -d --no-build --wait --wait-timeout 120
+docker compose -f docker-compose.release.yml ps
+docker compose -f docker-compose.release.yml logs -f
 ```
+
+镜像引用分别是 `ghcr.io/yourtion/mcp-knot-api:${MCP_KNOT_VERSION}` 和
+`ghcr.io/yourtion/mcp-knot-web:${MCP_KNOT_VERSION}`。未设置版本时 Compose 会报错，
+不会隐式拉取 `latest`。升级/回滚时明确选择已发布版本；要求字节级不可变时固定 digest。
+也可执行 `bash scripts/deploy.sh --release v0.1.1 --config ./config`（替换为已发布版本）。
+
+启动后检查：
+
+```bash
+curl -f http://localhost:8180/                 # Web SPA
+curl -f http://localhost:8180/api/ping         # 经 Nginx 代理的 API 存活检查
+curl -f http://localhost:8181/api/ping         # API 直连存活检查
+curl -f http://localhost:8181/api/health       # 服务初始化及上游连接状态
+```
+
+容器使用 Dockerfile 内的健康检查：API `/api/ping`，Web `/`；Web 等待 API `service_healthy`
+后启动。根路径 `/health` 不存在。`/api/ping` 只检查 HTTP 存活，服务初始化与上游状态应看
+`/api/health`；没有已连接上游时可能为 `degraded`，需按实际 MCP 上游继续验证。
+
+#### 3. 从源码构建
+
+```bash
+docker compose -f docker-compose.yml up -d --build --wait --wait-timeout 120
+# 或 bash scripts/deploy.sh --config ./config
+```
+
+本地独立镜像验证（不会发布镜像）：
+
+```bash
+bash scripts/docker-build.sh --tag local
+bash scripts/docker-smoke.sh ghcr.io/yourtion/mcp-knot-api:local ghcr.io/yourtion/mcp-knot-web:local
+```
+
+Smoke 使用临时禁用的本地上游配置、独立 Docker 网络及容器，结束后清理；检查 Dockerfile 探针、
+API 初始化、Nginx `/api/` 代理、SPA 路由回退以及 `/app/config` 的写权限。
+这不验证你的真实上游连接、生产账号或 GHCR 发布权限。
+
+#### 4. 开发环境
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+# 或 bash scripts/deploy.sh --dev --config ./config
+```
+
+开发 API 首先编译 share/protocol/core，再启动热重载；前端使用已有的 `base` 构建阶段，
+API 代理通过 `MCP_KNOT_DEV_API_URL=http://mcp-knot-api-dev:8181` 指向开发 API 容器。
+容器内的匿名 node_modules 卷避免宿主依赖覆盖 Alpine 镜像安装的依赖。
 
 ### 方式 2：传统部署（PM2）
 
@@ -199,7 +257,9 @@ pm2 startup
 
 ### system.json 示例
 
-端口由 `server.port` 控制（默认 8181）：
+端口由 `server.port` 控制（默认 8181）。下面仅示意部署相关字段；自定义 `system.json`
+必须按 `packages/share/src/config/schemas/system.schema.ts` 补齐 `auth`、`users`、`ui`、
+`monitoring` 等必需字段，不能直接用这个局部示例替换完整配置：
 
 ```json
 {
@@ -378,10 +438,10 @@ pm2 monit
 
 ### 健康检查
 
-后端提供 `/health` 端点（端口 8181）：
+后端存活检查为 `/api/ping`，详细服务状态为 `/api/health`（端口 8181）：
 
 ```bash
-curl -f http://localhost:8181/health
+curl -f http://localhost:8181/api/ping
 ```
 
 也可用仓库脚本（见下节）。
@@ -427,8 +487,8 @@ find /backup/mcp-knot -name "config_*.tar.gz" -mtime +30 -delete
 | 脚本                           | 作用                                                                                                           |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
 | `scripts/deploy-production.sh` | 生产环境一键部署（含备份/测试/构建/PM2 重启），支持 `--skip-backup`、`--skip-tests`、`--skip-build`、`--force` |
-| `scripts/deploy.sh`            | Docker Compose 部署入口，支持 `--dev`、`--config DIR`                                                          |
-| `scripts/docker-build.sh`      | 构建 API/前端镜像，支持 `--tag`、`--push`、`--platform`                                                        |
+| `scripts/deploy.sh`            | Docker Compose 部署入口，支持 `--dev`、`--release vX.Y.Z`、`--config DIR`                                      |
+| `scripts/docker-build.sh`      | 构建 GHCR 命名的本地 API/前端镜像，支持 `--tag`、`--platform`；正式发布走 tag CI                               |
 | `scripts/build.sh`             | 本地构建（依赖/检查/测试/构建全部包）                                                                          |
 | `scripts/health-check.sh`      | 综合健康检查（PM2 进程、HTTP 端点、内存/CPU/磁盘、日志、配置文件），支持 `--verbose`、`--json`                 |
 | `scripts/restore-backup.sh`    | 从备份恢复配置，用法 `./scripts/restore-backup.sh <backup_file>`                                               |
@@ -443,7 +503,7 @@ find /backup/mcp-knot -name "config_*.tar.gz" -mtime +30 -delete
 ./scripts/restore-backup.sh /backup/mcp-knot/config_20260101_020000.tar.gz
 ```
 
-> 注意：部分脚本（`deploy-production.sh`、`health-check.sh`、`restore-backup.sh`）默认检查 `/etc/mcp-knot/config` 和健康端口 3000，与代码默认值（`<cwd>/config`、端口 8181）不完全一致。使用这些脚本前请根据实际部署路径和端口调整，或在脚本中设置 `CONFIG_PATH`。
+> 注意：部分脚本（`deploy-production.sh`、`health-check.sh`、`restore-backup.sh`）仍使用 `/etc/mcp-knot/config` 等固定路径。HTTP 探针已统一为默认端口 `8181/api/ping`；自定义 `system.json` 端口或配置目录时，还需按实际部署修改这些脚本的路径和检查地址。
 
 ---
 

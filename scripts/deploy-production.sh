@@ -288,7 +288,7 @@ else
 fi
 
 # 检查 HTTP 端点
-if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+if curl -f http://localhost:8181/api/ping > /dev/null 2>&1; then
     log_info "健康检查通过"
 else
     log_error "健康检查失败"

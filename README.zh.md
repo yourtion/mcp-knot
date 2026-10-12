@@ -265,9 +265,26 @@ pnpm build:fe
    # 构建前端
    pnpm build:fe
 
-   # 前端静态文件将在 frontend/dist 目录
-   # 通过后端或单独的 Web 服务器提供服务
+   # 前端静态文件将在 frontend/dist 目录，由 Nginx 托管
    ```
+
+   发布镜像使用 `docker-compose.release.yml`，源码构建使用 `docker-compose.yml`。
+   两者都是 API（8181）与 Nginx Web（8180）的双容器结构；浏览器访问 8180，
+   Web 将 `/api/` 与 `/:group/mcp` 代理到 API。
+
+   ```bash
+   # 示例版本，替换为实际已发布到 GHCR 的完整镜像 tag
+   export MCP_KNOT_VERSION=v0.1.1
+   docker compose -f docker-compose.release.yml pull
+   docker compose -f docker-compose.release.yml up -d --no-build --wait
+   curl -f http://localhost:8180/api/ping
+   ```
+
+   镜像是 `ghcr.io/yourtion/mcp-knot-api` 与 `ghcr.io/yourtion/mcp-knot-web`。
+   版本变量必填，不默认使用 `latest`。请先准备可读写的配置目录（默认 `./config`），
+   容器统一挂载到 `/app/config`。API 存活检查为 `/api/ping`，详细服务状态为 `/api/health`。
+   现有 npm `v0.1.0` 发布尚不包含 GHCR 镜像；配置、包可见性与启动检查见
+   [部署指南](docs/DEPLOYMENT.md)。
 
 ## 配置
 
@@ -431,7 +448,11 @@ pnpm run release:push
 
 prepare 完整验证后只提交四个版本文件，再创建本地 tag；push 原子推送 main 和该 tag。
 `publish.yml` 由 tag 触发，校验版本、构建检查 tarball、按依赖顺序通过 npm OIDC 发布，
-全部成功后创建一个 GitHub Release。重试时跳过已发布的准确版本，Docker 发布仍为可选。
+全部成功后创建一个 GitHub Release。重试时跳过已发布的准确版本。
+可选 GHCR API/Web 镜像发布通过仓库变量 `DOCKER_PUBLISH=true` 开启，使用 Actions
+自带 `GITHUB_TOKEN` 与镜像 job 的 `packages: write`，发布 amd64/arm64 的 `latest`
+与完整版本 tag。首次 GHCR 包默认私有，维护者须分别改为 Public 才可匿名拉取，详见
+[GHCR 发布配置](docs/RELEASING.md#ghcr-镜像可选)。
 
 `pnpm run release:validate` 执行完整验证；`pnpm run release:dry-run` 只构建与检查产物。
 两者都不会发包。认证、首次发包及失败重试见[发布配置指南](docs/RELEASING.md)。

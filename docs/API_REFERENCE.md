@@ -500,10 +500,12 @@ curl -X POST http://localhost:8181/api/oauth/token \
 ## 系统健康检查
 
 ```http
-GET /health
+GET /api/ping
 ```
 
-**响应**: `status`、`timestamp`、`version`、`uptime`、各服务健康度、基础指标。
+`/api/ping` 返回 `success`、`message`、`timestamp`，用于 HTTP 存活检查。
+详细服务状态请请求 `GET /api/health`，查看 `data.service.isInitialized`、上游连接与工具数量；
+没有已连接上游时服务可能返回 `degraded`。根路径 `/health` 不存在。
 
 ## 错误响应
 
@@ -575,7 +577,7 @@ curl -X POST http://localhost:8181/development/mcp \
 
 ```bash
 # 系统健康
-curl http://localhost:8181/health
+curl http://localhost:8181/api/ping
 
 # 系统信息
 curl http://localhost:8181/api/dashboard/system-info
