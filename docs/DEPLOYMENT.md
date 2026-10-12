@@ -88,74 +88,202 @@ MCP Knot 由两个服务组成：
 | `docker-compose.yml`         | 从当前源码构建生产镜像                         |
 | `docker-compose.dev.yml`     | 从源码运行开发服务与热重载                     |
 
-#### 1. 准备配置文件
+#### 0. v0.1.1 发布与验证状态
+
+2026-10-12 已发布 `v0.1.1`。当前
+[API](https://github.com/yourtion/mcp-knot/pkgs/container/mcp-knot-api) 与
+[Web](https://github.com/yourtion/mcp-knot/pkgs/container/mcp-knot-web) 均为 **Public**，
+已用没有 registry 登录凭据的客户端实际拉取，部署主机无需 `docker login`。
+首次创建其他 GHCR 包仍可能默认私有；若以后改为私有，部署主机需要已有的获准读访问，
+具体见 [GHCR 发布配置](RELEASING.md#ghcr-镜像可选)。当前两包没有待处理的可见性设置。
+
+| 检查                      | v0.1.1 实际结果                                                                                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| main CI / npm / GHCR 发布 | [main CI](https://github.com/yourtion/mcp-knot/actions/runs/38270879718) 8 项成功；[发布 workflow](https://github.com/yourtion/mcp-knot/actions/runs/38270879831) 全部成功 |
+| npm 四包                  | share/protocol/core/cli 的 `0.1.1`、`latest` 和内部精确依赖均已核实                                                                                                        |
+| API/Web manifest          | `v0.1.1` 与 `latest` 指向相同的各自 digest，均包含 `linux/amd64`、`linux/arm64`                                                                                            |
+| amd64 最终 GHCR 镜像运行  | 发布版 Compose 启动、健康、初始化、登录/受保护 API、Web 代理、SPA、配置 API 写入与重启持久化通过                                                                           |
+| arm64                     | 构建、推送与 manifest 已验证；环境没有 ARM 运行器，未做应用运行验证                                                                                                        |
+| 真实用户上游              | 本次使用隔离占位配置；你的真实 MCP 上游仍需按实际连接与工具调用验证                                                                                                        |
+
+镜像 index digest（可替代版本 tag 固定到不可变内容）：
+
+- API：`sha256:134dd4bdb6d0d345f731849cb1082ae15ef9b4d2a14d83bea2f236e320b653cd`
+- Web：`sha256:9fffe255867964736c112c75a79d94fa6aefa34a278a7f09606bb56c8e3883a4`
+
+#### 1. 初始化配置目录
+
+在专用部署目录放置 `docker-compose.release.yml`，可使用仓库中对应 `v0.1.1` 的文件。
+部署只需 Docker/Compose，不需要本地安装 Node/pnpm 或构建镜像。
 
 ```bash
-# 在仓库根目录；仅首次部署复制，不覆盖已有配置
+# 首次创建；已有目录保留原文件，不覆盖用户配置
 mkdir -p config
-for source in backend/config/*.json.example; do
-  target="config/$(basename "${source%.example}")"
-  if [ ! -e "$target" ]; then cp "$source" "$target"; fi
-done
 ```
 
-配置目录含 `mcp_server.json`、`group.json`、`system.json` 和可选的 `api-tools.json`。
-请按实际环境编辑示例：默认示例含 `uvx`/`npx`/远程 MCP 上游，镜像不自带 `uvx`，
-未准备好这些上游时请禁用或删除对应服务器及组引用。先设置生产认证与访问控制再对外暴露。
-配置验证要求至少保留一个服务器定义；暂时不用上游时可把定义设为 `enabled: false`。
-`system.json.example` 的 `{}` 选择默认端口 8181；自定义系统配置必须满足完整的
-`SystemConfigSchema`，仅写 `server.port` 的不完整对象会在启动时被拒绝。
+在 `config/` 中创建以下配置。所有占位密码、JWT secret 与 URL 均需由维护者填写；
+本说明不提供真实凭据。已有配置只做必要修改，不把初始化模板覆盖到现有数据上。
 
-API 镜像以 `node` 用户（UID/GID 1000）运行，`CONFIG_PATH=/app/config`。
-两个生产 Compose 文件都把 `${MCP_KNOT_CONFIG_DIR:-./config}` **可读写**挂载到 `/app/config`，
-不再挂载到 `/app/backend/config`。代码会创建缺失配置并持久化 Web 管理界面的修改，
-因此宿主目录及配置文件须允许 UID 1000 读写；Linux 维护者可对专用配置目录执行：
+`mcp_server.json`：先保留一个禁用定义，可在无外部进程/网络依赖时启动管理界面。
+校验要求至少有一个服务器定义，`servers: {}` 会被拒绝。
+
+```json
+{
+  "servers": {
+    "placeholder": {
+      "type": "stdio",
+      "command": "node",
+      "args": [],
+      "env": {},
+      "enabled": false
+    }
+  }
+}
+```
+
+`group.json`：首次尚未连接真实上游时为空；配置上游后再添加组。
+
+```json
+{}
+```
+
+`system.json`：使用下方 [完整初始化模板](#systemjson-完整初始化模板)，填写自己的管理员
+密码及 JWT secret。自定义对象必须满足整个 `SystemConfigSchema`，不能只写 `server.port`
+或只写 `auth.jwt.secret`。临时 `{}` 会启用代码中的 `admin/admin` 与默认 JWT secret，
+只适用于本机初始化/隔离测试；对外上线前必须替换。
+
+可选 `api-tools.json`：没有 REST API 工具时，可使用有效的空工具配置。
+
+```json
+{
+  "version": "1.0.0",
+  "tools": []
+}
+```
+
+API 以 `node` 用户（UID/GID **1000**）运行，Compose 固定 `CONFIG_PATH=/app/config`。
+`${MCP_KNOT_CONFIG_DIR:-./config}` 可读写挂载到 `/app/config`，配置编辑、历史与备份均
+保存在宿主目录。Linux 上可对这个专用目录执行下列命令；这是部署说明，本次文档更新不执行它们：
 
 ```bash
 sudo chown -R 1000:1000 ./config
 sudo chmod -R u+rwX,go-rwx ./config
 ```
 
-如选择只读配置，请自行加 `read_only: true` 并提前准备全部配置；配置写入、首次创建和
-Web 编辑将受限。日志默认输出到 stdout，通过 `docker compose logs` 查看。
-启用组 validation 时，调用方还需向 Compose 提供已有的 `VALIDATION_KEY_SECRET`（至少 32 字符）。
+只读卷会限制首次创建、Web 编辑与备份。默认日志输出到 stdout，用 Compose logs 查看。
 
-#### 2. 拉取发布镜像并启动（推荐）
+#### 2. 首次仅绑定 localhost，拉取固定版本并启动
 
-先确认目标版本的 API/Web 镜像均已发布；`v0.1.0` 的 npm 发布不代表 GHCR 已有该版本。
-首次 GHCR 包默认私有，维护者须分别把 API/Web 包改为 Public 才能匿名拉取，详见
-[GHCR 发布配置](RELEASING.md#ghcr-镜像可选)。本流程不创建登录凭据。
+仓库的 release Compose 默认发布 8180/8181 到所有接口。首次初始化保留原文件，
+新增以下 `docker-compose.localhost.yml`，将这两个宿主端口绑定到 `127.0.0.1`：
 
-```bash
-# 示例版本，替换为实际已发布的完整 vX.Y.Z 镜像 tag
-export MCP_KNOT_VERSION=v0.1.1
-# 可选：指定已有配置目录；默认 ./config
-export MCP_KNOT_CONFIG_DIR=./config
-
-docker compose -f docker-compose.release.yml config --quiet
-docker compose -f docker-compose.release.yml pull
-docker compose -f docker-compose.release.yml up -d --no-build --wait --wait-timeout 120
-docker compose -f docker-compose.release.yml ps
-docker compose -f docker-compose.release.yml logs -f
+```yaml
+services:
+  mcp-knot-api:
+    ports: !override
+      - '127.0.0.1:8181:8181'
+  mcp-knot-web:
+    ports: !override
+      - '127.0.0.1:8180:80'
 ```
 
-镜像引用分别是 `ghcr.io/yourtion/mcp-knot-api:${MCP_KNOT_VERSION}` 和
-`ghcr.io/yourtion/mcp-knot-web:${MCP_KNOT_VERSION}`。未设置版本时 Compose 会报错，
-不会隐式拉取 `latest`。升级/回滚时明确选择已发布版本；要求字节级不可变时固定 digest。
-也可执行 `bash scripts/deploy.sh --release v0.1.1 --config ./config`（替换为已发布版本）。
+此合并示例需要 Docker Compose **2.24.4+** 的 `!override`，它会替换原端口列表，
+避免普通列表合并把原来的全接口端口一起保留。较旧版本可复制 release Compose 到本地文件，
+直接把两个 `ports` 字符串改为上述 localhost 映射；不要同时保留原映射。
+参见 [Compose 合并规则](https://docs.docker.com/reference/compose-file/merge/#replace-value)。
 
-启动后检查：
+专用部署目录的 `.env` 只记录以下非敏感 Compose 参数：
 
-```bash
-curl -f http://localhost:8180/                 # Web SPA
-curl -f http://localhost:8180/api/ping         # 经 Nginx 代理的 API 存活检查
-curl -f http://localhost:8181/api/ping         # API 直连存活检查
-curl -f http://localhost:8181/api/health       # 服务初始化及上游连接状态
+```dotenv
+MCP_KNOT_VERSION=v0.1.1
+MCP_KNOT_CONFIG_DIR=./config
 ```
 
-容器使用 Dockerfile 内的健康检查：API `/api/ping`，Web `/`；Web 等待 API `service_healthy`
-后启动。根路径 `/health` 不存在。`/api/ping` 只检查 HTTP 存活，服务初始化与上游状态应看
-`/api/health`；没有已连接上游时可能为 `degraded`，需按实际 MCP 上游继续验证。
+`MCP_KNOT_VERSION` 必填，包含完整 `v` 前缀，不隐式使用 `latest`。
+配置目录变量可省略（默认 `./config`），使用自定义路径时确保目录已存在且 UID 1000 可读写。
+只有组 `validation.enabled=true` 时才需向 Compose 提供至少 32 字符的
+`VALIDATION_KEY_SECRET`；它不替代 `system.json` 的 JWT secret。
+
+```bash
+docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml config --quiet
+docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml pull
+docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml up -d --no-build --wait --wait-timeout 120
+docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml ps
+curl -f http://127.0.0.1:8180/
+curl -f http://127.0.0.1:8180/api/ping
+curl -f http://127.0.0.1:8180/api/health
+```
+
+两镜像分别是 `ghcr.io/yourtion/mcp-knot-api:v0.1.1` 与
+`ghcr.io/yourtion/mcp-knot-web:v0.1.1`。从 `http://127.0.0.1:8180` 登录，完整模板使用你设置的
+管理员密码；只有临时空 `system.json` 才使用 `admin/admin`。
+API 直连端口是 8181；Web 经内部网络代理到 API。对外访问前完成身份和组访问控制配置，
+通过 HTTPS 反向代理提供 Web/MCP 入口，API 8181 保持本机或内网可达。
+
+Dockerfile 健康探针是 API `/api/ping` 和 Web `/`，Web 等待 API `service_healthy`。
+根路径 `/health` 不存在。详细 `/api/health` 查看 `data.service.isInitialized` 与上游连接；
+没有已连接上游时可能显示 `degraded`，HTTP 存活通过不证明真实上游可用。
+
+##### 配置真实上游与组
+
+准备好你的 MCP 服务后，把禁用占位定义替换为真实定义。例如 `mcp_server.json`：
+
+```json
+{
+  "servers": {
+    "upstream": {
+      "type": "streaming",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {},
+      "enabled": true
+    }
+  }
+}
+```
+
+对应 `group.json`：
+
+```json
+{
+  "default": {
+    "id": "default",
+    "name": "默认组",
+    "servers": ["upstream"],
+    "tools": [],
+    "validation": { "enabled": false }
+  }
+}
+```
+
+此示例仅用于 localhost 上的真实上游连通检查。对外开放前需启用组授权：先提供已有的
+`VALIDATION_KEY_SECRET` 并重启 API，再通过 Web 组管理或获准的
+`POST /api/groups/default/validation-key` 设置自己的组 key。该接口加密保存 key；
+不要把客户端明文 key 直接填进 `group.json` 的 `validation.validationKey`，校验代码
+期望此处存储加密值。客户端使用对应的明文 `Authorization: Bearer <组 key>`。
+组入口为 `/default/mcp`；Web 管理登录与 MCP 组授权是两套配置。
+真实 URL/认证在使用前按上游提供方设置，
+示例不会连接任何外部服务。stdio 上游须确保命令和资源路径在 API 容器内存在；
+仓库默认示例使用的 `uvx` 未预装，不能把宿主机命令可用当成容器内可用。
+
+##### 重启、持久化与升级
+
+保存配置后保留同一宿主目录，重新启动 API 使启动配置和缓存的身份配置生效：
+
+```bash
+docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml restart mcp-knot-api
+docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml up -d --no-build --wait --wait-timeout 120
+curl -f http://127.0.0.1:8180/api/health
+```
+
+可先在 Web/API 编辑一个非敏感配置字段，确认宿主 `config/` 文件已更新，重启后再读取相同
+字段。0.1.1 已实际完成配置 API 写入、宿主文件检查及重启后的 API 回读。
+不要删除 `config/`；它同时保存配置历史/备份。改权限前确认路径是本项目专用目录。
+
+升级或回滚时，将 `.env` 的 `MCP_KNOT_VERSION` 改成实际已发布的完整 tag，保留原配置及
+localhost 覆盖文件，再执行上述 `pull`、`up --no-build --wait` 和健康检查。
+两个服务应使用同一版本；需要精确固定内容时分别用上面的 API/Web index digest 替换
+各自的 image tag。`scripts/deploy.sh --release` 使用原 release Compose，首次 localhost
+初始化请沿用这里带覆盖文件的命令。
 
 #### 3. 从源码构建
 
@@ -255,43 +383,56 @@ pm2 startup
 | `system.json`     | 系统配置（端口、CORS、日志、监控、限流等）                       |
 | `api-tools.json`  | API 工具配置路径                                                 |
 
-### system.json 示例
+### system.json 完整初始化模板
 
-端口由 `server.port` 控制（默认 8181）。下面仅示意部署相关字段；自定义 `system.json`
-必须按 `packages/share/src/config/schemas/system.schema.ts` 补齐 `auth`、`users`、`ui`、
-`monitoring` 等必需字段，不能直接用这个局部示例替换完整配置：
+下面的对象包含当前 `SystemConfigSchema` 的全部必需字段。部署前替换两个明显的占位值，
+不要把模板 secret/密码或 `admin/admin` 当作上线凭据。容器内端口保持 8181，改宿主端口
+只改 Compose 映射；否则还需同步 Nginx 上游与 Dockerfile 探针。
 
 ```json
 {
-  "server": {
-    "port": 8181,
-    "host": "0.0.0.0",
-    "cors": {
-      "origin": ["https://mcp-knot.example.com"],
-      "credentials": true
+  "server": { "port": 8181, "host": "0.0.0.0" },
+  "auth": {
+    "jwt": {
+      "secret": "REPLACE_WITH_A_PRIVATE_SECRET_AT_LEAST_32_CHARACTERS",
+      "expiresIn": "24h",
+      "refreshExpiresIn": "7d",
+      "issuer": "mcp-knot"
+    },
+    "security": {
+      "maxLoginAttempts": 5,
+      "lockoutDuration": 900000,
+      "passwordMinLength": 12,
+      "requireStrongPassword": true
     }
   },
-  "logging": {
-    "level": "info",
-    "file": "/var/log/mcp-knot/app.log",
-    "maxFiles": 10,
-    "maxSize": "10m"
+  "users": {
+    "admin": {
+      "id": "admin",
+      "username": "admin",
+      "password": "REPLACE_WITH_YOUR_ADMIN_PASSWORD",
+      "role": "admin",
+      "groups": [],
+      "createdAt": "2026-10-12T00:00:00.000Z"
+    }
   },
-  "monitoring": {
-    "enabled": true,
-    "metricsInterval": 60000,
-    "healthCheckInterval": 30000
+  "ui": {
+    "title": "MCP Knot",
+    "theme": "light",
+    "features": { "apiToMcp": true, "debugging": false, "monitoring": true }
   },
-  "rateLimit": {
-    "windowMs": 60000,
-    "maxRequests": 100
-  }
+  "monitoring": { "metricsEnabled": true, "logLevel": "info", "retentionDays": 30 }
 }
 ```
 
-### 默认凭据（重要）
+`users` 是根字段，不是 `auth.users`。按当前 `AuthService` 实现，`users.admin.password`
+读取密码本身，并在内存中计算 bcrypt 哈希；这里不要填写预计算的 bcrypt 哈希。
+因此 `system.json` 及历史/备份目录均按含敏感配置处理，只允许部署用户和容器 UID 1000 访问，
+不提交到 Git、不写入镜像，也不在日志或排障报告里打印。用户密码与 JWT secret 更改后重启 API。
 
-开发默认登录凭据为 **admin / admin**。生产部署**必须**立即通过 Web 界面修改密码，否则存在严重安全风险。
+`server`、`auth`、`users`、`ui`、`monitoring` 均为必需块；`oauth`、`compatibility` 等扩展按
+实际需要参照 [完整 schema](../packages/share/src/config/schemas/system.schema.ts)。
+默认的 `system.json.example={}` 触发内置默认值，不能代替上线配置。
 
 ---
 
@@ -321,7 +462,8 @@ pm2 startup
 
 ### 1. 修改默认密码
 
-部署后第一时间登录 Web 界面，把 `admin/admin` 改为强密码（≥12 位，含大小写、数字、特殊字符）。
+对外开放前在完整 `system.json` 中设置自己的管理员强密码（≥12 位，含大小写、数字、特殊字符）
+及至少 32 字符的私有 JWT secret，然后重启 API。初次使用默认值时仅绑定 localhost。
 
 ### 2. HTTPS
 
@@ -391,13 +533,14 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # MCP 端点（WebSocket 升级）
-    location /mcp/ {
+    # 组级 Streamable HTTP MCP；保留原 URI，不使用旧全局 /mcp 或 WebSocket 升级
+    location ~ ^/[^/]+/mcp$ {
         proxy_pass http://mcp_knot_backend;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection "";
         proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_cache off;
     }
 
     # SSE：禁用缓冲
