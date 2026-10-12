@@ -5,7 +5,7 @@
 set -e
 
 # 默认参数
-TAG="latest"
+TAG="local"
 PUSH=false
 PLATFORM="linux/amd64"
 
@@ -27,8 +27,8 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "用法: $0 [选项]"
             echo "选项:"
-            echo "  --tag TAG        设置镜像标签 (默认: latest)"
-            echo "  --push           构建后推送到仓库"
+            echo "  --tag TAG        设置镜像标签 (默认: local)"
+            echo "  --push           推送到 GHCR（需调用方已获授权登录；正式版本使用 tag CI）"
             echo "  --platform ARCH  目标平台 (默认: linux/amd64)"
             echo "  --help           显示帮助信息"
             exit 0
@@ -48,17 +48,19 @@ echo "  推送: $PUSH"
 # 构建 API 镜像
 echo "🔨 构建 API 镜像..."
 docker build \
-    --platform $PLATFORM \
+    --platform "$PLATFORM" \
     -f backend/Dockerfile \
-    -t mcp-knot/api:$TAG \
+    --label org.opencontainers.image.source=https://github.com/yourtion/mcp-knot \
+    -t "ghcr.io/yourtion/mcp-knot-api:$TAG" \
     .
 
 # 构建前端镜像
 echo "🔨 构建前端镜像..."
 docker build \
-    --platform $PLATFORM \
+    --platform "$PLATFORM" \
     -f frontend/Dockerfile \
-    -t mcp-knot/web:$TAG \
+    --label org.opencontainers.image.source=https://github.com/yourtion/mcp-knot \
+    -t "ghcr.io/yourtion/mcp-knot-web:$TAG" \
     .
 
 echo "✅ Docker 镜像构建完成！"
@@ -72,7 +74,7 @@ docker images | grep "mcp-knot"
 if [ "$PUSH" = true ]; then
     echo ""
     echo "📤 推送镜像到仓库..."
-    docker push mcp-knot/api:$TAG
-    docker push mcp-knot/web:$TAG
+    docker push "ghcr.io/yourtion/mcp-knot-api:$TAG"
+    docker push "ghcr.io/yourtion/mcp-knot-web:$TAG"
     echo "✅ 镜像推送完成！"
 fi

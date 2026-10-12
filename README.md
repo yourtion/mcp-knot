@@ -273,11 +273,12 @@ The frontend uses JWT-based authentication. To configure authentication:
    pnpm build:fe
 
    # Frontend static files will be in frontend/dist
-   # Serve through backend or separate web server
+   # Serve the output with nginx (included in the Web image)
    ```
 
-   The canonical production topology is a **two-container stack** defined in
-   `docker-compose.yml`:
+   The canonical production topology is a **two-container stack**. Use
+   `docker-compose.release.yml` for published GHCR images, or `docker-compose.yml`
+   to build from source:
    - `mcp-knot-web` (nginx, host port **8180**) — serves the SPA and reverse-proxies
      `/api/`, `/mcp`, `/:group/mcp` to the backend. SPA fallback (`try_files ... /index.html`)
      is configured in `frontend/nginx.conf`, so refreshing any frontend route works.
@@ -286,6 +287,22 @@ The frontend uses JWT-based authentication. To configure authentication:
    Always access the app via the nginx port (**8180**). Hitting the backend port (8181)
    directly with a frontend path returns `404 Not Found` because the backend only serves
    `/api/*` and `/:group/mcp` — this is expected, not a bug.
+
+   ```bash
+   # Replace with a complete image tag that has actually been published to GHCR
+   export MCP_KNOT_VERSION=v0.1.1
+   docker compose -f docker-compose.release.yml pull
+   docker compose -f docker-compose.release.yml up -d --no-build --wait
+   curl -f http://localhost:8180/api/ping
+   ```
+
+   Prepare the writable config directory first; it mounts at `/app/config` and
+   defaults to `./config`. Published images are `ghcr.io/yourtion/mcp-knot-api`
+   and `ghcr.io/yourtion/mcp-knot-web`. The version variable is required; there is
+   no implicit `latest`. The existing npm `v0.1.0` release does not include GHCR
+   images. See the [deployment guide](docs/DEPLOYMENT.md) for configuration,
+   package visibility and startup checks. API liveness is `/api/ping`; detailed
+   service status is `/api/health`.
 
 ## Configuration
 
@@ -531,7 +548,11 @@ Preparation validates the release, commits only the four version manifests, then
 creates a local tag. Push atomically sends only main and that tag. The tag-triggered
 `publish.yml` validates, builds and checks tarballs, publishes in dependency order
 with npm OIDC, then completes one GitHub Release. Exact versions already published
-are skipped on retry. Docker publishing remains optional.
+are skipped on retry. Optional GHCR API/Web publishing is enabled by the repository
+variable `DOCKER_PUBLISH=true`, uses the Actions `GITHUB_TOKEN` with job-scoped
+`packages: write`, and publishes `latest` plus the full release tag for amd64/arm64.
+New GHCR packages default to private; the maintainer must make each package public
+to allow anonymous pulls. See [GHCR setup](docs/RELEASING.md#ghcr-镜像可选).
 
 Use `pnpm run release:validate` for full local checks or `pnpm run release:dry-run`
 for build/package checks without publishing. Setup, first-publish authentication

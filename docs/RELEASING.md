@@ -131,12 +131,51 @@ workspace 协议转换及内部精确版本，再从解包产物导入 JS 入口
 四个内部包只从解包目录解析；外部依赖复用 lockfile 安装结果，不访问发布接口。
 这验证了打包与运行入口，不等于在全新机器从 registry 安装后的完整集成测试。
 
-## Docker（可选）
+## GHCR 镜像（可选）
 
-仓库变量 `DOCKER_PUBLISH=true` 才启用 Docker Hub 发布，并需要已有
-`DOCKER_USERNAME`、`DOCKER_PASSWORD`。npm/GitHub Release 完成后发布
-`<username>/mcp-knot-api` 和 `<username>/mcp-knot-web` 的 `latest` 与 `vX.Y.Z` 标签。
-Docker 失败可独立重跑失败 job，不影响已完成的 npm 发布。
+仓库变量 `DOCKER_PUBLISH=true` 才启用镜像 job；未设置或值不是 `true` 时跳过。
+在 Settings → Secrets and variables → Actions → Variables 添加此**仓库变量**。
+不需要 Docker Hub 账户、Docker Hub secrets 或额外 PAT。
+
+npm/GitHub Release 成功后，同一 tag 的源码构建并发布：
+
+- `ghcr.io/yourtion/mcp-knot-api:latest` 与 `:vX.Y.Z`
+- `ghcr.io/yourtion/mcp-knot-web:latest` 与 `:vX.Y.Z`
+
+平台为 `linux/amd64`、`linux/arm64`。镜像带 source/revision/version OCI labels，
+source 关联 `yourtion/mcp-knot`。镜像 job 单独声明 `contents: read`、`packages: write`，
+登录 GHCR 的用户是 `github.actor`，密码使用本次 Actions 自动生成的 `GITHUB_TOKEN`。
+无需把仓库所有 workflow 的默认权限改为 read/write，也无需创建持久凭据。
+仓库/组织策略必须允许 Actions 运行这些 actions 及该 job 申请的 Packages 写权限；
+若同名包已存在，还需确认它关联本仓库，或在 Package settings → Manage Actions access
+允许 `yourtion/mcp-knot` 写入。权限错误由维护者处理，不以个人 token 绕过。
+
+首次创建的 GHCR 包**默认私有**，公开仓库不会自动使镜像公开。
+要允许匿名 `docker pull`，维护者须分别进入 GitHub Packages 中 `mcp-knot-api` 和
+`mcp-knot-web` 的 Package settings → Danger Zone → Change visibility，确认改为 Public。
+这是包级可见性操作；workflow 不会替用户更改。保持私有时，部署主机需已有获准的读访问。
+参见 [GitHub GHCR 官方说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+和 [包权限与可见性](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility)。
+
+正式镜像优先固定完整版本（或 digest）部署，不默认使用会漂移的 `latest`。
+[部署指南](DEPLOYMENT.md) 提供 `docker-compose.release.yml` 的拉取、启动和健康检查步骤；
+`docker-compose.yml` 保留本地源码构建，`docker-compose.dev.yml` 保留热重载开发。
+常规 CI 的 Docker job 也执行 `scripts/docker-smoke.sh`，检查容器健康、API 初始化、
+Nginx API 代理、SPA fallback 和 `/app/config` 写权限，而不只检查 build 成功。
+
+镜像失败可单独重跑失败的 Docker job；不要因此重新发布 npm 或移动 tag。
+重跑同一 tag 会重新推送该版本与 `latest`，因此不要用旧版本重跑回滚新的 `latest`。
+需要严格不可变部署时，以发布结果的 digest 固定镜像。
+
+### 首次启用与已有 v0.1.0
+
+`v0.1.0` 的 npm 与 GitHub Release 已发布，其历史 workflow 未配置 GHCR。
+合入本次配置不会补发镜像，重跑旧 tag 的 workflow 仍使用旧配置。
+默认在本次改动合入、main CI 通过、维护者确认开关/权限及镜像可见性方案后，
+选择下一个版本（例如 `0.1.1`）并走正常 prepare/push 流程。
+
+若要给现有 `v0.1.0` 单独补镜像，需另行确认并增加只发镜像的入口，checkout 原 tag，
+保持现有 tag 与 npm 不变；不能把新配置强推到旧 tag，也不能通过重发 npm 来补镜像。
 
 ## 已知协议限制
 

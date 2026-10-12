@@ -27,7 +27,7 @@
 
 ```bash
 # 后端健康检查（默认端口 8181）
-curl http://localhost:8181/health
+curl http://localhost:8181/api/ping
 
 # 各组状态
 curl http://localhost:8181/api/groups
@@ -124,7 +124,7 @@ pnpm build
 
 #### 前端无法连接到后端
 
-1. 确认后端在运行：`curl http://localhost:8181/health`
+1. 确认后端在运行：`curl http://localhost:8181/api/ping`
 2. 检查 `system.json` 中的 CORS 配置
 3. 检查前端的 API 代理与反向代理（Nginx 等）配置
 4. 确认防火墙未拦截 8181 端口
@@ -429,7 +429,7 @@ docker exec -it mcp-knot-api /bin/sh
 
 #### 零停机部署
 
-PM2 集群模式 `pm2 reload mcp-knot-api` 滚动重启；或蓝绿部署、Kubernetes 滚动更新配合 `/health` 健康检查。
+PM2 集群模式 `pm2 reload mcp-knot-api` 滚动重启；或蓝绿部署、Kubernetes 滚动更新配合 `/api/ping` 存活检查。
 
 #### 自动备份
 
@@ -496,7 +496,7 @@ location /api/ {
 
 | 方法 | 路径                                   | 说明                                          |
 | ---- | -------------------------------------- | --------------------------------------------- |
-| GET  | `/health`                              | 健康检查（根路径）                            |
+| GET  | `/api/ping`                            | HTTP 存活检查；服务状态见 `/api/health`       |
 | POST | `/:groupId/mcp`                        | 唯一 MCP 入口（JSON-RPC，带 `Mcp-Method` 头） |
 | GET  | `/api/groups` / `/api/groups/:groupId` | 组列表 / 组详情                               |
 | PUT  | `/api/groups/:groupId`                 | 更新组（注意是 PUT）                          |
@@ -513,7 +513,7 @@ location /api/ {
 
 ```bash
 uname -a && node --version && pnpm --version
-curl -s http://localhost:8181/health
+curl -s http://localhost:8181/api/ping
 # 配置（脱敏，移除 env 与密码）
 jq 'del(.servers[].env, .users)' config/mcp_server.json
 ```

@@ -1,0 +1,34 @@
+# 从 GHCR 拉取已发布的固定版本；开发构建使用 docker-compose.yml。
+services:
+  mcp-knot-api:
+    image: ghcr.io/yourtion/mcp-knot-api:${MCP_KNOT_VERSION:?Set MCP_KNOT_VERSION to a published vX.Y.Z image tag}
+    ports:
+      - '8181:8181'
+    environment:
+      - NODE_ENV=production
+      - CONFIG_PATH=/app/config
+      - VALIDATION_KEY_SECRET=${VALIDATION_KEY_SECRET:-}
+    volumes:
+      - type: bind
+        source: ${MCP_KNOT_CONFIG_DIR:-./config}
+        target: /app/config
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    networks:
+      - mcp-knot-network
+
+  mcp-knot-web:
+    image: ghcr.io/yourtion/mcp-knot-web:${MCP_KNOT_VERSION:?Set MCP_KNOT_VERSION to a published vX.Y.Z image tag}
+    ports:
+      - '8180:80'
+    depends_on:
+      mcp-knot-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mcp-knot-network
+
+networks:
+  mcp-knot-network:
+    driver: bridge
