@@ -512,89 +512,30 @@ pnpm test:mcp         # MCP protocol tests
 ### Development & Deployment
 
 - [Development Guide](docs/DEVELOPMENT.md) - Development environment setup and contribution guide
-- [Release Process](#release-process) - Version management and publishing with Changesets
+- [Release Process](#release-process) - Unified versions and tag-based publishing
 - [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment instructions
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ### Release Process
 
-MCP Knot uses [Changesets](https://github.com/changesets/changesets) for version management and publishing.
-
-#### Daily Development Workflow
-
-1. **Complete feature development**:
-
-   ```bash
-   git checkout -b feature/my-feature
-   # Develop and test...
-   pnpm test
-   pnpm check:all
-   ```
-
-2. **Create a Changeset**:
-
-   ```bash
-   pnpm changeset
-   ```
-
-   - Select affected packages
-   - Choose version type (major/minor/patch)
-   - Add change description
-
-3. **Commit code**:
-
-   ```bash
-   git add .
-   git commit -m "feat: add new feature"
-   git push origin feature/my-feature
-   ```
-
-4. **Create Pull Request** to `main` branch
-
-#### Automated Release Process
-
-The project uses GitHub Actions for automated publishing:
-
-1. **PR merged to main**: CI detects changesets
-2. **Version Packages PR created**: Contains version updates and CHANGELOG
-3. **Version Packages PR merged**: Triggers automatic publishing
-   - Publish to npm
-   - Create GitHub Release
-   - Optionally publish Docker images (`DOCKER_PUBLISH=true`)
-
-Publishing uses **npm Trusted Publishing (OIDC)** with Node 24, npm 11, and
-`id-token: write`; no npm token is used. Only successful main **push** CI runs can
-release the current main commit. Changesets creates a version PR first; merging
-that PR and passing CI publishes built tarballs, package tags, and GitHub Releases.
-
-Before the first release, create any missing npm packages using an interactive
-`npm login`, then configure each package's Trusted Publisher with user `yourtion`,
-repository `mcp-knot`, workflow **`publish.yml`**, no environment, and permission
-for **`npm publish`**. See [the release setup guide](docs/RELEASING.md) for commands,
-package names, and retry instructions. Automated version PRs may require approving
-their CI runs in GitHub when created with `GITHUB_TOKEN`.
-
-#### Version Type Selection
-
-- **major**: Breaking changes (API changes, removed features)
-- **minor**: New features (new APIs, backward-compatible enhancements)
-- **patch**: Bug fixes, small improvements
-
-#### Related Commands
+The four public packages (share, protocol, core, cli) share one stable version.
+After changes are merged and main CI passes, run from a clean, up-to-date `main`:
 
 ```bash
-# Create changeset
-pnpm changeset
-
-# Consume changesets (update versions)
-pnpm version
-
-# Check changesets status
-pnpm changeset:check
-
-# Publish to npm (usually automated by CI)
-pnpm release
+pnpm run release:prepare patch  # minor, major, or an explicit X.Y.Z also work
+# Review the version-only commit and local vX.Y.Z tag
+pnpm run release:push
 ```
+
+Preparation validates the release, commits only the four version manifests, then
+creates a local tag. Push atomically sends only main and that tag. The tag-triggered
+`publish.yml` validates, builds and checks tarballs, publishes in dependency order
+with npm OIDC, then completes one GitHub Release. Exact versions already published
+are skipped on retry. Docker publishing remains optional.
+
+Use `pnpm run release:validate` for full local checks or `pnpm run release:dry-run`
+for build/package checks without publishing. Setup, first-publish authentication
+and retry instructions are in [RELEASING.md](docs/RELEASING.md).
 
 ## Contributing
 

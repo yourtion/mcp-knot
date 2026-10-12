@@ -39,7 +39,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc && node scripts/fix-imports.js",
+    "build": "tsc",
     "dev": "tsc --watch",
     "check": "oxlint --fix src/ && oxfmt src/",
     "test": "vitest --run",

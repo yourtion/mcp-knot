@@ -414,87 +414,27 @@ pnpm test:mcp         # MCP 协议测试
 ### 开发与部署
 
 - [开发指南](docs/DEVELOPMENT.md) - 开发环境搭建和贡献指南
-- [发布流程](#发布流程) - 使用 Changesets 进行版本管理和发布
+- [发布流程](#发布流程) - 统一版本与 tag 发布
 - [部署指南](docs/DEPLOYMENT.md) - 生产环境部署说明
 - [故障排除](docs/TROUBLESHOOTING.md) - 常见问题和解决方案
 
 ### 发布流程
 
-MCP Knot 使用 [Changesets](https://github.com/changesets/changesets) 进行版本管理和发布。
-
-#### 日常开发流程
-
-1. **完成功能开发**：
-
-   ```bash
-   git checkout -b feature/my-feature
-   # 开发和测试...
-   pnpm test
-   pnpm check:all
-   ```
-
-2. **创建 Changeset**：
-
-   ```bash
-   pnpm changeset
-   ```
-
-   - 选择受影响的包
-   - 选择版本类型（major/minor/patch）
-   - 添加变更描述
-
-3. **提交代码**：
-
-   ```bash
-   git add .
-   git commit -m "feat: add new feature"
-   git push origin feature/my-feature
-   ```
-
-4. **创建 Pull Request** 到 `main` 分支
-
-#### 自动发布流程
-
-项目使用 GitHub Actions 自动化发布：
-
-1. **PR 合并到 main**：CI 检测到 changesets 文件
-2. **自动创建 Version Packages PR**：包含版本更新和 CHANGELOG
-3. **合并 Version Packages PR**：触发自动发布
-   - 发布到 npm
-   - 创建 GitHub Release
-   - 可选发布 Docker 镜像（`DOCKER_PUBLISH=true`）
-
-发包使用 **npm Trusted Publishing（OIDC）**，配置 Node 24、npm 11 和
-`id-token: write`，无需 npm token。只有 main 的 push CI 成功且仍对应当前 main
-提交时才会执行发布；先创建版本 PR，该 PR 合入并通过 CI 后自动发布构建好的包、
-包版本标签和 GitHub Release。
-
-首次发布前，需要用交互式 `npm login` 创建缺失的 npm 包，再逐包设置 Trusted
-Publisher：用户 `yourtion`、仓库 `mcp-knot`、工作流 **`publish.yml`**、环境留空，
-允许 **`npm publish`**。完整命令与重试说明见[发布配置指南](docs/RELEASING.md)。
-使用 `GITHUB_TOKEN` 自动创建的版本 PR，可能需要在 GitHub 上批准其 CI 运行。
-
-#### 版本类型选择
-
-- **major**: 破坏性变更（API 变更、移除功能）
-- **minor**: 新功能（添加新 API、向后兼容的增强）
-- **patch**: Bug 修复、小改进
-
-#### 相关命令
+四个公开包 share、protocol、core、cli 使用统一稳定版本。功能合入并通过 main CI 后，
+在干净、已同步的 `main` 执行：
 
 ```bash
-# 创建 changeset
-pnpm changeset
-
-# 消费 changesets（更新版本）
-pnpm version
-
-# 检查 changesets 状态
-pnpm changeset:check
-
-# 发布到 npm（通常由 CI 自动执行）
-pnpm release
+pnpm run release:prepare patch  # 也支持 minor、major 或明确的 X.Y.Z
+# 审核仅修改版本的提交与本地 vX.Y.Z tag
+pnpm run release:push
 ```
+
+prepare 完整验证后只提交四个版本文件，再创建本地 tag；push 原子推送 main 和该 tag。
+`publish.yml` 由 tag 触发，校验版本、构建检查 tarball、按依赖顺序通过 npm OIDC 发布，
+全部成功后创建一个 GitHub Release。重试时跳过已发布的准确版本，Docker 发布仍为可选。
+
+`pnpm run release:validate` 执行完整验证；`pnpm run release:dry-run` 只构建与检查产物。
+两者都不会发包。认证、首次发包及失败重试见[发布配置指南](docs/RELEASING.md)。
 
 ## 贡献
 
