@@ -93,7 +93,11 @@ node scripts/publish-packages.cjs
 
 全部包建好后，在 npm 网页逐包进入 Settings → Trusted Publisher，选择 GitHub Actions，
 填写 Organization or user=`yourtion`、Repository=`mcp-knot`、Workflow filename=`publish.yml`，
-Environment 留空，并允许直接 npm publish。这四条绑定必须由维护者自行设置。
+Environment 留空，并明确启用直接 `npm publish`，只允许 stage 不适用于本工作流。
+这四条绑定必须由维护者自行设置。新绑定须在 **2 天内通过该绑定完成首次成功发布**；
+今晚的手工 login 发布只负责建包，不验证后续创建的 OIDC 绑定。若两天内不准备发下一个版本，
+应临近下次 tag 发布时再创建绑定；超时后需要在 npm 网页删除过期绑定并重新创建。
+该期限与直接 publish 权限见上面的 npm 官方说明。
 首次本地发布成功前，不要选择仅允许 Trusted Publisher 发包的设置来阻断登录发布。
 无需在 GitHub 添加 NPM_TOKEN，也无需为本地脚本伪造 ACTIONS_ID_TOKEN 环境变量。
 
