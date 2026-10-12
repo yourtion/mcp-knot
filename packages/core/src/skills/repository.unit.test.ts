@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
 import { SkillRepository } from './repository.js';
 import { skillSourceFromCommand } from './sources.js';
 
@@ -14,6 +15,10 @@ describe('persistent skill repository', () => {
   let store: string;
   beforeEach(async () => {
     temp = await mkdtemp(join(tmpdir(), 'skills-repository-'));
+    const directory = temp;
+    useTestContext().register('temporary-directory', () =>
+      rm(directory, { recursive: true, force: true }),
+    );
     source = join(temp, 'source', 'grill-me');
     store = join(temp, 'store');
     await mkdir(source, { recursive: true });
@@ -24,7 +29,7 @@ describe('persistent skill repository', () => {
     await writeFile(join(source, 'asset.bin'), Buffer.from([0, 255, 128]));
   });
   afterEach(async () => {
-    await rm(temp, { recursive: true, force: true });
+    await TestContext.resetCurrent();
   });
   async function local() {
     const repository = new SkillRepository(store);
@@ -181,6 +186,25 @@ describe('persistent skill repository', () => {
     expect(
       (await repository.catalog({ include: first.selections }, 'old')).get(first.skills[0].uri),
     ).toBeDefined();
+  });
+
+  it('keeps the last-good pointer when a reused persisted revision is corrupt', async () => {
+    const repository = await local();
+    const originalText = await readFile(join(source, 'SKILL.md'), 'utf8');
+    const first = await repository.sync('team');
+    await writeFile(join(source, 'SKILL.md'), originalText.replace('Original', 'Updated'));
+    const lastGood = await repository.sync('team');
+    const revisionPath = join(store, 'revisions', 'team', `${first.revision}.json`);
+    const persisted = JSON.parse(await readFile(revisionPath, 'utf8'));
+    persisted.snapshots[0].files[0].base64 = Buffer.from('corrupt').toString('base64');
+    await writeFile(revisionPath, JSON.stringify(persisted));
+    await writeFile(join(source, 'SKILL.md'), originalText);
+
+    await expect(repository.sync('team')).rejects.toThrow();
+    expect(await repository.latest('team')).toEqual(lastGood);
+    const restarted = new SkillRepository(store);
+    const catalog = await restarted.catalog({ include: lastGood.selections }, 'published');
+    expect(catalog.get(lastGood.skills[0].uri)).toEqual(lastGood.skills[0]);
   });
 
   it('rejects changing a source identity after it has been saved', async () => {

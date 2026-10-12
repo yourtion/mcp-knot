@@ -1,10 +1,18 @@
 # Skills 获取、管理与统一 MCP 分发规划
 
 - 日期：2026-10-11
-- 状态：Draft，功能与技术方案；配置字段和管理接口为拟议设计
+- 状态：总体路线图；首轮后端闭环已实现，具体范围见下方实施状态；其余配置与接口为拟议设计
 - 项目：MCP Knot（原 MCP Hub）
 - 主要输出：现有 `/:group/mcp` 统一端点
 - 研究依据：[Skills over MCP 官方资料核查](../../research/2026-10-11-skills-over-mcp.md)
+
+## 实施状态（2026-10-13）
+
+当前交付包含标准 Skills 扩展分发、本地/公共 Git/skills CLI 获取更新、持久化不可变快照、Group 固定 revision 选择及公开 skills.sh 市场搜索管理 API。实际字段与操作步骤以 [Skills 使用指南](../../SKILLS.md) 为准；验证记录见 [协议](../../research/2026-10-11-skills-protocol-validation.md)、[来源](../../research/2026-10-12-skills-source-validation.md)及[市场](../../research/2026-10-12-skills-market-validation.md)报告。
+
+当前仅按原子 Skill 及其支持文件分发。正文引用其他技能时，由模型决定是否使用、由宿主按已授权视图加载；Hub 不自动解析依赖、递归导入、合并正文或执行技能。下文的 Bundle、工具绑定、Composite Skill 等内容属于后续路线图。
+
+当前通过管理 API 与配置管理技能，尚未新增 Web 编辑界面、独立 Hub CLI 技能管理/生产 stdio 接入、后台任务、定时同步、私有来源凭据、技能专用 scope、自动 GC 或独立 publication 记录。MCP 读取复用现有 Group 认证及 `mcp:tools` scope。纯 Skills Group 可用，但全局 MCP 配置仍要求至少一个 upstream。市场搜索使用公开 `/api/search`，不接入 v1/OIDC，也不依赖 Vercel 部署。
 
 ## 1. 目标与使用场景
 

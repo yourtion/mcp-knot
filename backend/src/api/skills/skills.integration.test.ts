@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
 import { getAllConfig, resetConfigInstances, saveConfig } from '../../utils/config.js';
 import { groupsApi } from '../groups/index.js';
 import {
@@ -36,12 +37,20 @@ describe('Skills management and formal Group publication', () => {
   let temp: string;
   let root: string;
   let app: Hono;
-  let originalConfigPath: string | undefined;
-  const clients: Client[] = [];
+  let clientId = 0;
 
   beforeEach(async () => {
-    originalConfigPath = process.env.CONFIG_PATH;
+    const originalConfigPath = process.env.CONFIG_PATH;
     temp = await mkdtemp(join(tmpdir(), 'skills-group-api-'));
+    const directory = temp;
+    const context = useTestContext();
+    context.register('temporary-directory', () => rm(directory, { recursive: true, force: true }));
+    context.register('config-instances', resetConfigInstances);
+    context.register('config-environment', () => {
+      if (originalConfigPath === undefined) delete process.env.CONFIG_PATH;
+      else process.env.CONFIG_PATH = originalConfigPath;
+    });
+    context.register('group-handlers', invalidateAllGroupMcpServices);
     process.env.CONFIG_PATH = temp;
     resetConfigInstances();
     root = join(temp, 'source', 'grill-me');
@@ -63,12 +72,7 @@ describe('Skills management and formal Group publication', () => {
     app.route('/api/groups', groupsApi);
   });
   afterEach(async () => {
-    await Promise.all(clients.splice(0).map((client) => client.close()));
-    await invalidateAllGroupMcpServices();
-    if (originalConfigPath === undefined) delete process.env.CONFIG_PATH;
-    else process.env.CONFIG_PATH = originalConfigPath;
-    resetConfigInstances();
-    await rm(temp, { recursive: true, force: true });
+    await TestContext.resetCurrent();
   });
 
   function request(path: string, method: string, body?: unknown, role = 'admin') {
@@ -102,7 +106,7 @@ describe('Skills management and formal Group publication', () => {
         versionNegotiation: { mode: { pin: '2026-07-28' } },
       },
     );
-    clients.push(client);
+    useTestContext().register(`client:${++clientId}`, () => client.close());
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`http://group.test/${groupId}/mcp`), {
         fetch: (input, init) => handler.fetch(new Request(input, init)),

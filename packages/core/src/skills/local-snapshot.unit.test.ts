@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
 import { loadLocalSkillSnapshot } from './local-snapshot.js';
 import { MAX_SKILL_BYTES, MAX_SKILL_FILES } from './schemas.js';
 
@@ -26,6 +27,10 @@ describe('local skill snapshots', () => {
 
   beforeEach(async () => {
     temp = await mkdtemp(join(tmpdir(), 'mcp-knot-skills-'));
+    const directory = temp;
+    useTestContext().register('temporary-directory', () =>
+      rm(directory, { recursive: true, force: true }),
+    );
     root = join(temp, 'review-code');
     await mkdir(join(root, 'references'), { recursive: true });
     await writeFile(join(root, 'SKILL.md'), skillText);
@@ -33,7 +38,7 @@ describe('local skill snapshots', () => {
   });
 
   afterEach(async () => {
-    await rm(temp, { recursive: true, force: true });
+    await TestContext.resetCurrent();
   });
 
   it('preserves all frontmatter and hashes every supporting file using raw bytes', async () => {

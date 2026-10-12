@@ -166,9 +166,11 @@ export class SkillRepository {
               throw error;
           }
         }
+        // Validate a reused on-disk revision before changing the last-good pointer.
+        const loaded = await this.loadRevision(sourceId, revision);
         // The mutable candidate pointer changes only after a completely valid import.
         await this.atomicJson(join(revisions, 'latest.json'), { revision });
-        return (await this.loadRevision(sourceId, revision)).result;
+        return loaded.result;
       } finally {
         await rm(staging, { recursive: true, force: true });
       }

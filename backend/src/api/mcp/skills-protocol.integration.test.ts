@@ -21,8 +21,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 
+import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
+
 import type { SkillSnapshot } from '@mcp-core/mcp-knot-core/skills';
-import type { ChildProcess } from 'node:child_process';
 
 const fixture = fileURLToPath(
   new URL('../../../../packages/core/src/skills/__fixtures__/review-code', import.meta.url),
@@ -31,9 +32,7 @@ const stdioScript = fileURLToPath(
   new URL('../../../scripts/skills-validation.ts', import.meta.url),
 );
 const repository = fileURLToPath(new URL('../../../../', import.meta.url));
-const clients: Client[] = [];
-const processes: ChildProcess[] = [];
-const temporaryDirectories: string[] = [];
+let clientId = 0;
 
 function makeClient(skills = true, legacy = false): Client {
   const client = new Client(
@@ -43,7 +42,7 @@ function makeClient(skills = true, legacy = false): Client {
       versionNegotiation: { mode: legacy ? 'legacy' : { pin: '2026-07-28' } },
     },
   );
-  clients.push(client);
+  useTestContext().register(`client:${++clientId}`, () => client.close());
   return client;
 }
 
@@ -105,25 +104,7 @@ async function list(client: Client, cursor?: string) {
 }
 
 afterEach(async () => {
-  await Promise.all(clients.splice(0).map((client) => client.close()));
-  await Promise.all(
-    processes.splice(0).map(async (child) => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      const exited = once(child, 'exit');
-      const timeout = setTimeout(() => child.kill('SIGKILL'), 3000);
-      child.kill('SIGTERM');
-      try {
-        await exited;
-      } finally {
-        clearTimeout(timeout);
-      }
-    }),
-  );
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  await TestContext.resetCurrent();
 });
 
 describe('SEP-2640 through real MCP SDK serving and client transports', () => {
@@ -201,7 +182,9 @@ describe('SEP-2640 through real MCP SDK serving and client transports', () => {
 
   it('preserves special frontmatter keys across HTTP wire validation and SDK decoding', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'mcp-skills-frontmatter-'));
-    temporaryDirectories.push(temp);
+    useTestContext().register('temporary-directory', () =>
+      rm(temp, { recursive: true, force: true }),
+    );
     const directory = join(temp, 'review-code');
     await cp(fixture, directory, { recursive: true });
     const path = join(directory, 'SKILL.md');
@@ -271,7 +254,9 @@ describe('SEP-2640 through real MCP SDK serving and client transports', () => {
 
   it('serves a binary attachment through standard resources/read', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'skills-http-'));
-    temporaryDirectories.push(temp);
+    useTestContext().register('temporary-directory', () =>
+      rm(temp, { recursive: true, force: true }),
+    );
     const root = join(temp, 'review-code');
     await cp(fixture, root, { recursive: true });
     const bytes = Buffer.from([0, 255, 128, 10]);
@@ -292,6 +277,7 @@ describe('SEP-2640 through real MCP SDK serving and client transports', () => {
       cwd: repository,
       stderr: 'pipe',
     });
+    useTestContext().register('stdio-transport', () => transport.close());
     await client.connect(transport);
     const wireResults: unknown[] = [];
     const onmessage = transport.onmessage;
@@ -342,7 +328,17 @@ describe('SEP-2640 through real MCP SDK serving and client transports', () => {
         stdio: ['ignore', 'ignore', 'pipe'],
       },
     );
-    processes.push(child);
+    useTestContext().register('http-harness', async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = once(child, 'exit');
+      const timeout = setTimeout(() => child.kill('SIGKILL'), 3000);
+      child.kill('SIGTERM');
+      try {
+        await exited;
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
     const endpoint = await new Promise<string>((resolveEndpoint, reject) => {
       let stderr = '';
       const timeout = setTimeout(

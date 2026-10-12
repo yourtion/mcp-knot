@@ -95,6 +95,7 @@ export class ConfigService implements IConfigService {
       case 'groups':
         oldConfig = currentConfig.groups;
         fileName = 'group.json';
+        await this.validateGroupPublication(config);
         break;
       default:
         throw new ConfigError(ErrorCode.INVALID_CONFIG_FORMAT, `不支持的配置类型: ${configType}`);
@@ -105,9 +106,24 @@ export class ConfigService implements IConfigService {
       fileName as 'system.json' | 'mcp_server.json' | 'group.json',
       config as SystemConfig | McpConfig | GroupConfig,
     );
+    if (configType === 'groups') await this.invalidateGroupPublications();
 
     // 记录历史
     await this.recordConfigHistory(configType, oldConfig, config, description, user);
+  }
+
+  private async validateGroupPublication(config: Record<string, unknown>): Promise<void> {
+    const validation = await this.validateConfig('groups', config);
+    if (!validation.valid)
+      throw new ConfigError(
+        ErrorCode.INVALID_CONFIG_FORMAT,
+        validation.errors.map((error) => `${error.path}: ${error.message}`).join('; '),
+      );
+  }
+
+  private async invalidateGroupPublications(): Promise<void> {
+    const { invalidateAllGroupMcpServices } = await import('../api/mcp/mcp-handler-factory.js');
+    await invalidateAllGroupMcpServices();
   }
 
   async validateConfig(
@@ -461,6 +477,10 @@ export class ConfigService implements IConfigService {
 
     const typesToRestore = configTypes || backup.configTypes;
 
+    // Reject unavailable skill revisions before changing any backed-up configuration.
+    if (typesToRestore.includes('groups') && backup.configs.groups)
+      await this.validateGroupPublication(backup.configs.groups as Record<string, unknown>);
+
     // 恢复指定类型的配置
     for (const configType of typesToRestore) {
       if (!backup.configs[configType]) {
@@ -487,6 +507,7 @@ export class ConfigService implements IConfigService {
         fileName as 'system.json' | 'mcp_server.json' | 'group.json',
         backup.configs[configType] as SystemConfig | McpConfig | GroupConfig,
       );
+      if (configType === 'groups') await this.invalidateGroupPublications();
     }
 
     // 记录恢复操作

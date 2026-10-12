@@ -24,7 +24,7 @@
     "check:all": "oxlint --fix --ignore-path .oxlintignore . && oxfmt .",
     "inspector": "pnpx @modelcontextprotocol/inspector",
     "test": "vitest --run",
-    "test:skills": "vitest --run --project share --project core --project api-unit packages/core/src/skills packages/share/src/config/schemas/skills.schema.unit.test.ts backend/src/api/skills backend/src/api/mcp/skills-protocol.integration.test.ts",
+    "test:skills": "vitest --run --project share --project core --project api-unit packages/core/src/skills packages/share/src/config/schemas/skills.schema.unit.test.ts backend/src/api/skills backend/src/api/mcp/skills-protocol.integration.test.ts backend/src/services/skills-config.integration.test.ts",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:e2e": "vitest --run --project api-e2e",

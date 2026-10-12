@@ -10,22 +10,23 @@
 
 ## 路由总览
 
-| 前缀                              | 说明                                          | 认证     |
-| --------------------------------- | --------------------------------------------- | -------- |
-| `/api/auth`                       | 认证（登录/登出/刷新/当前用户）               | 部分需要 |
-| `/api/config`                     | 系统配置管理（查询/更新/验证/历史/备份/恢复） | JWT      |
-| `/api/dashboard`                  | 仪表板（统计、系统信息、内存、日志、SSE 等）  | JWT      |
-| `/api/debug`                      | 调试（MCP 协议消息、工具测试、性能/错误分析） | 无       |
-| `/api/servers`                    | MCP 服务器 CRUD 与连接控制                    | JWT      |
-| `/api/tools`                      | 工具查询与执行（基础）                        | JWT      |
-| `/api/tools-admin`                | 工具管理（历史/监控/健康/性能/错误/统计）     | JWT      |
-| `/api/groups`                     | 组管理（路径参数统一为 `:groupId`）           | JWT      |
-| `/api/performance`                | 全局性能监控                                  | 无       |
-| `/api/api-to-mcp`                 | API 转 MCP 配置管理                           | JWT      |
-| `/api/oauth`                      | 内置 OAuth AS（`/token`、`/jwks`）            | 无       |
-| `/.well-known/*`                  | OAuth Protected Resource / AS metadata        | 无       |
-| `/:group/mcp`                     | **组级 MCP JSON-RPC 入口（唯一）**            | OAuth RS |
-| `/:group/status`、`/:group/tools` | 组状态/工具（REST）                           | 组校验   |
+| 前缀                              | 说明                                                           | 认证         |
+| --------------------------------- | -------------------------------------------------------------- | ------------ |
+| `/api/auth`                       | 认证（登录/登出/刷新/当前用户）                                | 部分需要     |
+| `/api/config`                     | 系统配置管理（查询/更新/验证/历史/备份/恢复）                  | JWT          |
+| `/api/dashboard`                  | 仪表板（统计、系统信息、内存、日志、SSE 等）                   | JWT          |
+| `/api/debug`                      | 调试（MCP 协议消息、工具测试、性能/错误分析）                  | 无           |
+| `/api/servers`                    | MCP 服务器 CRUD 与连接控制                                     | JWT          |
+| `/api/tools`                      | 工具查询与执行（基础）                                         | JWT          |
+| `/api/tools-admin`                | 工具管理（历史/监控/健康/性能/错误/统计）                      | JWT          |
+| `/api/groups`                     | 组管理（路径参数统一为 `:groupId`）                            | JWT          |
+| `/api/skills`                     | 技能来源、同步/更新与市场搜索，见 [Skills 使用指南](SKILLS.md) | JWT + 管理员 |
+| `/api/performance`                | 全局性能监控                                                   | 无           |
+| `/api/api-to-mcp`                 | API 转 MCP 配置管理                                            | JWT          |
+| `/api/oauth`                      | 内置 OAuth AS（`/token`、`/jwks`）                             | 无           |
+| `/.well-known/*`                  | OAuth Protected Resource / AS metadata                         | 无           |
+| `/:group/mcp`                     | **组级 MCP JSON-RPC 入口（唯一）**                             | OAuth RS     |
+| `/:group/status`、`/:group/tools` | 组状态/工具（REST）                                            | 组校验       |
 
 > 说明：2026-07-28 协议升级后，全局 `/mcp` 端点已移除。所有 MCP 调用统一走组路由 `/:group/mcp`。
 

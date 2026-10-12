@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
 import { SkillMarketService } from '../../services/skill-market-service.js';
 import { getAllConfig, resetConfigInstances, saveConfig } from '../../utils/config.js';
 import { createSkillsApi } from './index.js';
@@ -21,10 +22,17 @@ describe('market search management API', () => {
   let temp: string;
   let source: string;
   let repository: SkillRepository;
-  let previousConfigPath: string | undefined;
   beforeEach(async () => {
-    previousConfigPath = process.env.CONFIG_PATH;
+    const previousConfigPath = process.env.CONFIG_PATH;
     temp = await mkdtemp(join(tmpdir(), 'skills-market-api-'));
+    const directory = temp;
+    const context = useTestContext();
+    context.register('temporary-directory', () => rm(directory, { recursive: true, force: true }));
+    context.register('config-instances', resetConfigInstances);
+    context.register('config-environment', () => {
+      if (previousConfigPath === undefined) delete process.env.CONFIG_PATH;
+      else process.env.CONFIG_PATH = previousConfigPath;
+    });
     process.env.CONFIG_PATH = temp;
     resetConfigInstances();
     source = join(temp, 'source', 'grill-me');
@@ -40,10 +48,7 @@ describe('market search management API', () => {
     await saveConfig('group.json', {});
   });
   afterEach(async () => {
-    if (previousConfigPath === undefined) delete process.env.CONFIG_PATH;
-    else process.env.CONFIG_PATH = previousConfigPath;
-    resetConfigInstances();
-    await rm(temp, { recursive: true, force: true });
+    await TestContext.resetCurrent();
   });
   function app(fetcher: typeof fetch) {
     const provider = new SkillsShMarketProvider({ fetch: fetcher });
