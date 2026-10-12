@@ -233,7 +233,9 @@ The frontend uses JWT-based authentication. To configure authentication:
    - Configure credentials, JWT secret, and server port in `system.json` (see
      `backend/config/system.json.example` and the schema at
      `packages/share/src/config/schemas/system.schema.ts`).
-   - Set strong passwords using bcrypt hashing in the `auth.users` block.
+   - Set a strong password in root `users.admin.password`. The current backend
+     hashes the configured password in memory; do not put a precomputed bcrypt
+     hash in this field. Keep the config directory restricted to the deployment user.
    - JWT secret/expiry come from the `auth.jwt` block in `system.json`, **not**
      environment variables.
 
@@ -242,7 +244,7 @@ The frontend uses JWT-based authentication. To configure authentication:
    # Backend (.env) — only env vars the code actually reads; see .env.production.example
    NODE_ENV=production
    CONFIG_PATH=/path/to/config      # directory containing system.json, mcp_server.json, group.json
-   VALIDATION_KEY_SECRET=<>=32 chars>  # required when group validation is enabled
+   VALIDATION_KEY_SECRET='<your-existing-secret-at-least-32-characters>'  # required when group validation is enabled
    ```
 
 #### Accessing the Web Interface
@@ -289,20 +291,24 @@ The frontend uses JWT-based authentication. To configure authentication:
    `/api/*` and `/:group/mcp` — this is expected, not a bug.
 
    ```bash
-   # Replace with a complete image tag that has actually been published to GHCR
+   # v0.1.1 is published; prepare config and the localhost override per the guide
    export MCP_KNOT_VERSION=v0.1.1
-   docker compose -f docker-compose.release.yml pull
-   docker compose -f docker-compose.release.yml up -d --no-build --wait
+   docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml pull
+   docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml up -d --no-build --wait
    curl -f http://localhost:8180/api/ping
    ```
 
    Prepare the writable config directory first; it mounts at `/app/config` and
    defaults to `./config`. Published images are `ghcr.io/yourtion/mcp-knot-api`
    and `ghcr.io/yourtion/mcp-knot-web`. The version variable is required; there is
-   no implicit `latest`. The existing npm `v0.1.0` release does not include GHCR
-   images. See the [deployment guide](docs/DEPLOYMENT.md) for configuration,
-   package visibility and startup checks. API liveness is `/api/ping`; detailed
-   service status is `/api/health`.
+   no implicit `latest`. Both v0.1.1 images are currently Public and anonymous
+   pulls have passed. Actual GHCR amd64 images passed Compose startup, API/Web
+   checks and configuration persistence after restart. arm64 was built and its
+   manifest verified; application runtime on ARM was not tested. See the
+   [deployment guide](docs/DEPLOYMENT.md) for full initialization JSON, UID 1000
+   permissions, the localhost override and upgrades. Replace default admin/admin
+   and the JWT secret before public access, then restart the API. API liveness is
+   `/api/ping`; detailed service status is `/api/health`.
 
 ## Configuration
 
@@ -551,8 +557,9 @@ with npm OIDC, then completes one GitHub Release. Exact versions already publish
 are skipped on retry. Optional GHCR API/Web publishing is enabled by the repository
 variable `DOCKER_PUBLISH=true`, uses the Actions `GITHUB_TOKEN` with job-scoped
 `packages: write`, and publishes `latest` plus the full release tag for amd64/arm64.
-New GHCR packages default to private; the maintainer must make each package public
-to allow anonymous pulls. See [GHCR setup](docs/RELEASING.md#ghcr-镜像可选).
+New GHCR packages default to private; the maintainer controls their visibility.
+The current API/Web packages are Public and v0.1.1 anonymous pulls are verified.
+See [GHCR setup and verified results](docs/RELEASING.md#ghcr-镜像可选).
 
 Use `pnpm run release:validate` for full local checks or `pnpm run release:dry-run`
 for build/package checks without publishing. Setup, first-publish authentication

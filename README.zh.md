@@ -227,7 +227,8 @@ pnpm build:fe
    - 在 `system.json` 中配置凭据、JWT 密钥、服务端口（参见
      `backend/config/system.json.example` 与 schema
      `packages/share/src/config/schemas/system.schema.ts`）。
-   - 使用 bcrypt 哈希在 `auth.users` 块设置强密码。
+   - 在根字段 `users.admin.password` 设置强密码；当前后端会在内存中计算 bcrypt 哈希，
+     此字段不要填写预计算的哈希。限制配置目录访问权限。
    - JWT 密钥与过期时间来自 `system.json` 的 `auth.jwt` 块，**不是**环境变量。
 
 3. **环境变量**:
@@ -235,7 +236,7 @@ pnpm build:fe
    # 后端 (.env) — 仅列代码实际识别的变量，完整说明见 .env.production.example
    NODE_ENV=production
    CONFIG_PATH=/path/to/config      # 含 system.json、mcp_server.json、group.json 的目录
-   VALIDATION_KEY_SECRET=<>=32 字符>  # 启用组 validation 时必填
+   VALIDATION_KEY_SECRET='<已有的至少32字符密钥>'  # 启用组 validation 时必填
    ```
 
 #### 访问 Web 界面
@@ -273,18 +274,20 @@ pnpm build:fe
    Web 将 `/api/` 与 `/:group/mcp` 代理到 API。
 
    ```bash
-   # 示例版本，替换为实际已发布到 GHCR 的完整镜像 tag
+   # v0.1.1 已发布；先按部署指南准备配置和 localhost 覆盖文件
    export MCP_KNOT_VERSION=v0.1.1
-   docker compose -f docker-compose.release.yml pull
-   docker compose -f docker-compose.release.yml up -d --no-build --wait
+   docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml pull
+   docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml up -d --no-build --wait
    curl -f http://localhost:8180/api/ping
    ```
 
    镜像是 `ghcr.io/yourtion/mcp-knot-api` 与 `ghcr.io/yourtion/mcp-knot-web`。
    版本变量必填，不默认使用 `latest`。请先准备可读写的配置目录（默认 `./config`），
    容器统一挂载到 `/app/config`。API 存活检查为 `/api/ping`，详细服务状态为 `/api/health`。
-   现有 npm `v0.1.0` 发布尚不包含 GHCR 镜像；配置、包可见性与启动检查见
-   [部署指南](docs/DEPLOYMENT.md)。
+   当前两镜像为 Public，v0.1.1 匿名拉取与最终 amd64 镜像的 Compose/API/Web、
+   重启配置持久化均已通过；arm64 已构建并核对 manifest，未做应用运行验证。
+   完整初始化 JSON、UID 1000 权限、本机端口绑定与升级见 [部署指南](docs/DEPLOYMENT.md)。
+   对外访问前替换默认 admin/admin 和 JWT secret，并重启 API。
 
 ## 配置
 
@@ -451,8 +454,8 @@ prepare 完整验证后只提交四个版本文件，再创建本地 tag；push 
 全部成功后创建一个 GitHub Release。重试时跳过已发布的准确版本。
 可选 GHCR API/Web 镜像发布通过仓库变量 `DOCKER_PUBLISH=true` 开启，使用 Actions
 自带 `GITHUB_TOKEN` 与镜像 job 的 `packages: write`，发布 amd64/arm64 的 `latest`
-与完整版本 tag。首次 GHCR 包默认私有，维护者须分别改为 Public 才可匿名拉取，详见
-[GHCR 发布配置](docs/RELEASING.md#ghcr-镜像可选)。
+与完整版本 tag。首次创建新 GHCR 包默认私有，由维护者决定可见性；当前 API/Web
+已确认 Public 且 v0.1.1 匿名拉取通过，详见 [GHCR 配置与实际验证结果](docs/RELEASING.md#ghcr-镜像可选)。
 
 `pnpm run release:validate` 执行完整验证；`pnpm run release:dry-run` 只构建与检查产物。
 两者都不会发包。认证、首次发包及失败重试见[发布配置指南](docs/RELEASING.md)。

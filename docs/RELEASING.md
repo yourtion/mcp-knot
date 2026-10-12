@@ -133,6 +133,30 @@ workspace 协议转换及内部精确版本，再从解包产物导入 JS 入口
 
 ## GHCR 镜像（可选）
 
+### v0.1.1 实际发布结果
+
+2026-10-12 发布提交 `504f73fc8063b4f7b97092d3374088967130c3ae`、tag `v0.1.1` 已完成。
+[main CI](https://github.com/yourtion/mcp-knot/actions/runs/38270879718) 8 项成功，
+[发布 workflow](https://github.com/yourtion/mcp-knot/actions/runs/38270879831) 的 npm/Release、
+API 与 Web GHCR job 均首次成功，
+[GitHub Release](https://github.com/yourtion/mcp-knot/releases/tag/v0.1.1) 已正式发布。
+四个 npm 包 `0.1.1/latest`、内部精确依赖及 registry tarball 哈希均已核实。
+
+当前 `ghcr.io/yourtion/mcp-knot-api` 和 `ghcr.io/yourtion/mcp-knot-web` 均为 Public，
+已实际匿名读取 manifest 并拉取 `v0.1.1`；部署无需登录或新增 registry 凭据。
+每个镜像的 `v0.1.1` 与 `latest` digest 一致，均包含 amd64/arm64：
+
+- API：`sha256:134dd4bdb6d0d345f731849cb1082ae15ef9b4d2a14d83bea2f236e320b653cd`
+- Web：`sha256:9fffe255867964736c112c75a79d94fa6aefa34a278a7f09606bb56c8e3883a4`
+
+最终 GHCR amd64 镜像经发布版 Compose 完成健康、初始化、登录/受保护 API、Web 代理、
+SPA、配置 API 写入、宿主文件检查及重启持久化验证；测试没有绑定宿主端口，容器/网络
+已清理。arm64 完成构建与 manifest 验证，尚未做应用运行测试（环境无 ARM 运行器）。
+验证使用隔离占位上游，不代替用户真实 MCP 上游的连接/工具调用验证。
+完整初始化模板、localhost 首次启动与升级步骤见 [部署指南](DEPLOYMENT.md)。
+
+### 后续 tag 发布与权限
+
 仓库变量 `DOCKER_PUBLISH=true` 才启用镜像 job；未设置或值不是 `true` 时跳过。
 在 Settings → Secrets and variables → Actions → Variables 添加此**仓库变量**。
 不需要 Docker Hub 账户、Docker Hub secrets 或额外 PAT。
@@ -150,7 +174,8 @@ source 关联 `yourtion/mcp-knot`。镜像 job 单独声明 `contents: read`、`
 若同名包已存在，还需确认它关联本仓库，或在 Package settings → Manage Actions access
 允许 `yourtion/mcp-knot` 写入。权限错误由维护者处理，不以个人 token 绕过。
 
-首次创建的 GHCR 包**默认私有**，公开仓库不会自动使镜像公开。
+首次创建新的 GHCR 包**默认私有**，公开仓库不会自动使镜像公开。
+这条通用规则不代表当前两包仍待公开：v0.1.1 已确认 Public 和匿名拉取成功。
 要允许匿名 `docker pull`，维护者须分别进入 GitHub Packages 中 `mcp-knot-api` 和
 `mcp-knot-web` 的 Package settings → Danger Zone → Change visibility，确认改为 Public。
 这是包级可见性操作；workflow 不会替用户更改。保持私有时，部署主机需已有获准的读访问。
@@ -167,15 +192,15 @@ Nginx API 代理、SPA fallback 和 `/app/config` 写权限，而不只检查 bu
 重跑同一 tag 会重新推送该版本与 `latest`，因此不要用旧版本重跑回滚新的 `latest`。
 需要严格不可变部署时，以发布结果的 digest 固定镜像。
 
-### 首次启用与已有 v0.1.0
+### 历史 v0.1.0 与后续版本
 
 `v0.1.0` 的 npm 与 GitHub Release 已发布，其历史 workflow 未配置 GHCR。
-合入本次配置不会补发镜像，重跑旧 tag 的 workflow 仍使用旧配置。
-默认在本次改动合入、main CI 通过、维护者确认开关/权限及镜像可见性方案后，
-选择下一个版本（例如 `0.1.1`）并走正常 prepare/push 流程。
+`v0.1.1` 已完成首次 GHCR 发布，仓库开关的生效由本次两个镜像 job 实际运行确认。
+后续在功能/文档合入并通过 main CI 后，选择维护者确认的下一个版本，走正常
+prepare/push；文档合入本身不发布新版本或镜像。
 
-若要给现有 `v0.1.0` 单独补镜像，需另行确认并增加只发镜像的入口，checkout 原 tag，
-保持现有 tag 与 npm 不变；不能把新配置强推到旧 tag，也不能通过重发 npm 来补镜像。
+如需给历史 `v0.1.0` 补镜像，需要另行确认镜像专用入口并 checkout 原 tag。
+不得移动旧 tag 或重发旧 npm 版本来补镜像；重跑旧 workflow 不会使用新 main 配置。
 
 ## 已知协议限制
 
