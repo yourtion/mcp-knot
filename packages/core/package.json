@@ -1,6 +1,6 @@
 {
   "name": "@mcp-core/mcp-knot-core",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "private": false,
   "description": "MCP Knot核心包 - 提供MCP服务管理、连接管理和工具调用的核心功能",
   "keywords": [
@@ -18,6 +18,7 @@
   },
   "files": [
     "dist",
+    "!dist/test-utils",
     "README.md"
   ],
   "type": "module",

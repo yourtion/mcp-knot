@@ -256,6 +256,7 @@ jobs:
           context: .
           file: backend/Dockerfile
           push: false
+          load: true
           tags: mcp-knot/api:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -276,6 +277,10 @@ jobs:
           context: .
           file: frontend/Dockerfile
           push: false
+          load: true
           tags: mcp-knot/web:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: 验证容器启动、健康检查和前端 API 代理
+        run: bash scripts/docker-smoke.sh mcp-knot/api:test mcp-knot/web:test

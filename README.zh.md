@@ -227,7 +227,8 @@ pnpm build:fe
    - 在 `system.json` 中配置凭据、JWT 密钥、服务端口（参见
      `backend/config/system.json.example` 与 schema
      `packages/share/src/config/schemas/system.schema.ts`）。
-   - 使用 bcrypt 哈希在 `auth.users` 块设置强密码。
+   - 在根字段 `users.admin.password` 设置强密码；当前后端会在内存中计算 bcrypt 哈希，
+     此字段不要填写预计算的哈希。限制配置目录访问权限。
    - JWT 密钥与过期时间来自 `system.json` 的 `auth.jwt` 块，**不是**环境变量。
 
 3. **环境变量**:
@@ -235,7 +236,7 @@ pnpm build:fe
    # 后端 (.env) — 仅列代码实际识别的变量，完整说明见 .env.production.example
    NODE_ENV=production
    CONFIG_PATH=/path/to/config      # 含 system.json、mcp_server.json、group.json 的目录
-   VALIDATION_KEY_SECRET=<>=32 字符>  # 启用组 validation 时必填
+   VALIDATION_KEY_SECRET='<已有的至少32字符密钥>'  # 启用组 validation 时必填
    ```
 
 #### 访问 Web 界面
@@ -265,9 +266,28 @@ pnpm build:fe
    # 构建前端
    pnpm build:fe
 
-   # 前端静态文件将在 frontend/dist 目录
-   # 通过后端或单独的 Web 服务器提供服务
+   # 前端静态文件将在 frontend/dist 目录，由 Nginx 托管
    ```
+
+   发布镜像使用 `docker-compose.release.yml`，源码构建使用 `docker-compose.yml`。
+   两者都是 API（8181）与 Nginx Web（8180）的双容器结构；浏览器访问 8180，
+   Web 将 `/api/` 与 `/:group/mcp` 代理到 API。
+
+   ```bash
+   # v0.1.1 已发布；先按部署指南准备配置和 localhost 覆盖文件
+   export MCP_KNOT_VERSION=v0.1.1
+   docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml pull
+   docker compose -f docker-compose.release.yml -f docker-compose.localhost.yml up -d --no-build --wait
+   curl -f http://localhost:8180/api/ping
+   ```
+
+   镜像是 `ghcr.io/yourtion/mcp-knot-api` 与 `ghcr.io/yourtion/mcp-knot-web`。
+   版本变量必填，不默认使用 `latest`。请先准备可读写的配置目录（默认 `./config`），
+   容器统一挂载到 `/app/config`。API 存活检查为 `/api/ping`，详细服务状态为 `/api/health`。
+   当前两镜像为 Public，v0.1.1 匿名拉取与最终 amd64 镜像的 Compose/API/Web、
+   重启配置持久化均已通过；arm64 已构建并核对 manifest，未做应用运行验证。
+   完整初始化 JSON、UID 1000 权限、本机端口绑定与升级见 [部署指南](docs/DEPLOYMENT.md)。
+   对外访问前替换默认 admin/admin 和 JWT secret，并重启 API。
 
 ## 配置
 
@@ -414,87 +434,31 @@ pnpm test:mcp         # MCP 协议测试
 ### 开发与部署
 
 - [开发指南](docs/DEVELOPMENT.md) - 开发环境搭建和贡献指南
-- [发布流程](#发布流程) - 使用 Changesets 进行版本管理和发布
+- [发布流程](#发布流程) - 统一版本与 tag 发布
 - [部署指南](docs/DEPLOYMENT.md) - 生产环境部署说明
 - [故障排除](docs/TROUBLESHOOTING.md) - 常见问题和解决方案
 
 ### 发布流程
 
-MCP Knot 使用 [Changesets](https://github.com/changesets/changesets) 进行版本管理和发布。
-
-#### 日常开发流程
-
-1. **完成功能开发**：
-
-   ```bash
-   git checkout -b feature/my-feature
-   # 开发和测试...
-   pnpm test
-   pnpm check:all
-   ```
-
-2. **创建 Changeset**：
-
-   ```bash
-   pnpm changeset
-   ```
-
-   - 选择受影响的包
-   - 选择版本类型（major/minor/patch）
-   - 添加变更描述
-
-3. **提交代码**：
-
-   ```bash
-   git add .
-   git commit -m "feat: add new feature"
-   git push origin feature/my-feature
-   ```
-
-4. **创建 Pull Request** 到 `main` 分支
-
-#### 自动发布流程
-
-项目使用 GitHub Actions 自动化发布：
-
-1. **PR 合并到 main**：CI 检测到 changesets 文件
-2. **自动创建 Version Packages PR**：包含版本更新和 CHANGELOG
-3. **合并 Version Packages PR**：触发自动发布
-   - 发布到 npm
-   - 创建 GitHub Release
-   - 可选发布 Docker 镜像（`DOCKER_PUBLISH=true`）
-
-发包使用 **npm Trusted Publishing（OIDC）**，配置 Node 24、npm 11 和
-`id-token: write`，无需 npm token。只有 main 的 push CI 成功且仍对应当前 main
-提交时才会执行发布；先创建版本 PR，该 PR 合入并通过 CI 后自动发布构建好的包、
-包版本标签和 GitHub Release。
-
-首次发布前，需要用交互式 `npm login` 创建缺失的 npm 包，再逐包设置 Trusted
-Publisher：用户 `yourtion`、仓库 `mcp-knot`、工作流 **`publish.yml`**、环境留空，
-允许 **`npm publish`**。完整命令与重试说明见[发布配置指南](docs/RELEASING.md)。
-使用 `GITHUB_TOKEN` 自动创建的版本 PR，可能需要在 GitHub 上批准其 CI 运行。
-
-#### 版本类型选择
-
-- **major**: 破坏性变更（API 变更、移除功能）
-- **minor**: 新功能（添加新 API、向后兼容的增强）
-- **patch**: Bug 修复、小改进
-
-#### 相关命令
+四个公开包 share、protocol、core、cli 使用统一稳定版本。功能合入并通过 main CI 后，
+在干净、已同步的 `main` 执行：
 
 ```bash
-# 创建 changeset
-pnpm changeset
-
-# 消费 changesets（更新版本）
-pnpm version
-
-# 检查 changesets 状态
-pnpm changeset:check
-
-# 发布到 npm（通常由 CI 自动执行）
-pnpm release
+pnpm run release:prepare patch  # 也支持 minor、major 或明确的 X.Y.Z
+# 审核仅修改版本的提交与本地 vX.Y.Z tag
+pnpm run release:push
 ```
+
+prepare 完整验证后只提交四个版本文件，再创建本地 tag；push 原子推送 main 和该 tag。
+`publish.yml` 由 tag 触发，校验版本、构建检查 tarball、按依赖顺序通过 npm OIDC 发布，
+全部成功后创建一个 GitHub Release。重试时跳过已发布的准确版本。
+可选 GHCR API/Web 镜像发布通过仓库变量 `DOCKER_PUBLISH=true` 开启，使用 Actions
+自带 `GITHUB_TOKEN` 与镜像 job 的 `packages: write`，发布 amd64/arm64 的 `latest`
+与完整版本 tag。首次创建新 GHCR 包默认私有，由维护者决定可见性；当前 API/Web
+已确认 Public 且 v0.1.1 匿名拉取通过，详见 [GHCR 配置与实际验证结果](docs/RELEASING.md#ghcr-镜像可选)。
+
+`pnpm run release:validate` 执行完整验证；`pnpm run release:dry-run` 只构建与检查产物。
+两者都不会发包。认证、首次发包及失败重试见[发布配置指南](docs/RELEASING.md)。
 
 ## 贡献
 

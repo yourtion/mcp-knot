@@ -6,14 +6,15 @@
  */
 
 import { CompatibilityOptionsSchema } from '@mcp-core/mcp-knot-protocol';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { CliConfigManager } from './config/cli-config-manager';
-import { CliMcpServer } from './server/cli-mcp-server';
+import { CliConfigManager } from './config/cli-config-manager.js';
+import { CliMcpServer } from './server/cli-mcp-server.js';
 
-import type { ConfigTemplateType } from './config/config-template';
-import type { CliError } from './types';
+import type { ConfigTemplateType } from './config/config-template.js';
+import type { CliError } from './types/index.js';
 
 /**
  * 命令行选项接口
@@ -196,7 +197,8 @@ MCP Knot CLI - 聚合多个MCP服务的命令行界面
  * 显示版本信息
  */
 function showVersion(): void {
-  console.log('MCP Knot CLI v1.0.0');
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  console.log(`MCP Knot CLI v${pkg.version}`);
 }
 
 /**

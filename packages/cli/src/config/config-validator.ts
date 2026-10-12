@@ -3,7 +3,7 @@
  * 提供详细的配置验证和错误报告
  */
 
-import type { CliConfig, CliError, CliErrorCode } from '../types';
+import type { CliConfig, CliError, CliErrorCode } from '../types/index.js';
 
 /**
  * 验证结果接口

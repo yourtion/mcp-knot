@@ -9,11 +9,11 @@ import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod/v4';
 
-import { CliErrorCode } from '../types';
-import { ConfigTemplateGenerator, type ConfigTemplateType } from './config-template';
-import { ConfigValidator, type ValidationResult } from './config-validator';
+import { CliErrorCode } from '../types/index.js';
+import { ConfigTemplateGenerator, type ConfigTemplateType } from './config-template.js';
+import { ConfigValidator, type ValidationResult } from './config-validator.js';
 
-import type { CliConfig, CliError } from '../types';
+import type { CliConfig, CliError } from '../types/index.js';
 
 /**
  * CLI配置管理器类

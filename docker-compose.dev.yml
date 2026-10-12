@@ -1,7 +1,5 @@
 # MCP Knot 开发环境 Docker Compose 配置
 
-version: '3.8'
-
 services:
   # API 服务器开发模式
   mcp-knot-api-dev:
@@ -14,15 +12,20 @@ services:
       - '8181:8181'
     environment:
       - NODE_ENV=development
-      - PORT=8181
+      - CONFIG_PATH=/app/config
     volumes:
       # 挂载源代码用于热重载
       - ./packages/share:/app/packages/share
+      - ./packages/protocol:/app/packages/protocol
       - ./packages/core:/app/packages/core
       - ./backend:/app/backend
-      - ./backend/config:/app/backend/config
-      - ./logs:/app/logs
-    command: ['pnpm', 'dev:api']
+      - ${MCP_KNOT_CONFIG_DIR:-./config}:/app/config
+      - /app/backend/node_modules
+      - /app/packages/share/node_modules
+      - /app/packages/protocol/node_modules
+      - /app/packages/core/node_modules
+    command:
+      ['sh', '-c', 'pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm dev:api']
     restart: unless-stopped
     networks:
       - mcp-knot-dev-network
@@ -37,10 +40,15 @@ services:
     ports:
       - '8180:8180'
     environment:
-      - VITE_API_BASE_URL=http://localhost:8181
+      - MCP_KNOT_DEV_API_URL=http://mcp-knot-api-dev:8181
     volumes:
       # 挂载源代码用于热重载
       - ./frontend:/app/frontend
+      - ./packages/share:/app/packages/share
+      - /app/frontend/node_modules
+      - /app/packages/share/node_modules
+    depends_on:
+      - mcp-knot-api-dev
     command: ['pnpm', 'dev:fe']
     restart: unless-stopped
     networks:

@@ -1,52 +1,40 @@
 # MCP Knot Docker Compose 配置
 
-version: '3.8'
-
 services:
   # API 服务器
   mcp-knot-api:
+    image: mcp-knot/api:local
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: mcp-knot-api
     ports:
       - '8181:8181'
     environment:
       - NODE_ENV=production
-      - PORT=8181
+      - CONFIG_PATH=/app/config
+      - VALIDATION_KEY_SECRET=${VALIDATION_KEY_SECRET:-}
     volumes:
       # 挂载配置文件
-      - ./backend/config:/app/backend/config:ro
-      # 挂载日志目录
-      - ./logs:/app/logs
+      - type: bind
+        source: ${MCP_KNOT_CONFIG_DIR:-./config}
+        target: /app/config
+        bind:
+          create_host_path: false
     restart: unless-stopped
-    healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "require('http').get('http://localhost:8181/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
     networks:
       - mcp-knot-network
 
   # 前端服务器（可选）
   mcp-knot-web:
+    image: mcp-knot/web:local
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    container_name: mcp-knot-web
     ports:
       - '8180:80'
     depends_on:
-      - mcp-knot-api
-    environment:
-      - VITE_API_BASE_URL=http://mcp-knot-api:8181
+      mcp-knot-api:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - mcp-knot-network
@@ -54,7 +42,3 @@ services:
 networks:
   mcp-knot-network:
     driver: bridge
-
-volumes:
-  mcp-knot-logs:
-    driver: local

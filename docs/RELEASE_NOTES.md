@@ -2,6 +2,12 @@
 
 ## Unreleased — MCP 2026-07-28 协议升级 + 代码债收尾 + 出站 MCP server OAuth
 
+### 发布与 CLI 产物
+
+- share、protocol、core、cli 统一版本，通过 `release:prepare` 创建版本提交与本地 tag，审核后由 `release:push` 精确推送。Tag CI 完成验证、npm 发布后再创建 GitHub Release。
+- 修复编译后的 CLI 目录导入错误，`--version` 改为读取包版本；发布检查新增解包产物运行验证，core tarball 排除内部测试辅助文件。
+- 增加 modern/legacy 双向协议兼容层，包含兼容配置、归一化模型、统一错误和 MRTR 状态处理（原待发布 changeset 的说明）。
+
 ### 新增（P2：入站 OAuth 2.1 Protected Resource）
 
 - **Hub 作为 MCP OAuth 2.1 Protected Resource（RFC9728）**：`/:group/mcp` 端点现在校验 `Authorization: Bearer <token>`，对 MCP 客户端（Claude Desktop 等）做标准授权。

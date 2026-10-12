@@ -12,7 +12,7 @@ import { z } from 'zod/v4';
 
 import { McpProtocolHandler } from '../protocol/mcp-protocol-handler.js';
 
-import type { CliConfig } from '../types';
+import type { CliConfig } from '../types/index.js';
 import type { CompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';

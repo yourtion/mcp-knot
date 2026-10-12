@@ -83,7 +83,7 @@ if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
     echo "检查 HTTP 端点..."
 fi
 
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health 2>/dev/null || echo "000")
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8181/api/ping 2>/dev/null || echo "000")
 
 if [ "$HTTP_STATUS" = "200" ]; then
     log_info "HTTP 端点响应正常 (200)"
@@ -99,7 +99,7 @@ if [ "$VERBOSE" = true ] && [ "$JSON_OUTPUT" = false ]; then
     echo "检查响应时间..."
 fi
 
-RESPONSE_TIME=$(curl -s -o /dev/null -w "%{time_total}" http://localhost:3000/health 2>/dev/null || echo "0")
+RESPONSE_TIME=$(curl -s -o /dev/null -w "%{time_total}" http://localhost:8181/api/ping 2>/dev/null || echo "0")
 RESPONSE_TIME_MS=$(echo "$RESPONSE_TIME * 1000" | bc)
 
 if (( $(echo "$RESPONSE_TIME < 1" | bc -l) )); then
