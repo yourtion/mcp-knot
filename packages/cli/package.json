@@ -1,6 +1,6 @@
 {
   "name": "@mcp-core/mcp-knot-cli",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": false,
   "description": "MCP Knot CLI包 - 提供命令行界面的MCP服务聚合器",
   "keywords": [
