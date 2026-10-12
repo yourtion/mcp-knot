@@ -28,7 +28,7 @@ importers:
         version: 4.19.4
       vitest:
         specifier: ^4.1.4
-        version: 4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))
+        version: 4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))
 
   backend:
     dependencies:
@@ -141,7 +141,7 @@ importers:
         version: 20.17.45
       '@vitejs/plugin-vue':
         specifier: ^6.0.1
-        version: 6.0.1(vite@7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))(vue@3.5.17(typescript@5.8.3))
+        version: 6.0.1(vite@7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))(vue@3.5.17(typescript@5.8.3))
       '@vue/test-utils':
         specifier: ^2.4.6
         version: 2.4.6
@@ -203,6 +203,9 @@ importers:
       jsonata:
         specifier: ^2.0.3
         version: 2.1.0
+      yaml:
+        specifier: 2.8.1
+        version: 2.8.1
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -2857,6 +2860,11 @@ packages:
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
 
+  yaml@2.8.1:
+    resolution: {integrity: sha512-lcYcMxX2PO9XMGvAJkJ3OsNMw+/7FKes7/hgerGUYWIoWu5j/+YQqcZr5JnPZWzOsEBgMbSbiSTn/dv/69Mkpw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
@@ -3718,10 +3726,10 @@ snapshots:
 
   '@types/web-bluetooth@0.0.21': {}
 
-  '@vitejs/plugin-vue@6.0.1(vite@7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))(vue@3.5.17(typescript@5.8.3))':
+  '@vitejs/plugin-vue@6.0.1(vite@7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))(vue@3.5.17(typescript@5.8.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-beta.29
-      vite: 7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)
+      vite: 7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1)
       vue: 3.5.17(typescript@5.8.3)
 
   '@vitest/coverage-v8@4.1.4(vitest@4.1.4)':
@@ -3736,7 +3744,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))
+      vitest: 4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))
 
   '@vitest/expect@4.1.4':
     dependencies:
@@ -3747,13 +3755,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.4(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))':
+  '@vitest/mocker@4.1.4(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))':
     dependencies:
       '@vitest/spy': 4.1.4
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)
+      vite: 7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1)
 
   '@vitest/pretty-format@4.1.4':
     dependencies:
@@ -3782,7 +3790,7 @@ snapshots:
       sirv: 3.0.2
       tinyglobby: 0.2.15
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))
+      vitest: 4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))
 
   '@vitest/utils@4.1.4':
     dependencies:
@@ -5123,7 +5131,7 @@ snapshots:
 
   validator@13.15.15: {}
 
-  vite@7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4):
+  vite@7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1):
     dependencies:
       esbuild: 0.27.7
       fdir: 6.5.0(picomatch@4.0.3)
@@ -5138,11 +5146,12 @@ snapshots:
       less: 4.5.1
       terser: 5.43.1
       tsx: 4.19.4
+      yaml: 2.8.1
 
-  vitest@4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)):
+  vitest@4.1.4(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(jsdom@25.0.1)(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1)):
     dependencies:
       '@vitest/expect': 4.1.4
-      '@vitest/mocker': 4.1.4(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4))
+      '@vitest/mocker': 4.1.4(vite@7.3.1(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1))
       '@vitest/pretty-format': 4.1.4
       '@vitest/runner': 4.1.4
       '@vitest/snapshot': 4.1.4
@@ -5159,7 +5168,7 @@ snapshots:
       tinyexec: 1.0.2
       tinyglobby: 0.2.15
       tinyrainbow: 3.1.0
-      vite: 7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)
+      vite: 7.3.1(@types/node@20.17.45)(jiti@2.4.2)(less@4.5.1)(terser@5.43.1)(tsx@4.19.4)(yaml@2.8.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@vitest/coverage-v8': 4.1.4(vitest@4.1.4)
@@ -5275,6 +5284,8 @@ snapshots:
   xml-name-validator@5.0.0: {}
 
   xmlchars@2.2.0: {}
+
+  yaml@2.8.1: {}
 
   zod@4.3.6: {}
 

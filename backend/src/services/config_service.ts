@@ -10,6 +10,7 @@ import path from 'node:path';
 
 import { getAllConfig, saveConfig } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
+import { getSkillRepository } from './skills-service.js';
 
 import type {
   ConfigBackup,
@@ -267,6 +268,18 @@ export class ConfigService implements IConfigService {
 
     // 验证组配置
     for (const [groupId, group] of Object.entries(groupConfig)) {
+      if (group.skills) {
+        try {
+          await getSkillRepository().catalog(group.skills, groupId);
+        } catch (error) {
+          errors.push({
+            path: `${groupId}.skills`,
+            message: error instanceof Error ? error.message : '技能发布引用无效',
+            code: 'INVALID_SKILL_SELECTION',
+            severity: 'error',
+          });
+        }
+      }
       // 检查服务器是否存在
       for (const serverId of group.servers || []) {
         if (!availableServers.includes(serverId)) {

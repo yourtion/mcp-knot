@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+/config/.skills/
 
 # Backend runtime config (env-specific, never commit real values)
 backend/config/*

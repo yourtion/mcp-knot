@@ -359,6 +359,7 @@ export interface CreateGroupRequest {
   servers: string[];
   /** 包含的工具名称列表 */
   tools: string[];
+  skills?: Group['skills'];
 }
 
 /**
@@ -373,6 +374,7 @@ export interface UpdateGroupRequest {
   servers?: string[];
   /** 包含的工具名称列表 */
   tools?: string[];
+  skills?: Group['skills'];
 }
 
 /**
