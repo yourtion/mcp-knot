@@ -4,6 +4,7 @@
  */
 
 import { ConfigError, ErrorCode, ServiceError } from '@mcp-core/mcp-knot-core';
+import { registerSkills } from '@mcp-core/mcp-knot-core/skills';
 import { isInputRequiredResult, McpServer } from '@modelcontextprotocol/server';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import { z } from 'zod/v4';
 
 import { extractFromMeta, runWithTraceContext } from '../../middleware/trace-context.js';
 import { MrtrRelayService } from '../../services/mrtr-relay-service.js';
+import { getSkillRepository } from '../../services/skills-service.js';
 
 import type { HubState } from '../../services/mrtr-relay-service.js';
 import type { McpServiceManagerInterface } from '@mcp-core/mcp-knot-core';
@@ -142,6 +144,11 @@ export class GroupMcpService {
 
       // 注册 Hub 元数据 resources（协议层 cacheHint 在 resources/read 的落点）
       await this.registerGroupResources();
+
+      if (this.groupConfig?.skills) {
+        const catalog = await getSkillRepository().catalog(this.groupConfig.skills, this.groupId);
+        registerSkills(this.mcpServer, catalog);
+      }
 
       this.isInitialized = true;
       logger.info('组MCP服务初始化完成', {

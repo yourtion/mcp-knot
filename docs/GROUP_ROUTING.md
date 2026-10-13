@@ -10,6 +10,7 @@ MCP Knot 的组路由功能允许您通过特定的组路径 (`/:group/mcp`) 访
 - **工具过滤**: 每个组可以配置允许的工具列表
 - **访问控制**: 支持组级别的验证密钥，以及 OAuth 2.1 Protected Resource
 - **灵活配置**: 每个组可以使用不同的 MCP 服务器组合
+- **技能分发**: `skills.include` 固定选择来源、revision 和技能名称；已选择技能的组允许 `servers: []`，配置与操作步骤见 [Skills 使用指南](SKILLS.md)。
 
 ## 配置
 

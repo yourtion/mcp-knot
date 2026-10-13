@@ -12,6 +12,7 @@
 
 - **多服务器 MCP 集成**: 支持多个 MCP 服务器的集中管理
 - **基于组的路由**: 通过组特定端点访问 MCP 服务 (`/:group/mcp`)
+- **固定版本 Skills 分发**: 从本地目录、公共 Git 仓库或 skills CLI 导入选定技能，通过 Group 端点与工具一起分发固定快照。参见 [Skills 使用指南](docs/SKILLS.md)。
 - **CLI MCP 服务器**: 独立的命令行 MCP 服务器，用于工具聚合
 - **流式端点**: 支持 HTTP 和 SSE 端点
 - **工具过滤**: 分组支持工具过滤和筛选功能
@@ -79,6 +80,7 @@ API 服务器将在 `http://localhost:8181` 可用，提供以下端点：
 - `/mcp` - 全局 MCP 端点（遗留，用于管理）
 - `/:group/mcp` - 组特定的 MCP 端点
 - `/api/groups` - 组管理 API
+- `/api/skills` - 技能来源、同步与市场搜索管理 API（管理员）
 
 ### 2. CLI MCP 服务器
 

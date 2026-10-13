@@ -12,6 +12,7 @@ A centralized hub server engineered to consolidate multiple MCP servers into ded
 
 - **Multi-server MCP Integration**: Support for multiple MCP servers with centralized management
 - **Group-based Routing**: Access MCP services through group-specific endpoints (`/:group/mcp`)
+- **Versioned Skills Distribution**: Import selected skills from local directories, public Git repositories or the skills CLI, then publish fixed snapshots alongside tools through a Group endpoint. See the [Skills guide](docs/SKILLS.md).
 - **CLI MCP Server**: Standalone command-line MCP server for tool aggregation
 - **Streamable Endpoints**: Support for both HTTP and SSE endpoints
 - **Tool Filtering**: Groups support tool filtering and screening capabilities
@@ -81,6 +82,7 @@ The API server will be available at `http://localhost:8181` with the following e
 - `/mcp` - Global MCP endpoint (legacy, for management)
 - `/:group/mcp` - Group-specific MCP endpoints
 - `/api/groups` - Group management API
+- `/api/skills` - Administrator APIs for skill sources, synchronization and market search
 - `/api/config` - System configuration management API
 - `/api/servers` - MCP server management API
 - `/api/tools` - Tool management and execution API

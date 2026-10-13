@@ -25,6 +25,7 @@ import {
   getCoreServiceManager,
   reloadCoreServiceManager,
 } from '../../services/service-registry.js';
+import { getSkillRepository } from '../../services/skills-service.js';
 import { getAllConfig, saveConfig } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
 import { performanceMonitor } from '../../utils/performance-monitor.js';
@@ -86,6 +87,7 @@ type GroupItem = {
     createdAt?: string;
     lastUpdated?: string;
   };
+  skills?: CreateGroupRequest['skills'];
   [key: string]: unknown;
 };
 
@@ -187,6 +189,7 @@ export async function listGroups(): Promise<{
           toolCount,
           filteredToolCount: filteredTools.length,
           tools: groupConfig.tools || [],
+          ...(groupConfig.skills !== undefined && { skills: groupConfig.skills }),
           toolFilterMode: toolFilter.length > 0 ? 'whitelist' : 'none',
           isHealthy: connectedServers.length > 0,
           healthScore:
@@ -370,6 +373,7 @@ export async function getGroupDetail(groupId: string): Promise<Record<string, un
     tools: groupTools,
     toolCount: groupTools.length,
     toolFilter: groupConfig.tools || [],
+    ...(groupConfig.skills !== undefined && { skills: groupConfig.skills }),
     toolFilterMode: groupConfig.tools && groupConfig.tools.length > 0 ? 'whitelist' : 'none',
     isHealthy: connectedServers.length > 0,
     healthScore:
@@ -658,7 +662,20 @@ export async function createGroup(body: CreateGroupRequest): Promise<Record<stri
     description: body.description || '',
     servers: body.servers || [],
     tools: body.tools || [],
+    ...(body.skills !== undefined && { skills: body.skills }),
   };
+
+  if (body.skills) {
+    if (newGroup.servers.length === 0 && body.skills.include.length === 0)
+      throw new GroupServiceError('VALIDATION_ERROR', '组至少需要服务器或已发布技能', 400);
+    try {
+      await getSkillRepository().catalog(body.skills, body.id);
+    } catch (error) {
+      throw new GroupServiceError('VALIDATION_ERROR', '技能发布引用无效', 400, [
+        (error as Error).message,
+      ]);
+    }
+  }
 
   // 保存到配置文件
   const updatedGroups = {
@@ -690,6 +707,7 @@ export async function createGroup(body: CreateGroupRequest): Promise<Record<stri
     description: body.description || '',
     servers: body.servers || [],
     tools: body.tools || [],
+    ...(body.skills !== undefined && { skills: body.skills }),
     toolFilterMode: body.tools && body.tools.length > 0 ? 'whitelist' : 'none',
     validation: {
       enabled: false,
@@ -771,7 +789,20 @@ export async function updateGroup(
     ...(body.description !== undefined && { description: body.description }),
     ...(body.servers !== undefined && { servers: body.servers }),
     ...(body.tools !== undefined && { tools: body.tools }),
+    ...(body.skills !== undefined && { skills: body.skills }),
   };
+
+  if (body.skills) {
+    if (updatedGroup.servers.length === 0 && body.skills.include.length === 0)
+      throw new GroupServiceError('VALIDATION_ERROR', '组至少需要服务器或已发布技能', 400);
+    try {
+      await getSkillRepository().catalog(body.skills, groupId);
+    } catch (error) {
+      throw new GroupServiceError('VALIDATION_ERROR', '技能发布引用无效', 400, [
+        (error as Error).message,
+      ]);
+    }
+  }
 
   // 保存到配置文件
   const updatedGroups = {
@@ -803,6 +834,7 @@ export async function updateGroup(
     description: updatedGroup.description || '',
     servers: updatedGroup.servers || [],
     tools: updatedGroup.tools || [],
+    ...(updatedGroup.skills !== undefined && { skills: updatedGroup.skills }),
     toolFilterMode: updatedGroup.tools && updatedGroup.tools.length > 0 ? 'whitelist' : 'none',
     validation: {
       enabled: updatedGroup.validation?.enabled || false,

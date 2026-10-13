@@ -3,6 +3,8 @@
  * 包含组配置校验、组 ID 校验、工具复杂度评估
  */
 
+import { GroupSkillsSchema } from '@mcp-core/mcp-knot-share/config';
+
 import type { CreateGroupRequest, UpdateGroupRequest } from '@mcp-core/mcp-knot-share';
 
 // JSON Schema 类型定义（用于工具复杂度评估）
@@ -35,6 +37,14 @@ export function validateGroupData(data: CreateGroupRequest | UpdateGroupRequest)
   errors: string[];
 } {
   const errors: string[] = [];
+
+  if (data.skills !== undefined) {
+    const result = GroupSkillsSchema.safeParse(data.skills);
+    if (!result.success)
+      errors.push(
+        ...result.error.issues.map((issue) => `skills.${issue.path.join('.')}: ${issue.message}`),
+      );
+  }
 
   // 验证名称
   if ('name' in data && data.name !== undefined) {

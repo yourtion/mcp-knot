@@ -8,4 +8,5 @@ export * from './compatibility.schema.js';
 export * from './group.schema.js';
 export * from './mcp.schema.js';
 export * from './server.schema.js';
+export * from './skills.schema.js';
 export * from './system.schema.js';

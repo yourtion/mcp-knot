@@ -16,6 +16,7 @@ COPY backend ./backend
 RUN pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:api
 
 FROM node:22-alpine AS production
+RUN apk add --no-cache git
 RUN npm install -g pnpm@10.6.4
 WORKDIR /app
 COPY --chown=node:node package.json pnpm-workspace.yaml pnpm-lock.yaml ./
