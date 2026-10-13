@@ -1,6 +1,19 @@
 # MCP Knot Release Notes
 
-## Unreleased — MCP 2026-07-28 协议升级 + 代码债收尾 + 出站 MCP server OAuth
+## 0.2.0 — Skills 来源与 MCP 分发
+
+版本发布状态以 [GitHub Releases](https://github.com/yourtion/mcp-knot/releases) 为准。share、protocol、core、cli 四个公开包统一使用同一版本；本次新增能力采用 minor 升级。
+
+- **标准 Skills 分发**：Group MCP 端点支持 `io.modelcontextprotocol/skills` 扩展的 `skills/list`、`skills/get` 和附件 `resources/read`，保留完整 frontmatter、文件清单、SHA-256 与字节数。
+- **来源获取与持久化**：支持本地目录、公共 HTTPS Git 仓库及 `skills` CLI，按选择获取技能；保存不可变快照及来源记录，已发布内容可离线读取。CLI 支持受限 add 命令解析、实际版本固定与项目 lock 更新。
+- **显式发布与回滚**：`Group.skills.include` 固定 sourceId、revision 和 skill。来源更新生成候选，不自动替换已发布技能；批量配置保存、备份恢复及 Group CRUD 均验证引用并刷新后续 MCP 请求视图。
+- **市场搜索 API**：管理员可搜索公开 skills.sh 市场，查看本地导入/发布状态及可复用 Git/CLI 来源配置，无需 Vercel 凭据。
+- **部署与恢复**：backend 镜像包含 Git；Skills 数据位于 `CONFIG_PATH/.skills/`，备份需包含该目录，现有配置备份 API 不包含技能文件。纯 Skills Group 可用，全局 MCP 配置仍要求至少一个 upstream。
+- **范围与兼容**：默认组不会公开导入技能，读取沿用现有 Group 认证与 `mcp:tools` scope。Hub 原子分发 Skill 及附件，模型/宿主负责引用其他技能与激活。Web 编辑、定时任务、私有来源凭据、生产 CLI Skills 接入及 GC 保留为后续能力。
+
+操作和限制见 [Skills 使用指南](SKILLS.md)；验证记录见[提交前验证报告](research/2026-10-13-skills-pr-validation.md)。
+
+## 历史协议升级说明 — MCP 2026-07-28 + 代码债收尾 + 出站 MCP server OAuth
 
 ### 发布与 CLI 产物
 
