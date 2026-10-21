@@ -181,6 +181,7 @@
 </template>
 
 <script setup lang="ts">
+import { JsonSchemaSchema } from '@mcp-core/mcp-knot-share/config';
 import { AddIcon, FileExportIcon, FileImportIcon, SwapIcon } from 'tdesign-icons-vue-next';
 import {
   Button as TButton,
@@ -201,7 +202,7 @@ import { onMounted, reactive, ref } from 'vue';
 import { StatusTag } from '@/components/common';
 import { apiToMcpService } from '@/services/api-to-mcp';
 
-import type { ApiConfigInfo, TestApiConfigResponse } from '@/types/api-to-mcp';
+import type { ApiConfigInfo, ApiToolConfig, TestApiConfigResponse } from '@/types/api-to-mcp';
 
 // --- State ---
 const loading = ref(false);
@@ -273,9 +274,22 @@ function formatJson(data: unknown): string {
   }
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringMap(value: Record<string, unknown>): value is Record<string, string> {
+  return Object.values(value).every((entry) => typeof entry === 'string');
+}
+
 function parseJsonSafe(text: string): Record<string, unknown> | null {
   try {
-    return JSON.parse(text || '{}') as Record<string, unknown>;
+    const value: unknown = JSON.parse(text || '{}');
+    if (!isJsonObject(value)) {
+      MessagePlugin.error('JSON 必须是对象');
+      return null;
+    }
+    return value;
   } catch {
     MessagePlugin.error('JSON 格式错误');
     return null;
@@ -336,6 +350,24 @@ async function handleSaveConfig(): Promise<void> {
   const headers = parseJsonSafe(formData.headers);
   const parameters = parseJsonSafe(formData.parametersSchema);
   if (!headers || !parameters) return;
+  if (!isStringMap(headers)) {
+    MessagePlugin.error('请求头的值必须是字符串');
+    return;
+  }
+  const parameterSchema = JsonSchemaSchema.safeParse({
+    ...parameters,
+    type: parameters.type ?? 'object',
+    properties: parameters.properties ?? {},
+  });
+  if (!parameterSchema.success) {
+    MessagePlugin.error('参数 Schema 无效，请检查 type 和 properties');
+    return;
+  }
+  const required = parameters.required ?? [];
+  if (!Array.isArray(required) || !required.every((name) => typeof name === 'string')) {
+    MessagePlugin.error('参数 Schema 的 required 必须是字符串数组');
+    return;
+  }
 
   if (!formData.name.trim()) {
     MessagePlugin.warning('请输入配置名称');
@@ -348,7 +380,7 @@ async function handleSaveConfig(): Promise<void> {
 
   dialogSaving.value = true;
   try {
-    const configPayload = {
+    const configPayload: ApiToolConfig = {
       id: isEditing.value
         ? editingId.value
         : `api-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -360,9 +392,8 @@ async function handleSaveConfig(): Promise<void> {
         headers,
       },
       parameters: {
-        type: 'object',
-        properties: (parameters as Record<string, unknown>).properties ?? {},
-        required: ((parameters as Record<string, unknown>).required as string[]) ?? [],
+        ...parameterSchema.data,
+        required,
       },
       response: {},
     };

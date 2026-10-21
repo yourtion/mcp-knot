@@ -77,6 +77,18 @@ vi.mock('tdesign-icons-vue-next', () => ({
 
 // Global stubs for Tabs components (not in test-setup.ts)
 const globalStubs = {
+  TInput: {
+    name: 'TInput',
+    template: '<input class="mock-input" />',
+    props: ['modelValue', 'placeholder', 'clearable'],
+    emits: ['update:modelValue', 'change'],
+  },
+  TSelect: {
+    name: 'TSelect',
+    template: '<select class="mock-select"><slot /></select>',
+    props: ['modelValue', 'placeholder', 'clearable', 'options'],
+    emits: ['update:modelValue', 'change'],
+  },
   TTabs: {
     name: 'TTabs',
     template: '<div class="mock-t-tabs"><slot /></div>',
@@ -255,9 +267,7 @@ describe('Tools', () => {
       },
     });
 
-    const vm = wrapper.vm as Record<string, unknown>;
-    const handleSearchChange = vm.handleSearchChange as (value: string | number) => void;
-    handleSearchChange('test-search');
+    wrapper.findComponent({ name: 'TInput' }).vm.$emit('change', 'test-search');
 
     expect(mockUpdateFilters).toHaveBeenCalledWith({ search: 'test-search' });
   });
@@ -270,11 +280,7 @@ describe('Tools', () => {
       },
     });
 
-    const vm = wrapper.vm as Record<string, unknown>;
-    const handleServerChange = vm.handleServerChange as (
-      value: string | number | undefined,
-    ) => void;
-    handleServerChange('server-1');
+    wrapper.findAllComponents({ name: 'TSelect' })[0].vm.$emit('change', 'server-1');
 
     expect(mockUpdateFilters).toHaveBeenCalledWith({ serverId: 'server-1' });
   });
@@ -287,11 +293,7 @@ describe('Tools', () => {
       },
     });
 
-    const vm = wrapper.vm as Record<string, unknown>;
-    const handleServerChange = vm.handleServerChange as (
-      value: string | number | undefined,
-    ) => void;
-    handleServerChange(undefined);
+    wrapper.findAllComponents({ name: 'TSelect' })[0].vm.$emit('change', undefined);
 
     expect(mockUpdateFilters).toHaveBeenCalledWith({ serverId: undefined });
   });
@@ -304,11 +306,7 @@ describe('Tools', () => {
       },
     });
 
-    const vm = wrapper.vm as Record<string, unknown>;
-    const handleStatusChange = vm.handleStatusChange as (
-      value: string | number | undefined,
-    ) => void;
-    handleStatusChange('available');
+    wrapper.findAllComponents({ name: 'TSelect' })[1].vm.$emit('change', 'available');
 
     expect(mockUpdateFilters).toHaveBeenCalledWith({ status: 'available' });
   });
@@ -321,11 +319,7 @@ describe('Tools', () => {
       },
     });
 
-    const vm = wrapper.vm as Record<string, unknown>;
-    const handleStatusChange = vm.handleStatusChange as (
-      value: string | number | undefined,
-    ) => void;
-    handleStatusChange(undefined);
+    wrapper.findAllComponents({ name: 'TSelect' })[1].vm.$emit('change', undefined);
 
     expect(mockUpdateFilters).toHaveBeenCalledWith({ status: 'all' });
   });

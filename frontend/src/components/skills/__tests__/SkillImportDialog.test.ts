@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import SkillImportDialog from '../SkillImportDialog.vue';
-import { second, source, stubs } from './fixtures';
+import { second, source, stubs } from '../test-utils/fixtures';
 import { skillService } from '@/services/skill';
 
 vi.mock('@/services/skill', async (importOriginal) => ({

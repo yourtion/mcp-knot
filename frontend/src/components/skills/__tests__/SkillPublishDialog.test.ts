@@ -3,7 +3,15 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import SkillPublishDialog from '../SkillPublishDialog.vue';
-import { first, groupDetail, groupInfo, other, second, source, stubs } from './fixtures';
+import {
+  first,
+  groupDetail,
+  groupInfo,
+  other,
+  second,
+  source,
+  stubs,
+} from '../test-utils/fixtures';
 import { getGroup, getGroups, updateGroup } from '@/services/group';
 import { skillService } from '@/services/skill';
 

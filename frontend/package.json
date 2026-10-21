@@ -12,7 +12,8 @@
     "check": "oxlint --fix src/ && oxfmt src/",
     "dev": "rsbuild dev --open",
     "preview": "rsbuild preview",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@mcp-core/mcp-knot-share": "workspace:^",
@@ -36,6 +37,7 @@
     "echarts": "^6.0.0",
     "jsdom": "^25.0.1",
     "less": "^4.2.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vue-tsc": "2.2.12"
   }
 }

@@ -136,6 +136,19 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useDashboardStore } from '@/stores/dashboard';
 
 import type { Activity, SystemHealth } from '@/types/dashboard';
+import type { Component } from 'vue';
+
+interface StatCardConfig {
+  label: string;
+  value: string | number;
+  icon: Component;
+  colorClass: string;
+  trend?: {
+    value: number;
+    direction: 'up' | 'down' | 'stable';
+    period: string;
+  };
+}
 
 const dashboardStore = useDashboardStore();
 
@@ -147,7 +160,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 const isLoading = computed(() => dashboardStore.loading.stats);
 
 // --- Stat card configurations ---
-const statCardConfigs = computed(() => {
+const statCardConfigs = computed<StatCardConfig[]>(() => {
   const stats = dashboardStore.stats;
   if (!stats) {
     return [
@@ -176,10 +189,7 @@ const statCardConfigs = computed(() => {
       colorClass: 'green',
       trend: {
         value: connectionRate,
-        direction: (connectionRate >= 80 ? 'up' : connectionRate >= 50 ? 'stable' : 'down') as
-          | 'up'
-          | 'down'
-          | 'stable',
+        direction: connectionRate >= 80 ? 'up' : connectionRate >= 50 ? 'stable' : 'down',
         period: '连接率',
       },
     },

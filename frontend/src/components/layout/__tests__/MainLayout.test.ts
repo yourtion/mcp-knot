@@ -98,9 +98,7 @@ describe('MainLayout', () => {
 
     expect(wrapper.find('.sidebar').classes()).not.toContain('collapsed');
 
-    // Access the component instance and call toggleSidebar directly
-    const vm = wrapper.vm as Record<string, unknown>;
-    (vm.toggleSidebar as () => void)();
+    wrapper.findComponent({ name: 'MockAppHeader' }).vm.$emit('toggle-sidebar');
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.sidebar').classes()).toContain('collapsed');
