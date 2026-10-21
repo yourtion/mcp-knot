@@ -1,323 +1,194 @@
-/**
- * 组管理API集成测试
- */
-
 import { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const service = vi.hoisted(() => ({
+  listGroups: vi.fn(),
+  getGroupDetail: vi.fn(),
+  getGroupHealth: vi.fn(),
+  getGroupServers: vi.fn(),
+  createGroup: vi.fn(),
+  updateGroup: vi.fn(),
+  deleteGroup: vi.fn(),
+}));
+
+vi.mock('./group-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./group-service.js')>()),
+  ...service,
+}));
+
+import { GroupServiceError } from './group-service.js';
 import { groupsApi } from './index.js';
 
-// 定义路由类型 - 修改以匹配Hono的实际路由类型
-interface RouteInfo {
-  path: string;
-  method: string;
-}
-
-// 定义测试上下文类型
-interface TestContext {
-  req: {
-    json: () => Promise<Record<string, unknown>>;
-    param: (name: string) => string;
-    header: (name: string) => string;
-  };
-  json: (data: unknown) => { data: unknown };
-  status: (code: number) => { status: number };
-}
-
-describe('Groups API Integration Tests', () => {
+describe('Groups API', () => {
   let app: Hono;
-  let _testContext: TestContext;
 
-  beforeAll(async () => {
-    // 创建测试应用实例
+  beforeEach(() => {
+    for (const method of Object.values(service)) method.mockReset();
     app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('requestId', 'groups-request');
+      await next();
+    });
     app.route('/api/groups', groupsApi);
-
-    // 初始化测试上下文
-    _testContext = {
-      req: {
-        json: async () => ({}),
-        param: (_name: string) => 'test-group',
-        header: (_name: string) => '',
-      },
-      json: (data: unknown) => ({ data }),
-      status: (code: number) => ({ status: code }),
-    };
   });
 
-  afterAll(async () => {
-    // 测试后的清理
+  it('保持既有的分组 API 路由契约', () => {
+    const routes = groupsApi.routes
+      .filter((route) => route.method !== 'ALL')
+      .map((route) => `${route.method} ${route.path}`)
+      .sort();
+    expect(routes).toEqual(
+      [
+        'GET /',
+        'POST /',
+        'GET /:groupId',
+        'PUT /:groupId',
+        'DELETE /:groupId',
+        'GET /:groupId/health',
+        'GET /:groupId/servers',
+        'GET /:groupId/tools',
+        'POST /:groupId/tools',
+        'GET /:groupId/available-tools',
+        'POST /:groupId/validate-tool-access',
+        'POST /:groupId/validation-key',
+        'GET /:groupId/validation-key',
+        'POST /:groupId/validate-key',
+        'DELETE /:groupId/validation-key',
+        'POST /:groupId/generate-validation-key',
+      ].sort(),
+    );
   });
 
-  describe('GET /api/groups', () => {
-    it('应该返回组列表', async () => {
-      expect(groupsApi).toBeDefined();
+  it('返回服务提供的组列表', async () => {
+    const data = { groups: [{ id: 'team', name: 'Team' }], total: 1 };
+    service.listGroups.mockResolvedValue(data);
 
-      // 测试路由存在性
-      const routes = groupsApi.routes;
-      expect(routes).toBeDefined();
+    const response = await app.request('/api/groups');
 
-      // 查找GET /路由
-      const getRoute = routes.find(
-        (route: RouteInfo) => route.path === '/' && route.method === 'GET',
-      );
-      expect(getRoute).toBeDefined();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      success: true,
+      data,
+      requestId: 'groups-request',
+    });
+    expect(service.listGroups).toHaveBeenCalledOnce();
+  });
+
+  it('详情接口传递解码后的组 ID', async () => {
+    const data = { id: 'team space', name: 'Team' };
+    service.getGroupDetail.mockResolvedValue(data);
+
+    const response = await app.request('/api/groups/team%20space');
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual(data);
+    expect(service.getGroupDetail).toHaveBeenCalledWith('team space');
+  });
+
+  it('健康检查保留服务提供的降级状态码', async () => {
+    const data = { status: 'unhealthy', servers: [] };
+    service.getGroupHealth.mockResolvedValue({ data, status: 503 });
+
+    const response = await app.request('/api/groups/team/health');
+
+    expect(response.status).toBe(503);
+    expect((await response.json()).data).toEqual(data);
+    expect(service.getGroupHealth).toHaveBeenCalledWith('team');
+  });
+
+  it('服务器接口返回对应组的服务器', async () => {
+    const data = { servers: [{ id: 'local', status: 'connected' }] };
+    service.getGroupServers.mockResolvedValue(data);
+
+    const response = await app.request('/api/groups/team/servers');
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual(data);
+    expect(service.getGroupServers).toHaveBeenCalledWith('team');
+  });
+
+  it('创建和更新请求保留客户端配置', async () => {
+    const input = { id: 'team', name: 'Team', servers: ['local'], tools: ['search'] };
+    service.createGroup.mockResolvedValue({ group: input });
+    service.updateGroup.mockResolvedValue({ group: { ...input, name: 'Renamed' } });
+    const request = (method: string, body: unknown) => ({
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const created = await app.request('/api/groups', request('POST', input));
+    const updated = await app.request('/api/groups/team', request('PUT', { name: 'Renamed' }));
+
+    expect(created.status).toBe(200);
+    expect((await created.json()).data.group).toEqual(input);
+    expect(service.createGroup).toHaveBeenCalledWith(input);
+    expect(updated.status).toBe(200);
+    expect((await updated.json()).data.group.name).toBe('Renamed');
+    expect(service.updateGroup).toHaveBeenCalledWith('team', { name: 'Renamed' });
+  });
+
+  it('删除请求传递组 ID 并返回删除结果', async () => {
+    service.deleteGroup.mockResolvedValue({ deleted: true });
+
+    const response = await app.request('/api/groups/team', { method: 'DELETE' });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual({ deleted: true });
+    expect(service.deleteGroup).toHaveBeenCalledWith('team');
+  });
+
+  it('不存在的组返回 404 并保留业务错误码', async () => {
+    service.getGroupDetail.mockRejectedValue(
+      new GroupServiceError('GROUP_NOT_FOUND', '组不存在', 404),
+    );
+
+    const response = await app.request('/api/groups/missing');
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: { code: 'GROUP_NOT_FOUND', message: '组不存在' },
+      requestId: 'groups-request',
     });
   });
 
-  describe('POST /api/groups', () => {
-    it('应该创建新组', async () => {
-      expect(groupsApi).toBeDefined();
+  it('创建校验失败时保留详细错误', async () => {
+    service.createGroup.mockRejectedValue(
+      new GroupServiceError('VALIDATION_ERROR', '组配置无效', 400, ['名称不能为空']),
+    );
 
-      // 查找POST路由
-      const routes = groupsApi.routes;
-      const postRoute = routes.find(
-        (route: RouteInfo) => route.path === '/' && route.method === 'POST',
-      );
-      expect(postRoute).toBeDefined();
+    const response = await app.request('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toEqual({
+      code: 'VALIDATION_ERROR',
+      message: '组配置无效',
+      details: ['名称不能为空'],
     });
   });
 
-  describe('GET /api/groups/:groupId', () => {
-    it('应该返回特定组的详细信息', async () => {
-      expect(groupsApi).toBeDefined();
+  it('默认组删除限制保留 403', async () => {
+    service.deleteGroup.mockRejectedValue(
+      new GroupServiceError('CANNOT_DELETE_DEFAULT_GROUP', '不能删除默认组', 403),
+    );
 
-      // 查找GET /:groupId路由
-      const routes = groupsApi.routes;
-      const getDetailRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId' && route.method === 'GET',
-      );
-      expect(getDetailRoute).toBeDefined();
-    });
+    const response = await app.request('/api/groups/default', { method: 'DELETE' });
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).error.code).toBe('CANNOT_DELETE_DEFAULT_GROUP');
   });
 
-  describe('PUT /api/groups/:groupId', () => {
-    it('应该更新组配置', async () => {
-      expect(groupsApi).toBeDefined();
+  it('未预期的服务异常返回 500', async () => {
+    service.listGroups.mockRejectedValue(new Error('service unavailable'));
 
-      // 查找PUT /:groupId路由
-      const routes = groupsApi.routes;
-      const putRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId' && route.method === 'PUT',
-      );
-      expect(putRoute).toBeDefined();
-    });
-  });
+    const response = await app.request('/api/groups');
 
-  describe('DELETE /api/groups/:groupId', () => {
-    it('应该删除组', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找DELETE /:groupId路由
-      const routes = groupsApi.routes;
-      const deleteRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId' && route.method === 'DELETE',
-      );
-      expect(deleteRoute).toBeDefined();
-    });
-  });
-
-  describe('GET /api/groups/:groupId/health', () => {
-    it('应该返回组的健康检查状态', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找健康检查路由
-      const routes = groupsApi.routes;
-      const healthRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/health' && route.method === 'GET',
-      );
-      expect(healthRoute).toBeDefined();
-    });
-  });
-
-  describe('GET /api/groups/:groupId/tools', () => {
-    it('应该返回组的工具列表', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找工具列表路由
-      const routes = groupsApi.routes;
-      const toolsRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/tools' && route.method === 'GET',
-      );
-      expect(toolsRoute).toBeDefined();
-    });
-  });
-
-  describe('POST /api/groups/:groupId/tools', () => {
-    it('应该配置组工具过滤', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找工具配置路由
-      const routes = groupsApi.routes;
-      const toolsConfigRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/tools' && route.method === 'POST',
-      );
-      expect(toolsConfigRoute).toBeDefined();
-    });
-  });
-
-  describe('GET /api/groups/:groupId/available-tools', () => {
-    it('应该返回组可用工具', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找可用工具路由
-      const routes = groupsApi.routes;
-      const availableToolsRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/available-tools' && route.method === 'GET',
-      );
-      expect(availableToolsRoute).toBeDefined();
-    });
-  });
-
-  describe('POST /api/groups/:groupId/validate-tool-access', () => {
-    it('应该验证工具访问权限', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找工具权限验证路由
-      const routes = groupsApi.routes;
-      const validateAccessRoute = routes.find(
-        (route: RouteInfo) =>
-          route.path === '/:groupId/validate-tool-access' && route.method === 'POST',
-      );
-      expect(validateAccessRoute).toBeDefined();
-    });
-  });
-
-  describe('POST /api/groups/:groupId/validation-key', () => {
-    it('应该设置组验证密钥', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找验证密钥设置路由
-      const routes = groupsApi.routes;
-      const setValidationKeyRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/validation-key' && route.method === 'POST',
-      );
-      expect(setValidationKeyRoute).toBeDefined();
-    });
-  });
-
-  describe('GET /api/groups/:groupId/validation-key', () => {
-    it('应该返回组验证密钥状态', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找验证密钥状态路由
-      const routes = groupsApi.routes;
-      const getValidationKeyRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/validation-key' && route.method === 'GET',
-      );
-      expect(getValidationKeyRoute).toBeDefined();
-    });
-  });
-
-  describe('POST /api/groups/:groupId/validate-key', () => {
-    it('应该验证组密钥', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找密钥验证路由
-      const routes = groupsApi.routes;
-      const validateKeyRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/validate-key' && route.method === 'POST',
-      );
-      expect(validateKeyRoute).toBeDefined();
-    });
-  });
-
-  describe('DELETE /api/groups/:groupId/validation-key', () => {
-    it('应该删除组验证密钥', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找验证密钥删除路由
-      const routes = groupsApi.routes;
-      const deleteValidationKeyRoute = routes.find(
-        (route: RouteInfo) =>
-          route.path === '/:groupId/validation-key' && route.method === 'DELETE',
-      );
-      expect(deleteValidationKeyRoute).toBeDefined();
-    });
-  });
-
-  describe('POST /api/groups/:groupId/generate-validation-key', () => {
-    it('应该生成新的验证密钥', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找验证密钥生成路由
-      const routes = groupsApi.routes;
-      const generateValidationKeyRoute = routes.find(
-        (route: RouteInfo) =>
-          route.path === '/:groupId/generate-validation-key' && route.method === 'POST',
-      );
-      expect(generateValidationKeyRoute).toBeDefined();
-    });
-  });
-
-  describe('GET /api/groups/:groupId/servers', () => {
-    it('应该返回组的服务器列表', async () => {
-      expect(groupsApi).toBeDefined();
-
-      // 查找服务器列表路由
-      const routes = groupsApi.routes;
-      const serversRoute = routes.find(
-        (route: RouteInfo) => route.path === '/:groupId/servers' && route.method === 'GET',
-      );
-      expect(serversRoute).toBeDefined();
-    });
-  });
-
-  describe('API路由完整性检查', () => {
-    it('应该包含所有必需的路由', () => {
-      expect(groupsApi).toBeDefined();
-
-      const routes = groupsApi.routes;
-      const routePaths = routes.map((route: RouteInfo) => `${route.method} ${route.path}`);
-
-      // 检查核心CRUD路由
-      expect(routePaths).toContain('GET /');
-      expect(routePaths).toContain('POST /');
-      expect(routePaths).toContain('GET /:groupId');
-      expect(routePaths).toContain('PUT /:groupId');
-      expect(routePaths).toContain('DELETE /:groupId');
-
-      // 检查工具管理路由
-      expect(routePaths).toContain('GET /:groupId/tools');
-      expect(routePaths).toContain('POST /:groupId/tools');
-      expect(routePaths).toContain('GET /:groupId/available-tools');
-      expect(routePaths).toContain('POST /:groupId/validate-tool-access');
-
-      // 检查验证密钥管理路由
-      expect(routePaths).toContain('POST /:groupId/validation-key');
-      expect(routePaths).toContain('GET /:groupId/validation-key');
-      expect(routePaths).toContain('POST /:groupId/validate-key');
-      expect(routePaths).toContain('DELETE /:groupId/validation-key');
-      expect(routePaths).toContain('POST /:groupId/generate-validation-key');
-
-      // 检查其他路由
-      expect(routePaths).toContain('GET /:groupId/health');
-      expect(routePaths).toContain('GET /:groupId/servers');
-    });
-
-    it('应该有正确的路由数量', () => {
-      expect(groupsApi).toBeDefined();
-
-      const routes = groupsApi.routes;
-      // 期望的路由数量：
-      // 1. GET /
-      // 2. POST /
-      // 3. GET /:groupId
-      // 4. PUT /:groupId
-      // 5. DELETE /:groupId
-      // 6. GET /:groupId/health
-      // 7. GET /:groupId/tools
-      // 8. POST /:groupId/tools
-      // 9. GET /:groupId/available-tools
-      // 10. POST /:groupId/validate-tool-access
-      // 11. POST /:groupId/validation-key
-      // 12. GET /:groupId/validation-key
-      // 13. POST /:groupId/validate-key
-      // 14. DELETE /:groupId/validation-key
-      // 15. POST /:groupId/generate-validation-key
-      // 16. GET /:groupId/servers
-      // 17. PATCH /:groupId (partial update - 如果存在)
-      expect(routes.length).toBe(17);
-    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ success: false, requestId: 'groups-request' });
   });
 });

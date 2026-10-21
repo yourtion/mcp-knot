@@ -2,7 +2,8 @@
  * CLI配置管理器单元测试
  */
 
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -17,24 +18,12 @@ describe('CliConfigManager', () => {
 
   beforeEach(async () => {
     configManager = new CliConfigManager();
-    tempDir = join(process.cwd(), 'temp-test');
+    tempDir = await mkdtemp(join(tmpdir(), 'mcp-knot-cli-config-'));
     tempConfigPath = join(tempDir, 'test-config.json');
-
-    // 创建临时目录
-    try {
-      await mkdir(tempDir, { recursive: true });
-    } catch {
-      // 目录可能已存在
-    }
   });
 
   afterEach(async () => {
-    // 清理临时文件
-    try {
-      await unlink(tempConfigPath);
-    } catch {
-      // 文件可能不存在
-    }
+    await rm(tempDir, { recursive: true, force: true });
 
     // 清除缓存
     configManager.clearCache();

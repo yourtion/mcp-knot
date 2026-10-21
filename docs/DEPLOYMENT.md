@@ -64,7 +64,7 @@ MCP Knot 由两个服务组成：
 
 ### 软件
 
-- Node.js 20.x+（传统部署）
+- Node.js 22.20+（推荐 Node 24）（传统部署）
 - pnpm 8.x+（传统部署）
 - Docker 20.10+ 与 Docker Compose v2（容器部署）
 - 操作系统：Linux（Ubuntu 20.04+/CentOS 8+）或 macOS
@@ -319,8 +319,8 @@ API 代理通过 `MCP_KNOT_DEV_API_URL=http://mcp-knot-api-dev:8181` 指向开�
 #### 1. 安装依赖
 
 ```bash
-# Node.js 20.x、pnpm、PM2
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Node.js 24.x、pnpm、PM2
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 npm install -g pnpm pm2
 ```

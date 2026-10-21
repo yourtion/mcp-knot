@@ -17,7 +17,7 @@
 
 ### 前置要求
 
-- **Node.js**: 20.19 或更高版本（推荐 Node 22/24）（`package.json` 中 `engines.node` 要求 `>=20.19.0`）
+- **Node.js**: 22.20 或更高版本（推荐 Node 24，`.nvmrc` 固定大版本）（`package.json` 中 `engines.node` 要求 `>=22.20.0`）
 - **pnpm**: 10.x（仓库指定 `packageManager: pnpm@10.6.4`，启用 corepack 即可自动切换）
 - **Git**: 2.x
 
@@ -136,6 +136,10 @@ pnpm --filter @mcp-core/mcp-knot-cli test:e2e
 | 带覆盖率                        | `pnpm test:coverage`             |
 | 调试模式（`VITEST_DEBUG=true`） | `pnpm test:debug`                |
 | 运行单个文件                    | `pnpm test path/to/file.test.ts` |
+| 增量变异测试                    | `pnpm mutation`                  |
+| 强制全量变异测试                | `pnpm mutation:full`             |
+
+变异测试的包选择、报告、CI 基线和缓存重建策略见 [变异测试指南](MUTATION_TESTING.md)。
 
 ### 测试约定
 

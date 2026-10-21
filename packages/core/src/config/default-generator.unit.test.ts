@@ -3,7 +3,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,8 +16,7 @@ describe('DefaultConfigGenerator', () => {
 
   beforeEach(async () => {
     // 创建临时测试目录
-    testDir = join(tmpdir(), `mcp-knot-test-${Date.now()}`);
-    await mkdir(testDir, { recursive: true });
+    testDir = await mkdtemp(join(tmpdir(), 'mcp-knot-test-'));
     generator = new DefaultConfigGenerator({ configDir: testDir });
   });
 

@@ -95,9 +95,8 @@ check_command pm2
 check_command git
 
 # 检查 Node.js 版本
-NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-if [ "$NODE_VERSION" -lt 18 ]; then
-    log_error "Node.js 版本必须 >= 18，当前版本: $(node -v)"
+if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 20) ? 0 : 1)'; then
+    log_error "Node.js 版本必须 >= 22.20，当前版本: $(node -v)"
     exit 1
 fi
 

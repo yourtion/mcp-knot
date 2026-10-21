@@ -2,6 +2,27 @@ import { describe, it, expect } from 'vitest';
 
 import { ServerConfigSchema } from './server.schema.js';
 
+describe('ServerConfigSchema', () => {
+  it.each([
+    { command: 'npx', args: ['-y', 'test-mcp'] },
+    { type: 'stdio', command: 'node', enabled: false },
+    { type: 'sse', url: 'https://example.com/mcp' },
+    { type: 'streaming', url: 'https://example.com/mcp' },
+  ])('保留合法服务器配置 %j', (config) => {
+    expect(ServerConfigSchema.parse(config)).toEqual(config);
+  });
+
+  it.each([
+    { type: 'stdio' },
+    { type: 'stdio', command: '' },
+    { type: 'sse', url: 'not-a-url' },
+    { type: 'streaming' },
+    { type: 'unknown', command: 'node' },
+  ])('拒绝非法服务器配置 %j', (config) => {
+    expect(ServerConfigSchema.safeParse(config).success).toBe(false);
+  });
+});
+
 describe('HttpServerConfigSchema auth 字段', () => {
   it('bearer auth 合法', () => {
     const config = {
@@ -129,17 +150,12 @@ describe('HttpServerConfigSchema auth 字段', () => {
     }
   });
 
-  it('stdio server + auth 行为（实测确认）', () => {
-    // ServerConfigSchema = z.union([StdioServerConfigSchema, HttpServerConfigSchema])
-    // stdio 分支不含 auth 字段；z.union 默认行为会对未定义字段 strip。
-    // 这里记录实测行为：见 task-1-report.md。
+  it('stdio 配置会移除不支持的 HTTP 认证字段', () => {
     const config = {
       type: 'stdio',
       command: 'echo',
       auth: { type: 'bearer', token: 'x' },
     };
-    const result = ServerConfigSchema.safeParse(config);
-    // 实测：放行（success=true），auth 被 strip 掉。
-    expect(result.success).toBe(true);
+    expect(ServerConfigSchema.parse(config)).toEqual({ type: 'stdio', command: 'echo' });
   });
 });
