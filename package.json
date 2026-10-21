@@ -30,11 +30,13 @@
     "test:e2e": "vitest --run --project api-e2e",
     "test:coverage": "vitest --run --coverage",
     "test:debug": "VITEST_DEBUG=true vitest --run",
+    "mutation": "stryker run",
+    "mutation:full": "stryker run --force",
     "test:conformance": "bash scripts/conformance/run.sh",
     "coverage:report": "tsx scripts/check-coverage.ts",
     "coverage:merge": "tsx scripts/merge-coverage.ts",
     "coverage:full": "pnpm test:coverage && pnpm coverage:merge && pnpm coverage:report",
-    "ci:test": "pnpm run test:release && pnpm test:coverage",
+    "ci:test": "pnpm run test:release && pnpm run test:mutation-runner && pnpm test:coverage",
     "ci:build": "pnpm install --frozen-lockfile && pnpm build:production",
     "ci:check": "pnpm check:ci && pnpm ci:test",
     "start:api": "pnpm --filter @mcp-core/mcp-knot-api start",
@@ -47,18 +49,26 @@
     "release:push": "node scripts/release.cjs push",
     "release:check": "node scripts/release.cjs check",
     "test:release": "node --test scripts/release.test.cjs",
+    "test:mutation-runner": "node --test scripts/mutation-runner.test.mjs",
     "release:validate": "pnpm run check:ci && pnpm run test:release && pnpm run clean && pnpm run build:production && pnpm run typecheck && pnpm test && node scripts/check-release-packages.cjs"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.4",
-    "@vitest/ui": "^4.1.4",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "@vitest/coverage-v8": "^4.1.12",
+    "@vitest/ui": "^4.1.12",
     "oxfmt": "0.46.0",
     "oxlint": "1.61.0",
     "tsx": "^4.7.1",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.12"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.20.0"
   },
-  "packageManager": "pnpm@10.6.4"
+  "packageManager": "pnpm@10.6.4",
+  "pnpm": {
+    "patchedDependencies": {
+      "@stryker-mutator/vitest-runner@10.0.0": "patches/@stryker-mutator__vitest-runner@10.0.0.patch"
+    }
+  }
 }

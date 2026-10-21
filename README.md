@@ -49,7 +49,7 @@ MCP Knot follows a modular monorepo architecture with the following packages:
 
 ### Prerequisites
 
-- Node.js 20.19+ (Node 22/24 recommended)
+- Node.js 22.20+ (Node 24 recommended)
 - pnpm package manager
 
 ### Install Dependencies

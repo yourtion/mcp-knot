@@ -26,6 +26,7 @@ describe('Auth Store', () => {
     vi.clearAllMocks();
     // 每个测试前重新 stub localStorage，因为 restoreMocks 会在 afterEach 中恢复
     vi.stubGlobal('localStorage', localStorageMock);
+    localStorageMock.getItem.mockReset().mockReturnValue(null);
   });
 
   it('应该正确初始化状态', () => {
@@ -61,6 +62,48 @@ describe('Auth Store', () => {
     expect(authStore.refreshToken).toBe('mock-refresh-token');
     expect(authStore.user).toEqual(mockUser);
     expect(authStore.isAuthenticated).toBe(true);
+  });
+
+  it.each(['token', 'user'] as const)('只有 %s 时不应视为已登录', (field) => {
+    const authStore = useAuthStore();
+    if (field === 'token') authStore.token = 'token-without-user';
+    else authStore.user = { id: '1', username: 'test', role: 'admin' };
+
+    expect(authStore.isAuthenticated).toBe(false);
+  });
+
+  it('持久化用户数据损坏时清除整个会话', () => {
+    localStorageMock.getItem.mockImplementation((key: string) => {
+      if (key === 'auth_token') return 'token';
+      if (key === 'refresh_token') return 'refresh';
+      if (key === 'user_info') return '{ invalid json';
+      return null;
+    });
+    const authStore = useAuthStore();
+
+    authStore.initializeAuth();
+
+    expect(authStore.token).toBeNull();
+    expect(authStore.refreshToken).toBeNull();
+    expect(authStore.user).toBeNull();
+    expect(authStore.isAuthenticated).toBe(false);
+    for (const key of ['auth_token', 'refresh_token', 'user_info']) {
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith(key);
+    }
+  });
+
+  it('登录失败时保留错误并结束加载状态', async () => {
+    vi.mocked(authService.login).mockRejectedValue(new Error('登录凭据无效'));
+    const authStore = useAuthStore();
+
+    await expect(authStore.login({ username: 'test', password: 'wrong' })).rejects.toThrow(
+      '登录凭据无效',
+    );
+
+    expect(authStore.error).toBe('登录凭据无效');
+    expect(authStore.loading).toBe(false);
+    expect(authStore.token).toBeNull();
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
   });
 
   it('应该正确处理登录', async () => {

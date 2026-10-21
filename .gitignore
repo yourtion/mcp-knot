@@ -1,6 +1,8 @@
 node_modules/
 dist/
 coverage/
+.stryker-tmp/
+reports/mutation/
 /config/.skills/
 
 # Backend runtime config (env-specific, never commit real values)

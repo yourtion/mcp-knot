@@ -38,6 +38,8 @@ coverage/
 # 临时文件
 tmp/
 temp/
+.stryker-tmp/
+reports/mutation/
 
 # 文档（除了 README）
 docs/
