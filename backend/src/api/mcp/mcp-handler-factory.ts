@@ -5,7 +5,7 @@
  * 构造一个 Web-standard fetch handler，按 groupId 绑定：
  *
  * - 工厂闭包从 groupServices 缓存中取（或惰性创建）GroupMcpService，
- *   返回其已注册好工具的 McpServer 实例。
+ *   通过共享上游 manager 为每个请求构造独立的 McpServer。
  * - 入站兼容（P7）：legacy 开关由 InboundProtocolAdapter 据
  *   CompatibilityOptions（system.json compatibility 段）解析。默认全开时
  *   legacyMode='stateless'（HTTP 走无状态 shim，由 SDK 服务 legacy 客户端）；
@@ -14,8 +14,8 @@
  *   （预解析 body 经 parsedBody 传入，避免重复读取请求流）。
  *
  * createMcpHandler 的 factory 每个请求都会被调用一次（modern 路径是 per-request
- * serving），与 groupServices 缓存互补：缓存复用 GroupMcpService/McpServer
- * 实例以避免重复初始化与工具注册。
+ * serving），与 groupServices 缓存互补：缓存复用 GroupMcpService
+ * 与 handler/bus，但不复用每个请求的协议 server 实例。
  */
 import {
   CompatibilityOptionsSchema,
@@ -343,17 +343,9 @@ export async function createGroupMcpHandler(groupId: string): Promise<McpHttpHan
     const legacyMode = inboundAdapter.resolveLegacyMode('http') as 'stateless' | 'reject';
 
     const handler = createMcpHandler(
-      // McpServerFactory：按请求返回该组对应的 McpServer
-      //
-      // NOTE（代码审查 I1，偏离 SDK 契约）：
-      // SDK 文档要求 factory 每次返回 fresh McpServer 实例（modern 路径下 SDK 会
-      // 对返回的 server 做 installModernOnlyHandlers / setNegotiatedProtocolVersion
-      // / seedClientIdentityFromEnvelope 等有状态操作）。当前实现复用同一
-      // GroupMcpService 的 McpServer——这在当前 beta 版本能工作（上述操作在同版本
-      // 下幂等，handler 不读 clientInfo），但偏离了契约。
-      // Follow-up：把 GroupMcpService 的工具注册逻辑抽成 buildServer(groupId)，
-      // factory 每次返回新实例。代价可接受（getAllTools 是内存读，不连外部 server）。
-      // 待 SDK GA 后重新评估，见总体 spec P1 follow-up。
+      // The SDK mutates protocol/client/transport state and closes each product.
+      // Keep the handler/bus and upstream connections cached, but serve a fresh
+      // server for every modern or stateless legacy exchange.
       () => {
         const groupService = groupServices.get(groupId);
         if (!groupService) {
@@ -361,8 +353,7 @@ export async function createGroupMcpHandler(groupId: string): Promise<McpHttpHan
           // 极端情况下（创建与失效并发），抛错由上层 catch 返回 500。
           throw new Error(`组 '${groupId}' 的 MCP 服务未初始化`);
         }
-        // 复用缓存中已注册工具的 McpServer 实例
-        return groupService.getMcpServer();
+        return groupService.createRequestServer();
       },
       {
         // P7：legacy 由 InboundProtocolAdapter 据 CompatibilityOptions 解析
