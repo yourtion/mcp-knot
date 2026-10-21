@@ -15,14 +15,11 @@ import {
  * 隔离到独立文件，避免与 mcp-handler-factory.unit.test.ts（失效路径，getCoreServiceManager
  * 被桩成抛错）/ mcp-handler-factory.mrtr.unit.test.ts（mrtr 接线）的 vi.mock 冲突。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// mock createMcpHandler 不在 compat 单测路径触发（仅 createGroupMcpHandler 用，本测试不调）。
-vi.mock('@modelcontextprotocol/server', () => ({
-  createMcpHandler: vi.fn(() => {
-    throw new Error('createMcpHandler 不应在本测试中被调用');
-  }),
-}));
+import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
+import { getCoreServiceManager } from '../../services/service-registry.js';
 
 vi.mock('../../services/service-registry.js', () => ({
   getCoreServiceManager: vi.fn(() => {
@@ -51,6 +48,7 @@ vi.mock('../../utils/config.js', () => ({
 import type { CompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
 
 describe('P7 协议兼容层入站集成', () => {
+  afterEach(() => TestContext.resetCurrent());
   describe('InboundProtocolAdapter.resolveLegacyMode', () => {
     it('compatibility 默认全开时 legacyMode=http → stateless', () => {
       const adapter = new InboundProtocolAdapter(defaultCompatibilityOptions);
@@ -85,6 +83,49 @@ describe('P7 协议兼容层入站集成', () => {
       const adapter = new InboundProtocolAdapter(opts);
       expect(adapter.resolveLegacyMode('http')).toBe('stateless');
     });
+  });
+
+  it('同组 legacy → modern → legacy 连接不共享协议状态', async () => {
+    const {
+      createGroupMcpHandler,
+      invalidateAllGroupMcpServices,
+      resetCompatibilityOptionsCacheForTest,
+    } = await import('./mcp-handler-factory.js');
+    resetCompatibilityOptionsCacheForTest();
+    getAllConfigMock.mockResolvedValue({
+      system: {},
+      mcps: { servers: {} },
+      groups: { mixed: { id: 'mixed', name: 'Mixed clients', servers: [], tools: [] } },
+    });
+    vi.mocked(getCoreServiceManager).mockResolvedValue({
+      getAllTools: async () => [],
+      getServerConnections: () => new Map(),
+      getServiceStatus: () => new Map(),
+    } as unknown as Awaited<ReturnType<typeof getCoreServiceManager>>);
+    useTestContext().register('group-handlers', invalidateAllGroupMcpServices);
+    const handler = await createGroupMcpHandler('mixed');
+    for (const [index, mode] of (['legacy', 'auto', 'legacy'] as const).entries()) {
+      const client = new Client(
+        { name: `mixed-client-${index}`, version: '1' },
+        {
+          versionNegotiation: { mode },
+        },
+      );
+      useTestContext().register(`mixed-client-${index}`, () => client.close());
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL('http://group.test/mixed/mcp'), {
+          fetch: (input, init) => handler.fetch(new Request(input, init)),
+        }),
+      );
+      expect(client.getProtocolEra()).toBe(mode === 'auto' ? 'modern' : 'legacy');
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toContain('group_status');
+      expect(await client.callTool({ name: 'group_status', arguments: {} })).toMatchObject({
+        content: [
+          expect.objectContaining({ type: 'text', text: expect.stringContaining('mixed') }),
+        ],
+      });
+      await client.close();
+    }
   });
 
   describe('getCompatibilityOptions 单例', () => {

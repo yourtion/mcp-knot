@@ -260,6 +260,27 @@ describe('GroupMcpService - tools/list 确定性排序', () => {
     });
   });
 
+  it('聚合注册保留上游工具描述', async () => {
+    const cm = makeCoreManagerMock();
+    (cm.getAllTools as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        name: 'lookup',
+        serverId: 'aServer',
+        description: 'Read-only warehouse stock lookup',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ]);
+    const svc = new GroupMcpService('testgroup', cm);
+    await svc.initialize();
+
+    expect(svc.getMcpServer().registerTool).toHaveBeenCalledWith(
+      'aServer_lookup',
+      expect.objectContaining({ description: 'Read-only warehouse stock lookup' }),
+      expect.any(Function),
+    );
+    await svc.shutdown();
+  });
+
   it('工具按 先 serverId 后 toolName 排序', async () => {
     // 模拟乱序工具：zServer/a、aServer/b、aServer/a
     const cm = makeCoreManagerMock();
