@@ -251,6 +251,18 @@ describe('CacheManagerImpl', () => {
       expect(await cacheManager.get(key)).toBeNull();
       expect(await cacheManager.get('new-key')).toBe('new');
     });
+
+    it('并发写入也不能突破容量上限', async () => {
+      await Promise.all(
+        Array.from({ length: 10 }, (_, index) => cacheManager.set(`key-${index}`, index)),
+      );
+
+      const values = await Promise.all(
+        Array.from({ length: 10 }, (_, index) => cacheManager.get(`key-${index}`)),
+      );
+      expect(cacheManager.getStats().currentSize).toBe(2);
+      expect(values.filter((value) => value !== null)).toHaveLength(2);
+    });
   });
 
   describe('缓存统计', () => {

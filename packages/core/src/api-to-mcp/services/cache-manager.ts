@@ -173,7 +173,9 @@ export class CacheManagerImpl implements CacheManager {
 
     // 检查缓存大小限制
     if (this.cache.size >= this.stats.maxSize && !this.cache.has(key)) {
-      await this.evictLeastRecentlyUsed();
+      // Keep eviction and insertion in the same turn so concurrent set calls
+      // cannot observe a temporarily free slot and exceed maxSize.
+      this.evictLeastRecentlyUsed();
     }
 
     this.cache.set(key, entry);
@@ -271,7 +273,7 @@ export class CacheManagerImpl implements CacheManager {
   /**
    * 驱逐最近最少使用的项
    */
-  private async evictLeastRecentlyUsed(): Promise<void> {
+  private evictLeastRecentlyUsed(): void {
     let lruKey: string | null = null;
     let lruTime = Number.POSITIVE_INFINITY;
 

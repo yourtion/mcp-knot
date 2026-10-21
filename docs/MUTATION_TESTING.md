@@ -195,7 +195,7 @@ MUTATION_PROJECT=protocol pnpm mutation:full --mutate packages/protocol/src/inbo
 | 删除后端测试内复制的服务器 schema               | 在共享 schema 的测试中验证 stdio/SSE/streaming，消除与生产默认值不一致的副本  |
 | 合并重复的分组路由存在性检查                    | 保留一个完整的路由兼容性契约，增加真实 HTTP 响应、降级健康状态和业务错误测试  |
 | 调整缓存容量与访问顺序测试                      | 使用较小容量和受控时钟真正触发淘汰，并验证更新已有键不会误删其他条目          |
-| 修复 LRU 同毫秒淘汰与空键问题                   | 回归在旧实现上失败，修复后必须保持 `currentSize <= maxSize`                   |
+| 修复 LRU 同毫秒淘汰、空键及并发容量问题         | 回归在旧实现上失败；淘汰和写入同步完成，并发写入也必须遵守 `maxSize`          |
 | 替换重复的缓存清空测试                          | 验证 `destroy()` 后不再触发定期清理，并在测试后释放缓存定时器                 |
 | 补齐登录状态与持久化异常边界                    | 单独有 token 或 user 时仍未登录；损坏存储和登录失败不会留下错误会话或加载状态 |
 | 加强 skills source ID 校验                      | 验证正则首尾边界、字符约束和 64 字符上限                                      |
@@ -203,5 +203,5 @@ MUTATION_PROJECT=protocol pnpm mutation:full --mutate packages/protocol/src/inbo
 常规 CI 在 Node 22 和 24 执行回归，构建作业执行 TypeScript 检查；变异 CI 按六个包执行，
 PR 不保存共享基线。首次成功的 `main` 作业仍负责建立共享缓存。
 
-本次优化后，本地 Node 24 验证通过：148 个文件、2,080 个常规测试（含覆盖率）、16 个发布测试、
+本次优化后，本地 Node 24 验证通过：148 个文件、2,081 个常规测试（含覆盖率）、16 个发布测试、
 7 项运行器回归，以及生产构建、TypeScript、lint、格式和 actionlint 检查。
