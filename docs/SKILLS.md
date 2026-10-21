@@ -12,7 +12,7 @@ Hub 分发单个 Skill 及其附件。技能正文引用其他技能时，由模
 
 ## 运行与存储
 
-项目要求 Node.js 20.19+。Git/CLI 来源需要运行环境中的 `git`，CLI 来源还需要 `npx` 与 npm 网络访问。backend Docker 镜像包含 Git 和 Node/npm。同步请求当前同步执行，单个外部命令超时为 120 秒，部署代理的超时应覆盖整个导入过程。
+项目要求 Node.js 22.20+。Git/CLI 来源需要运行环境中的 `git`，CLI 来源还需要 `npx` 与 npm 网络访问。backend Docker 镜像包含 Git 和 Node/npm。同步请求当前同步执行，单个外部命令超时为 120 秒，部署代理的超时应覆盖整个导入过程。
 
 数据位于 `CONFIG_PATH/.skills/`；未指定 CONFIG_PATH 时为当前工作目录下的 `config/.skills/`。容器部署应将配置目录挂载到持久存储，并保证运行用户可写。
 

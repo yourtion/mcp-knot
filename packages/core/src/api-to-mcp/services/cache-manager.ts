@@ -273,16 +273,17 @@ export class CacheManagerImpl implements CacheManager {
    */
   private async evictLeastRecentlyUsed(): Promise<void> {
     let lruKey: string | null = null;
-    let lruTime = new Date();
+    let lruTime = Number.POSITIVE_INFINITY;
 
     for (const [key, entry] of this.cache.entries()) {
-      if (entry.lastAccessedAt < lruTime) {
-        lruTime = entry.lastAccessedAt;
+      const accessedAt = entry.lastAccessedAt.getTime();
+      if (accessedAt < lruTime) {
+        lruTime = accessedAt;
         lruKey = key;
       }
     }
 
-    if (lruKey) {
+    if (lruKey !== null) {
       this.cache.delete(lruKey);
       this.stats.currentSize = this.cache.size;
       logger.debug(`驱逐LRU缓存项: ${lruKey}`);

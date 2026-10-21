@@ -1,7 +1,8 @@
-FROM node:22-alpine AS base
+FROM node:24-alpine AS base
 RUN npm install -g pnpm@10.6.4
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY patches/ ./patches/
 COPY packages/share/package.json ./packages/share/
 COPY packages/protocol/package.json ./packages/protocol/
 COPY packages/core/package.json ./packages/core/
@@ -15,11 +16,12 @@ COPY packages/core ./packages/core
 COPY backend ./backend
 RUN pnpm build:share && pnpm build:protocol && pnpm build:core && pnpm build:api
 
-FROM node:22-alpine AS production
+FROM node:24-alpine AS production
 RUN apk add --no-cache git
 RUN npm install -g pnpm@10.6.4
 WORKDIR /app
 COPY --chown=node:node package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY --chown=node:node patches/ ./patches/
 COPY --chown=node:node packages/share/package.json ./packages/share/
 COPY --chown=node:node packages/protocol/package.json ./packages/protocol/
 COPY --chown=node:node packages/core/package.json ./packages/core/

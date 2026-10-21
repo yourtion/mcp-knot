@@ -47,7 +47,7 @@ MCP Knot 采用模块化 monorepo 架构，包含以下包：
 
 ### 前置要求
 
-- Node.js 20.19+（推荐 Node 22/24）
+- Node.js 22.20+（推荐 Node 24）
 - pnpm 包管理器
 
 ### 安装依赖

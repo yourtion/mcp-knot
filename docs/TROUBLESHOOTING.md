@@ -62,7 +62,7 @@ pm2 logs mcp-knot-api --lines 100
 
 #### 支持哪些 Node.js 版本？
 
-最低 **Node.js 20**（`package.json` 的 `engines.node` 为 `">=20"`，Docker 镜像基于 `node:20-alpine`）。低于 20 会启动失败。
+最低 **Node.js 22.20**（`package.json` 的 `engines.node` 为 `">=22.20.0"`，Docker 镜像和 `.nvmrc` 使用 Node 24）。请使用受支持版本安装依赖和运行服务。
 
 ```bash
 node --version     # 检查版本
@@ -415,7 +415,7 @@ docker ps -a
 docker exec -it mcp-knot-api /bin/sh
 ```
 
-常见原因：挂载的 `config/` 目录缺失或 JSON 格式错误、端口冲突、Node 版本低于 20。
+常见原因：挂载的 `config/` 目录缺失或 JSON 格式错误、端口冲突、Node 版本低于 22.20。
 
 #### 容器间网络连接问题
 

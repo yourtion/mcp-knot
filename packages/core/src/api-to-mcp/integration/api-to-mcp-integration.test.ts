@@ -644,19 +644,25 @@ describe('API转MCP服务集成测试', () => {
       };
 
       await fs.writeFile(configPath, JSON.stringify(config, null, 2));
-      await serviceManager.initialize(configPath);
+      const initializedAt = new Date('2026-10-21T00:00:00.000Z');
+      const checkedAt = new Date(initializedAt.getTime() + 1000);
+      vi.useFakeTimers({ toFake: ['Date'], now: initializedAt });
 
-      // 添加小延迟确保uptime大于0
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      try {
+        await serviceManager.initialize(configPath);
+        vi.setSystemTime(checkedAt);
 
-      const health = await serviceManager.performHealthCheck();
+        const health = await serviceManager.performHealthCheck();
 
-      expect(health.healthy).toBe(true);
-      expect(health.toolStats.total).toBe(2);
-      expect(health.toolStats.registered).toBe(2);
-      expect(health.initializationTime).toBeDefined();
-      expect(health.lastHealthCheck).toBeDefined();
-      expect(health.uptime).toBeGreaterThan(0);
+        expect(health.healthy).toBe(true);
+        expect(health.toolStats.total).toBe(2);
+        expect(health.toolStats.registered).toBe(2);
+        expect(health.initializationTime).toEqual(initializedAt);
+        expect(health.lastHealthCheck).toEqual(checkedAt);
+        expect(health.uptime).toBe(1000);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('应该检测到配置问题', async () => {

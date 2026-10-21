@@ -1,0 +1,54 @@
+diff --git a/dist/src/vitest-test-runner.js b/dist/src/vitest-test-runner.js
+index 84f1ca026503b8e92b7adc952ec6c6a401943656..af4ddb7e4d8734861c5062ec8696648f3782d8fa 100644
+--- a/dist/src/vitest-test-runner.js
++++ b/dist/src/vitest-test-runner.js
+@@ -1,3 +1,4 @@
++import { inspect } from 'node:util';
+ import { fileURLToPath } from 'url';
+ import path from 'path';
+ import semver from 'semver';
+@@ -177,9 +178,13 @@ export class VitestTestRunner {
+             failure ||= testResult.status === TestStatus.Failed;
+             return testResult;
+         });
+-        if (!failure && this.ctx.state.errorsSet.size > 0) {
+-            const errorText = [...this.ctx.state.errorsSet]
+-                .map(errorToString)
++        // A module can fail during collection before Vitest creates any test tasks.
++        // Preserve that failure instead of reporting a surviving mutant with zero tests.
++        const suiteErrors = this.ctx.state.getFiles().flatMap((file) => file.result?.state === 'fail' ? (file.result.errors ?? []) : []);
++        if (!failure && (suiteErrors.length > 0 || this.ctx.state.errorsSet.size > 0)) {
++            const errorText = [...suiteErrors, ...this.ctx.state.errorsSet]
++                // Vitest serializes errors as objects, including objects without a prototype.
++                .map((error) => error instanceof Error ? errorToString(error) : inspect(error))
+                 .join('\n');
+             return {
+                 status: DryRunStatus.Error,
+diff --git a/src/vitest-test-runner.ts b/src/vitest-test-runner.ts
+index b54e16ae236118113d78931dab44a2252825cde4..34ea16fb8c642997fd2fb0b574cb559c47f56906 100644
+--- a/src/vitest-test-runner.ts
++++ b/src/vitest-test-runner.ts
+@@ -1,3 +1,4 @@
++import { inspect } from 'node:util';
+ import { fileURLToPath } from 'url';
+ import path from 'path';
+ import semver from 'semver';
+@@ -265,9 +266,15 @@ export class VitestTestRunner implements TestRunner {
+       return testResult;
+     });
+ 
+-    if (!failure && this.ctx!.state.errorsSet.size > 0) {
+-      const errorText = [...this.ctx!.state.errorsSet]
+-        .map(errorToString)
++    // A module can fail during collection before Vitest creates any test tasks.
++    // Preserve that failure instead of reporting a surviving mutant with zero tests.
++    const suiteErrors = this.ctx!.state.getFiles().flatMap((file) =>
++      file.result?.state === 'fail' ? (file.result.errors ?? []) : [],
++    );
++    if (!failure && (suiteErrors.length > 0 || this.ctx!.state.errorsSet.size > 0)) {
++      const errorText = [...suiteErrors, ...this.ctx!.state.errorsSet]
++        // Vitest serializes errors as objects, including objects without a prototype.
++        .map((error) => error instanceof Error ? errorToString(error) : inspect(error))
+         .join('\n');
+       return {
+         status: DryRunStatus.Error,

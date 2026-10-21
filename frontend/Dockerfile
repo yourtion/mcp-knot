@@ -1,7 +1,8 @@
-FROM node:22-alpine AS base
+FROM node:24-alpine AS base
 RUN npm install -g pnpm@10.6.4
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY patches/ ./patches/
 COPY packages/share/package.json ./packages/share/
 COPY frontend/package.json ./frontend/
 RUN pnpm install --frozen-lockfile

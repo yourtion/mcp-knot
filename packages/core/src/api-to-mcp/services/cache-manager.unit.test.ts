@@ -30,6 +30,7 @@ describe('CacheManagerImpl', () => {
   });
 
   afterEach(() => {
+    cacheManager.destroy();
     vi.useRealTimers();
   });
 
@@ -61,7 +62,10 @@ describe('CacheManagerImpl', () => {
     });
 
     it('应该清空所有缓存', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
       await cacheManager.set('key1', 'value1');
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.010Z'));
       await cacheManager.set('key2', 'value2');
 
       expect(await cacheManager.get('key1')).toBe('value1');
@@ -189,32 +193,72 @@ describe('CacheManagerImpl', () => {
   });
 
   describe('缓存大小限制', () => {
-    it('应该在达到最大大小时删除最旧的项', async () => {
-      // 使用默认实现，它有maxSize限制
-      await cacheManager.set('key1', 'value1');
-      await cacheManager.set('key2', 'value2');
+    beforeEach(() => {
+      cacheManager.destroy();
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      cacheManager = new CacheManagerImpl({ ttl: 60, maxSize: 2 });
+    });
 
-      // 检查项目是否存在
-      expect(await cacheManager.get('key1')).toBe('value1');
+    it('应该在达到最大大小时删除最旧的项', async () => {
+      await cacheManager.set('key1', 'value1');
+      vi.advanceTimersByTime(10);
+      await cacheManager.set('key2', 'value2');
+      vi.advanceTimersByTime(10);
+      await cacheManager.set('key3', 'value3');
+
+      expect(await cacheManager.get('key1')).toBeNull();
       expect(await cacheManager.get('key2')).toBe('value2');
+      expect(await cacheManager.get('key3')).toBe('value3');
+      expect(cacheManager.getStats().currentSize).toBe(2);
     });
 
     it('应该在访问时更新项目的使用时间', async () => {
       await cacheManager.set('key1', 'value1');
+      vi.advanceTimersByTime(10);
       await cacheManager.set('key2', 'value2');
 
-      // 访问key1以更新其使用时间
+      vi.advanceTimersByTime(10);
       await cacheManager.get('key1');
+      vi.advanceTimersByTime(10);
+      await cacheManager.set('key3', 'value3');
 
-      // 检查项目仍然存在
       expect(await cacheManager.get('key1')).toBe('value1');
+      expect(await cacheManager.get('key2')).toBeNull();
+      expect(await cacheManager.get('key3')).toBe('value3');
+    });
+
+    it('更新已有键不应淘汰其他条目', async () => {
+      await cacheManager.set('key1', 'value1');
+      vi.advanceTimersByTime(10);
+      await cacheManager.set('key2', 'value2');
+      vi.advanceTimersByTime(10);
+      await cacheManager.set('key1', 'updated');
+
+      expect(await cacheManager.get('key1')).toBe('updated');
       expect(await cacheManager.get('key2')).toBe('value2');
+      expect(cacheManager.getStats().currentSize).toBe(2);
+    });
+
+    it.each(['key1', ''])('同一毫秒写入仍应淘汰旧键 %j 并遵守容量限制', async (key) => {
+      cacheManager.destroy();
+      cacheManager = new CacheManagerImpl({ ttl: 60, maxSize: 1 });
+
+      await cacheManager.set(key, 'old');
+      await cacheManager.set('new-key', 'new');
+
+      expect(cacheManager.getStats().currentSize).toBe(1);
+      expect(await cacheManager.get(key)).toBeNull();
+      expect(await cacheManager.get('new-key')).toBe('new');
     });
   });
 
   describe('缓存统计', () => {
     it('应该提供缓存统计信息', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
       await cacheManager.set('key1', 'value1');
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.010Z'));
       await cacheManager.set('key2', 'value2');
 
       // 命中
@@ -235,8 +279,7 @@ describe('CacheManagerImpl', () => {
 
   describe('缓存配置', () => {
     it('应该使用默认配置', () => {
-      const defaultCache = new CacheManagerImpl();
-      const stats = defaultCache.getStats();
+      const stats = cacheManager.getStats();
 
       expect(stats).toBeDefined();
       expect(stats.currentSize).toBe(0);
@@ -339,14 +382,16 @@ describe('CacheManagerImpl', () => {
   });
 
   describe('资源清理', () => {
-    it('应该正确清理资源', async () => {
-      const cache = new CacheManagerImpl();
+    it('销毁后不再触发定期清理', async () => {
+      cacheManager.destroy();
+      vi.useFakeTimers();
+      cacheManager = new CacheManagerImpl();
+      const cleanup = vi.spyOn(cacheManager, 'cleanup');
 
-      await cache.set('test', 'value');
-      expect(await cache.get('test')).toBe('value');
+      cacheManager.destroy();
+      await vi.advanceTimersByTimeAsync(120000);
 
-      await cache.clear();
-      expect(await cache.get('test')).toBeNull();
+      expect(cleanup).not.toHaveBeenCalled();
     });
   });
 });
