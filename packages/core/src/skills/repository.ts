@@ -4,7 +4,7 @@ import {
   SkillSourceSchema,
 } from '@mcp-core/mcp-knot-share/config';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod/v4';
 
@@ -188,6 +188,39 @@ export class SkillRepository {
           ),
         );
       return (await this.loadRevision(sourceId, pointer.revision)).result;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+
+  /** Saved candidates, including old publications; never contacts the source. */
+  async listRevisions(sourceId: string): Promise<SkillImportResult[]> {
+    SkillSourceIdSchema.parse(sourceId);
+    let files: string[];
+    try {
+      files = await readdir(join(this.directory, 'revisions', sourceId));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    const revisions = await Promise.all(
+      files
+        .filter((file) => /^[a-f0-9]{64}\.json$/.test(file))
+        .map(async (file) => (await this.loadRevision(sourceId, file.slice(0, -5))).result),
+    );
+    return revisions.toSorted(
+      (a, b) => b.importedAt.localeCompare(a.importedAt) || a.revision.localeCompare(b.revision),
+    );
+  }
+
+  async getRevision(sourceId: string, revision: string): Promise<SkillImportResult | undefined> {
+    SkillSourceIdSchema.parse(sourceId);
+    z.string()
+      .regex(/^[a-f0-9]{64}$/)
+      .parse(revision);
+    try {
+      return (await this.loadRevision(sourceId, revision)).result;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw error;

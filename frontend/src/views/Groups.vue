@@ -30,10 +30,12 @@
     <GroupList
       :groups="groupStore.groupList"
       :loading="groupStore.loading"
+      :can-manage-skills="authStore.user?.role === 'admin'"
       @edit="editGroup"
       @delete="handleDelete"
       @manage-tools="openToolManager"
       @manage-validation="openValidationManager"
+      @manage-skills="openSkillManager"
     />
 
     <GroupFormDialog
@@ -46,6 +48,12 @@
     <GroupMemberManager v-model:visible="showMemberManager" :group-id="activeGroupId" />
 
     <GroupValidationManager v-model:visible="showValidationManager" :group-id="activeGroupId" />
+    <SkillPublishDialog
+      v-if="showSkillManager"
+      v-model:visible="showSkillManager"
+      :group-id="activeGroupId"
+      @saved="groupStore.fetchGroups()"
+    />
   </div>
 </template>
 
@@ -60,6 +68,8 @@ import {
   GroupMemberManager,
   GroupValidationManager,
 } from '@/components/groups';
+import SkillPublishDialog from '@/components/skills/SkillPublishDialog.vue';
+import { useAuthStore } from '@/stores/auth';
 import { useGroupStore } from '@/stores/group';
 import { useServerStore } from '@/stores/server';
 import { useToolStore } from '@/stores/tool';
@@ -67,6 +77,7 @@ import { useToolStore } from '@/stores/tool';
 import type { GroupInfo, CreateGroupRequest, UpdateGroupRequest } from '@/types/group';
 
 const groupStore = useGroupStore();
+const authStore = useAuthStore();
 // 预加载服务器与工具列表：GroupFormDialog 的"服务器/工具"多选项依赖这两个 store。
 const serverStore = useServerStore();
 const toolStore = useToolStore();
@@ -79,6 +90,12 @@ const editingGroup = ref<GroupInfo | null>(null);
 const activeGroupId = ref('');
 const showMemberManager = ref(false);
 const showValidationManager = ref(false);
+const showSkillManager = ref(false);
+
+function openSkillManager(groupId: string) {
+  activeGroupId.value = groupId;
+  showSkillManager.value = true;
+}
 
 function editGroup(group: GroupInfo) {
   editingGroup.value = group;
