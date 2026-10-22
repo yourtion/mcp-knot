@@ -7,9 +7,38 @@ Vue.js 前端界面，为 MCP Knot 提供完整的 Web 管理功能。
 - **JWT 认证系统**: 安全的登录和会话管理
 - **服务器管理**: 可视化的 MCP 服务器配置和监控
 - **工具管理**: 浏览和测试可用的 MCP 工具
+- **Schema 参数编辑器**: 执行/测试页共用 vue-json-ui-editor，支持 TDesign 表单、JSON 回退和提交前校验
 - **组管理**: 配置和管理服务器组
 - **实时监控**: 系统状态的实时更新
 - **响应式设计**: 适配不同屏幕尺寸的设备
+
+## 工具参数配置
+
+“执行工具”和“测试工具”使用同一个 `ToolParameterEditor`。标准标量、枚举、嵌套对象、
+对象数组使用 TDesign 表单；基本类型数组、动态键对象、组合和引用等复杂 Schema 自动使用 JSON 模式。
+用户也可以主动切到 JSON 模式，精确控制所有键和值。
+
+提交前使用原始 Schema 做 Ajv 校验，支持默认 2020-12、显式 draft-07 / 2019-09。
+校验不会强制转换类型、删除未知键或自动补默认值；语法错误、Schema 编译失败、参数不合法时不请求执行/测试 API。
+远端 Schema 的 attrs/component 等 UI 扩展不会交给渲染器。后台仍是执行权限和最终参数校验的权威。
+
+可选顶层参数通过勾选控制是否传入，默认值会预填；嵌套表单保留编辑器初始化子字段的行为，
+需要省略嵌套可选字段时使用 JSON 模式。JSON 中的空字符串、false、0、null 和额外键不会被静默丢弃。
+切换工具会重置草稿并忽略旧请求返回；执行页“重置”恢复该工具的初始默认参数。
+
+组件 API：`:schema`、`v-model`、`:disabled`；`change` 事件清理旧结果；
+通过 ref 的 `getArguments()` 返回已校验的独立参数对象，失败时返回 null 并显示错误。
+
+编辑器使用 [vendor/README.md](vendor/README.md) 中固定的 PR 构建包，安装和 CI 不依赖外部工作区。
+
+```bash
+# 仓库根目录
+pnpm install --frozen-lockfile
+pnpm build:share
+pnpm typecheck:fe
+pnpm --filter @mcp-core/mcp-knot-web test
+pnpm build:fe
+```
 
 ## 技术栈
 

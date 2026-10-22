@@ -20,60 +20,14 @@
         <!-- Dynamic Form -->
         <div class="mcp-card test-form-card">
           <h3 class="test-form-card__title">参数输入</h3>
-          <template v-if="schemaProperties.length > 0">
-            <t-form ref="formRef" :data="formData" label-align="top" :label-width="0">
-              <t-form-item
-                v-for="prop in schemaProperties"
-                :key="prop.name"
-                :label="formLabel(prop)"
-                :name="prop.name"
-                :rules="formRulesForField(prop)"
-              >
-                <!-- String with enum -->
-                <t-select
-                  v-if="prop.type === 'string' && prop.enumValues.length > 0"
-                  v-model="formData[prop.name]"
-                  :options="prop.enumValues.map((v: string) => ({ label: v, value: v }))"
-                  clearable
-                  :placeholder="`请选择 ${prop.name}`"
-                />
-
-                <!-- String -->
-                <t-input
-                  v-else-if="prop.type === 'string'"
-                  v-model="formData[prop.name]"
-                  :placeholder="`请输入 ${prop.name}`"
-                  clearable
-                />
-
-                <!-- Number / Integer -->
-                <t-input-number
-                  v-else-if="prop.type === 'number' || prop.type === 'integer'"
-                  v-model="formData[prop.name]"
-                  :min="prop.minimum"
-                  :max="prop.maximum"
-                  :placeholder="`请输入 ${prop.name}`"
-                  style="width: 100%"
-                />
-
-                <!-- Boolean -->
-                <t-switch v-else-if="prop.type === 'boolean'" v-model="formData[prop.name]" />
-
-                <!-- Array / Object (JSON textarea) -->
-                <t-textarea
-                  v-else
-                  v-model="formData[prop.name]"
-                  :placeholder="`请输入 JSON 格式的 ${prop.name}`"
-                  :autosize="{ minRows: 3, maxRows: 8 }"
-                />
-              </t-form-item>
-            </t-form>
-          </template>
-          <template v-else>
-            <div class="mcp-empty">
-              <div class="mcp-empty__desc">此工具无输入参数</div>
-            </div>
-          </template>
+          <ToolParameterEditor
+            ref="parameterEditor"
+            :key="editorKey"
+            v-model="formData"
+            :schema="tool.inputSchema"
+            :disabled="testing"
+            @change="testResponse = null"
+          />
 
           <div class="test-form-card__actions">
             <t-button theme="primary" :loading="testing" @click="handleTest">
@@ -169,8 +123,9 @@
 <script setup lang="ts">
 import { ChevronLeftIcon, CheckCircleIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
+import ToolParameterEditor from '@/components/tools/ToolParameterEditor.vue';
 import { useToolForm } from '@/composables/useToolForm';
 
 import type { ToolTestResponse } from '@/types/tool';
@@ -180,9 +135,8 @@ const {
   loading,
   tool,
   formData,
-  schemaProperties,
-  formLabel,
-  formRulesForField,
+  parameterEditor,
+  editorKey,
   buildArguments,
   goBackToDetail,
   toolStore,
@@ -191,11 +145,21 @@ const {
 const testing = ref(false);
 const testResponse = ref<ToolTestResponse | null>(null);
 
+watch(editorKey, () => {
+  testResponse.value = null;
+  testing.value = false;
+});
+
 const handleTest = async () => {
+  if (testing.value) return;
+  const args = buildArguments();
+  if (!args) return;
+  const session = editorKey.value;
+  testResponse.value = null;
   testing.value = true;
   try {
-    const args = buildArguments();
     const result = await toolStore.testTool(toolName.value, { arguments: args });
+    if (session !== editorKey.value) return;
     testResponse.value = result;
 
     if (result.validation.isValid) {
@@ -204,9 +168,10 @@ const handleTest = async () => {
       MessagePlugin.warning('参数验证未通过');
     }
   } catch {
+    if (session !== editorKey.value) return;
     MessagePlugin.error('参数验证失败');
   } finally {
-    testing.value = false;
+    if (session === editorKey.value) testing.value = false;
   }
 };
 </script>

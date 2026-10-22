@@ -20,67 +20,21 @@
         <!-- Dynamic Form -->
         <div class="mcp-card exec-form-card">
           <h3 class="exec-form-card__title">参数输入</h3>
-          <template v-if="schemaProperties.length > 0">
-            <t-form ref="formRef" :data="formData" label-align="top" :label-width="0">
-              <t-form-item
-                v-for="prop in schemaProperties"
-                :key="prop.name"
-                :label="formLabel(prop)"
-                :name="prop.name"
-                :rules="formRulesForField(prop)"
-              >
-                <!-- String with enum -->
-                <t-select
-                  v-if="prop.type === 'string' && prop.enumValues.length > 0"
-                  v-model="formData[prop.name]"
-                  :options="prop.enumValues.map((v: string) => ({ label: v, value: v }))"
-                  clearable
-                  :placeholder="`请选择 ${prop.name}`"
-                />
-
-                <!-- String -->
-                <t-input
-                  v-else-if="prop.type === 'string'"
-                  v-model="formData[prop.name]"
-                  :placeholder="`请输入 ${prop.name}`"
-                  clearable
-                />
-
-                <!-- Number / Integer -->
-                <t-input-number
-                  v-else-if="prop.type === 'number' || prop.type === 'integer'"
-                  v-model="formData[prop.name]"
-                  :min="prop.minimum"
-                  :max="prop.maximum"
-                  :placeholder="`请输入 ${prop.name}`"
-                  style="width: 100%"
-                />
-
-                <!-- Boolean -->
-                <t-switch v-else-if="prop.type === 'boolean'" v-model="formData[prop.name]" />
-
-                <!-- Array / Object (JSON textarea) -->
-                <t-textarea
-                  v-else
-                  v-model="formData[prop.name]"
-                  :placeholder="`请输入 JSON 格式的 ${prop.name}`"
-                  :autosize="{ minRows: 3, maxRows: 8 }"
-                />
-              </t-form-item>
-            </t-form>
-          </template>
-          <template v-else>
-            <div class="mcp-empty">
-              <div class="mcp-empty__desc">此工具无输入参数</div>
-            </div>
-          </template>
+          <ToolParameterEditor
+            ref="parameterEditor"
+            :key="editorKey"
+            v-model="formData"
+            :schema="tool.inputSchema"
+            :disabled="executing"
+            @change="executionResult = null"
+          />
 
           <div class="exec-form-card__actions">
             <t-button theme="primary" :loading="executing" @click="handleExecute">
               <template #icon><PlayIcon /></template>
               执行
             </t-button>
-            <t-button variant="outline" @click="handleReset"> 重置 </t-button>
+            <t-button variant="outline" :disabled="executing" @click="handleReset"> 重置 </t-button>
           </div>
         </div>
 
@@ -114,9 +68,10 @@
 <script setup lang="ts">
 import { ChevronLeftIcon, PlayIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 import { ExecutionDetail } from '@/components/tools';
+import ToolParameterEditor from '@/components/tools/ToolParameterEditor.vue';
 import { useToolForm } from '@/composables/useToolForm';
 
 import type { ToolExecuteResponse } from '@/types/tool';
@@ -126,9 +81,8 @@ const {
   loading,
   tool,
   formData,
-  schemaProperties,
-  formLabel,
-  formRulesForField,
+  parameterEditor,
+  editorKey,
   buildArguments,
   initFormDataDefaults,
   goBackToDetail,
@@ -138,14 +92,23 @@ const {
 const executing = ref(false);
 const executionResult = ref<ToolExecuteResponse | null>(null);
 
-const handleExecute = async () => {
-  executing.value = true;
+watch(editorKey, () => {
   executionResult.value = null;
+  executing.value = false;
+});
+
+const handleExecute = async () => {
+  if (executing.value) return;
+  const args = buildArguments();
+  if (!args) return;
+  const session = editorKey.value;
+  executionResult.value = null;
+  executing.value = true;
   try {
-    const args = buildArguments();
     const result = await toolStore.executeTool(toolName.value, {
       arguments: args,
     });
+    if (session !== editorKey.value) return;
     executionResult.value = result;
 
     if (result.isError) {
@@ -154,9 +117,10 @@ const handleExecute = async () => {
       MessagePlugin.success('工具执行成功');
     }
   } catch {
+    if (session !== editorKey.value) return;
     MessagePlugin.error('工具执行异常');
   } finally {
-    executing.value = false;
+    if (session === editorKey.value) executing.value = false;
   }
 };
 

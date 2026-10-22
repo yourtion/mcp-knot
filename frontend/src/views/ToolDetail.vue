@@ -104,7 +104,7 @@ interface SchemaPropertyRow {
   type: string;
   description: string;
   required: boolean;
-  enumValues: string[];
+  enumValues: unknown[];
   defaultValue: string;
 }
 
@@ -235,7 +235,7 @@ const schemaColumns: PrimaryTableCol<TableRowData>[] = [
                 color: 'var(--text-secondary)',
               },
             },
-            v,
+            typeof v === 'string' ? v : JSON.stringify(v),
           ),
         ),
       );

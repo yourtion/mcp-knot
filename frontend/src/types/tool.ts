@@ -1,4 +1,7 @@
 // 工具管理相关的类型定义
+import type { JsonSchema } from 'vue-json-ui-editor';
+
+export type { JsonSchema, JsonSchemaProperty } from 'vue-json-ui-editor';
 
 export interface ToolInfo {
   name: string;
@@ -7,28 +10,6 @@ export interface ToolInfo {
   serverName?: string;
   inputSchema: JsonSchema;
   status: 'available' | 'unavailable';
-}
-
-export interface JsonSchema {
-  type: string;
-  properties?: Record<string, JsonSchemaProperty>;
-  required?: string[];
-  description?: string;
-}
-
-export interface JsonSchemaProperty {
-  type: string;
-  description?: string;
-  enum?: string[];
-  default?: unknown;
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-  items?: JsonSchemaProperty;
-  properties?: Record<string, JsonSchemaProperty>;
-  required?: string[];
 }
 
 export interface ToolListResponse {
