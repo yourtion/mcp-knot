@@ -4,6 +4,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '../../utils/logger.js';
 import {
   type CacheKeyManager,
   CacheKeyManagerImpl,
@@ -30,6 +31,8 @@ vi.mock('../../utils/logger.js', () => ({
     debug: vi.fn(),
   }),
 }));
+
+const loggerMock = vi.mocked(logger);
 
 describe('CacheKeyManagerImpl', () => {
   let keyManager: CacheKeyManager;
