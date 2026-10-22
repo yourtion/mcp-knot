@@ -25,6 +25,8 @@ vi.mock('@/services/group', () => ({
 
 import * as groupService from '@/services/group';
 
+import type { GroupDetailInfo, GroupInfo } from '@/types/group';
+
 // Get mocked functions
 const mockGroupService = groupService as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -141,6 +143,48 @@ describe('Group Store', () => {
     expect(mockGroupService.getGroups).toHaveBeenCalled();
     expect(groupStore.error).toBe('Network error');
     expect(groupStore.loading).toBe(false);
+  });
+
+  it('读取组详情不会覆盖列表中的服务器 ID、工具白名单与已发布技能', async () => {
+    const summary: GroupInfo = {
+      id: 'team',
+      name: 'Team',
+      servers: ['server1'],
+      tools: ['offline-tool'],
+      skills: { include: [{ sourceId: 'skills', skill: 'review', revision: 'a'.repeat(64) }] },
+      serverCount: 1,
+      connectedServers: 1,
+      toolCount: 3,
+      filteredToolCount: 0,
+      toolFilterMode: 'whitelist',
+      isHealthy: true,
+      healthScore: 1,
+      validation: { enabled: true, hasKey: true },
+      stats: {
+        totalServers: 1,
+        availableServers: 1,
+        totalTools: 3,
+        filteredTools: 0,
+        healthPercentage: 100,
+      },
+      lastUpdated: '2026-10-21T10:00:00Z',
+    };
+    const detail: GroupDetailInfo = {
+      ...summary,
+      servers: [{ id: 'server1', status: 'connected', toolCount: 3 }],
+      tools: [],
+      performance: { averageResponseTime: 0, totalRequests: 0, successRate: 1 },
+      accessControl: { requiresValidation: true, toolAccessRestricted: true },
+    };
+    mockGroupService.getGroup.mockResolvedValue(detail);
+    const groupStore = useGroupStore();
+    groupStore.groups.set(summary.id, summary);
+
+    expect(await groupStore.fetchGroup(summary.id)).toEqual(detail);
+    expect(groupStore.groupList).toEqual([summary]);
+    expect(groupStore.groups.get(summary.id)?.servers).toEqual(['server1']);
+    expect(groupStore.groups.get(summary.id)?.tools).toEqual(['offline-tool']);
+    expect(groupStore.groups.get(summary.id)?.skills).toEqual(summary.skills);
   });
 
   it('应该正确创建组', async () => {

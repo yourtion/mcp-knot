@@ -1,6 +1,7 @@
 // API到MCP相关类型定义
 
 import type { JsonSchema } from './tool';
+import type { ApiToolConfig as SharedApiToolConfig } from '@mcp-core/mcp-knot-share/config';
 
 /**
  * HTTP请求方法
@@ -69,7 +70,7 @@ export interface ApiToolConfig {
   name: string;
   description: string;
   api: ApiEndpointConfig;
-  parameters: JsonSchema;
+  parameters: SharedApiToolConfig['parameters'] & { required?: string[] };
   response: ResponseConfig;
   security?: SecurityConfig;
   cache?: CacheConfig;

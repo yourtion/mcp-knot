@@ -53,6 +53,18 @@ pnpm test
 pnpm check
 ```
 
+### TypeScript 与 Vue 模板检查
+
+```bash
+# 在 frontend 目录执行，检查 TypeScript、Vue 脚本与模板（含测试）
+pnpm typecheck
+
+# 在仓库根目录执行前端检查
+pnpm typecheck:fe
+```
+
+仓库根目录的 `pnpm typecheck` 也包含上述 Vue 模板检查。
+
 ## 项目结构
 
 ```

@@ -17,7 +17,7 @@ import type {
 
 export const useGroupStore = defineStore('group', () => {
   // 状态
-  const groups = ref<Map<string, GroupInfo | GroupDetailInfo>>(new Map());
+  const groups = ref<Map<string, GroupInfo>>(new Map());
   const loading = ref(false);
   const error = ref<string | null>(null);
   const summary = ref({
@@ -87,7 +87,7 @@ export const useGroupStore = defineStore('group', () => {
   const fetchGroup = async (groupId: string): Promise<GroupDetailInfo> => {
     try {
       const group = await GroupService.getGroup(groupId);
-      groups.value.set(groupId, group);
+      // 详情包含服务器/工具对象，不能覆盖列表中编辑表单依赖的 ID 与工具白名单。
       return group;
     } catch (err) {
       error.value = err instanceof Error ? err.message : '获取组信息失败';

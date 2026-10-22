@@ -74,6 +74,12 @@ const router = createRouter({
           },
         },
         {
+          path: 'skills',
+          name: 'Skills',
+          component: () => import('@/views/Skills.vue'),
+          meta: { title: '技能管理' },
+        },
+        {
           path: 'groups',
           name: 'Groups',
           component: () => import('@/views/Groups.vue'),

@@ -50,6 +50,8 @@ import Breadcrumb from './Breadcrumb.vue';
 import { useTheme } from '@/composables/useTheme';
 import { useAuthStore } from '@/stores/auth';
 
+import type { DropdownOption } from 'tdesign-vue-next';
+
 defineProps<{
   collapsed: boolean;
 }>();
@@ -63,13 +65,7 @@ const authStore = useAuthStore();
 
 const isDark = computed(() => resolvedTheme() === 'dark');
 
-interface DropdownOption {
-  content: string;
-  value: string;
-  prefixIcon?: typeof PoweroffIcon;
-}
-
-const userDropdownOptions = computed(() => {
+const userDropdownOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
     {
       content: '退出登录',
@@ -82,7 +78,7 @@ const userDropdownOptions = computed(() => {
   return options;
 });
 
-const handleDropdownClick = (data: { value: string }) => {
+const handleDropdownClick = (data: DropdownOption) => {
   if (data.value === 'logout') {
     authStore.logout();
   }

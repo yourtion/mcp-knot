@@ -10,6 +10,7 @@ import type { SkillMarketService } from '../../services/skill-market-service.js'
 export function createSkillsApi(options: { market?: SkillMarketService } = {}) {
   const skillsApi = new Hono();
   skillsApi.use('*', async (context, next) => {
+    context.header('Cache-Control', 'private, no-store');
     if (context.get('auth')?.user.role !== 'admin')
       return context.json(
         { success: false, error: { code: 'FORBIDDEN', message: 'Administrator access required' } },
@@ -32,7 +33,6 @@ export function createSkillsApi(options: { market?: SkillMarketService } = {}) {
     );
   });
   skillsApi.get('/market/search', async (context) => {
-    context.header('Cache-Control', 'private, no-store');
     const data = await (options.market ?? getSkillMarketService()).search(context.req.query());
     return context.json({ success: true, data });
   });
@@ -57,6 +57,31 @@ export function createSkillsApi(options: { market?: SkillMarketService } = {}) {
         : body;
     const data = await getSkillRepository().saveSource(source);
     return context.json({ success: true, data }, 201);
+  });
+  skillsApi.get('/sources/:sourceId/revisions', async (context) => {
+    const repository = getSkillRepository();
+    const sourceId = context.req.param('sourceId');
+    if (!(await repository.listSources()).some((source) => source.id === sourceId))
+      return context.json(
+        { success: false, error: { code: 'SOURCE_NOT_FOUND', message: 'Unknown skill source' } },
+        404,
+      );
+    return context.json({ success: true, data: await repository.listRevisions(sourceId) });
+  });
+  skillsApi.get('/sources/:sourceId/revisions/:revision', async (context) => {
+    const data = await getSkillRepository().getRevision(
+      context.req.param('sourceId'),
+      context.req.param('revision'),
+    );
+    if (!data)
+      return context.json(
+        {
+          success: false,
+          error: { code: 'REVISION_NOT_FOUND', message: 'Unknown skill revision' },
+        },
+        404,
+      );
+    return context.json({ success: true, data });
   });
   for (const operation of ['sync', 'update'] as const) {
     skillsApi.post(`/sources/:sourceId/${operation}`, async (context) => {
