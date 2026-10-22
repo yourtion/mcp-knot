@@ -176,7 +176,7 @@ describe('convertToZodSchema', () => {
         },
         required: ['name'],
       });
-      expect(Object.keys(schema).sort()).toEqual(['count', 'name', 'tags']);
+      expect(Object.keys(schema).toSorted()).toEqual(['count', 'name', 'tags']);
       expect(schema.name!.safeParse('x').success).toBe(true);
       expect(schema.count!.safeParse(1).success).toBe(true);
       expect(schema.tags!.safeParse([]).success).toBe(true);

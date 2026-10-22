@@ -37,6 +37,8 @@ vi.mock('./group-service.js', () => ({
     this.initialize = vi.fn().mockResolvedValue(undefined);
     this.shutdown = vi.fn().mockResolvedValue(undefined);
     this.getMcpServer = vi.fn().mockReturnValue(mcpServer);
+    // 新 API：factory 闭包经 createRequestServer() 取 per-request server（返回 Promise）
+    this.createRequestServer = vi.fn().mockResolvedValue(mcpServer);
   }),
 }));
 
@@ -112,7 +114,7 @@ describe('createGroupMcpHandler - 装配', () => {
   it('factory 闭包返回该组的 McpServer 实例', async () => {
     await createGroupMcpHandler('g1');
     const { factory } = createHandlerCalls[0]!;
-    expect(factory()).toBe(groupCtorCalls[0]!.mcpServer);
+    await expect(factory()).resolves.toBe(groupCtorCalls[0]!.mcpServer);
   });
 
   it('compatibility inbound.enabled=false 时 legacy 为 reject', async () => {
@@ -153,8 +155,8 @@ describe('createGroupMcpHandler - 缓存与并发', () => {
     expect(createHandlerCalls).toHaveLength(2);
     const factoryG1 = createHandlerCalls[0]!.factory;
     const factoryG2 = createHandlerCalls[1]!.factory;
-    expect(factoryG1()).toBe(groupCtorCalls[0]!.mcpServer);
-    expect(factoryG2()).toBe(groupCtorCalls[1]!.mcpServer);
+    await expect(factoryG1()).resolves.toBe(groupCtorCalls[0]!.mcpServer);
+    await expect(factoryG2()).resolves.toBe(groupCtorCalls[1]!.mcpServer);
   });
 
   it('并发首次创建共享同一 Promise，仅装配一次', async () => {

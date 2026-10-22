@@ -942,7 +942,7 @@ describe('PerformanceMonitor 性能报告', () => {
     expect(report.topSlowRequests[0].duration).toBe(120);
     expect(report.topSlowRequests[9].requestId).toBe('r3');
     const durations = report.topSlowRequests.map((r) => r.duration);
-    expect([...durations].sort((a, b) => b - a)).toEqual(durations);
+    expect([...durations].toSorted((a, b) => b - a)).toEqual(durations);
   });
 
   it('recentMetrics 只保留最近 10 条', async () => {

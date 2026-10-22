@@ -19,24 +19,20 @@ import { hubApi } from './hub.js';
 function makeService(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     getServerHealth: vi.fn().mockReturnValue(new Map([['srv', 'connected']])),
-    getDetailedServiceStatus: vi
-      .fn()
-      .mockResolvedValue({
-        isInitialized: true,
-        serverCount: 2,
-        connectedServers: 1,
-        groupCount: 3,
-        totalTools: 8,
-        apiTools: 2,
-      }),
+    getDetailedServiceStatus: vi.fn().mockResolvedValue({
+      isInitialized: true,
+      serverCount: 2,
+      connectedServers: 1,
+      groupCount: 3,
+      totalTools: 8,
+      apiTools: 2,
+    }),
     getApiToolServiceHealth: vi.fn().mockReturnValue({ initialized: true, healthy: true }),
-    getServiceDiagnostics: vi
-      .fn()
-      .mockResolvedValue({
-        servers: { total: 2, connected: 1 },
-        groups: { total: 3 },
-        apiTools: { totalTools: 2 },
-      }),
+    getServiceDiagnostics: vi.fn().mockResolvedValue({
+      servers: { total: 2, connected: 1 },
+      groups: { total: 3 },
+      apiTools: { totalTools: 2 },
+    }),
     performApiToolHealthCheck: vi.fn().mockResolvedValue({ healthy: true, initialized: true }),
     reloadApiToolConfig: vi.fn().mockResolvedValue(undefined),
     ...overrides,

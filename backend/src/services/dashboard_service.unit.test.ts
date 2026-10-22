@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DashboardService } from './dashboard_service.js';
 
-import type { Activity, LogEntry } from '../types/dashboard.js';
+import type { Activity } from '../types/dashboard.js';
 import type { McpKnotService } from './mcp_knot_service.js';
 
 vi.mock('../utils/logger.js', () => ({

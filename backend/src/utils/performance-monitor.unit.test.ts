@@ -150,7 +150,7 @@ describe('PerformanceMonitor', () => {
       );
 
       const stats = monitor.getStatsByEndpoint();
-      expect(Object.keys(stats).sort()).toEqual(['GET /a', 'POST /a']);
+      expect(Object.keys(stats).toSorted()).toEqual(['GET /a', 'POST /a']);
 
       const getA = stats['GET /a']!;
       expect(getA.totalRequests).toBe(2);

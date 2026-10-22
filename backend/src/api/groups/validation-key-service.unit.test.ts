@@ -15,7 +15,6 @@ const configMock = vi.hoisted(() => ({
 
 vi.mock('../../utils/config.js', () => configMock);
 
-import { ValidationKeyServiceError } from './validation-key-service.js';
 import {
   createValidationKey,
   deleteValidationKey,

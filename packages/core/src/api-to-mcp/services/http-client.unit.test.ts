@@ -6,11 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createHttpClient, HttpClient } from './http-client.js';
 
-import type {
-  HttpRequestConfig,
-  RequestInterceptor,
-  ResponseInterceptor,
-} from '../types/http-client.js';
+import type { HttpRequestConfig, ResponseInterceptor } from '../types/http-client.js';
 
 // Mock fetch
 const mockFetch = vi.fn();

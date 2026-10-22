@@ -703,15 +703,17 @@ describe('Group Store', () => {
       await pending;
     });
 
-    it('fetchGroup 成功时写入组详情', async () => {
+    it('fetchGroup 成功时返回组详情且不覆盖列表缓存', async () => {
       const detail = { ...makeGroupInfo('g1'), name: '详情' };
       mockGroupService.getGroup.mockResolvedValue(detail);
 
       const groupStore = useGroupStore();
       const result = await groupStore.fetchGroup('g1');
 
-      expect(result).toEqual(detail);
-      expect(groupStore.groups.get('g1')).toEqual(detail);
+      expect(result).toBe(detail);
+      // 新契约：详情不写入 groups——详情含服务器/工具对象，写入会覆盖
+      // 列表中编辑表单依赖的 ID 与工具白名单
+      expect(groupStore.groups.get('g1')).toBeUndefined();
     });
 
     it('fetchGroup 失败时记录默认错误消息并抛出', async () => {

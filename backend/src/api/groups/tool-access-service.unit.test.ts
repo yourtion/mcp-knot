@@ -16,7 +16,6 @@ const configMock = vi.hoisted(() => ({
 
 vi.mock('../../utils/config.js', () => configMock);
 
-import { ToolAccessServiceError } from './tool-access-service.js';
 import {
   configureGroupTools,
   getGroupAvailableTools,

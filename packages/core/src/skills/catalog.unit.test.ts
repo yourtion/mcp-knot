@@ -101,7 +101,7 @@ describe('catalog resource listings and cursor offsets', () => {
     const snapshots = [snapshot('beta-skill'), snapshot('alpha-skill'), snapshot('gamma-skill')];
     const catalog = new SkillCatalog(snapshots);
     const ordered = catalog.list(undefined, 10).skills.map((skill) => skill.uri);
-    expect(ordered).toEqual([...ordered].sort());
+    expect(ordered).toEqual([...ordered].toSorted());
     const firstPage = catalog.list(undefined, 2);
     expect(firstPage.skills.map((skill) => skill.uri)).toEqual(ordered.slice(0, 2));
     const secondPage = catalog.list(firstPage.nextCursor, 2);

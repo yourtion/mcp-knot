@@ -6,6 +6,7 @@
  */
 
 import { UnifiedLogger } from '@mcp-core/mcp-knot-share';
+import fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CliMemoryProfiler, cliMemoryProfiler } from './memory-profiler';
@@ -33,6 +34,9 @@ describe('CliMemoryProfiler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    // 快照是否采集 fd 取决于 /proc/self/fd 是否存在（Linux 有、macOS 无），
+    // 统一 mock 为不可用，保证断言跨平台确定；fd 路径由专门用例覆盖
+    vi.spyOn(fs, 'existsSync').mockReturnValue(false);
     profiler = new CliMemoryProfiler();
   });
 
@@ -62,6 +66,19 @@ describe('CliMemoryProfiler', () => {
 
     it('未先调用 recordBeforeRestart 时应抛出错误', () => {
       expect(() => profiler.recordAfterRestart()).toThrow('必须先调用 recordBeforeRestart()');
+    });
+
+    it('/proc/self/fd 可用时（Linux）快照应记录 fd 数量', () => {
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'readdirSync').mockReturnValue(['0', '1', '2', '3'] as unknown as string[]);
+      mockMemorySequence([HEAP_BASE, HEAP_BASE + 2048]);
+      vi.spyOn(UnifiedLogger.prototype, 'debug').mockImplementation(() => {});
+      vi.spyOn(UnifiedLogger.prototype, 'info').mockImplementation(() => {});
+
+      profiler.recordBeforeRestart();
+      const snapshot = profiler.recordAfterRestart();
+
+      expect(snapshot.fileDescriptorsBefore).toBe(4);
     });
 
     it('多次重启时迭代编号应递增', () => {

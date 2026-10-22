@@ -68,12 +68,12 @@ describe('配置工具', () => {
 
       const configDir = path.resolve(process.cwd(), 'config');
       expect(config.apiToolsConfigPath).toBe(path.resolve(configDir, 'api-tools.json'));
-      expect(instances.map((i) => i.filePath).sort()).toEqual(
+      expect(instances.map((i) => i.filePath).toSorted()).toEqual(
         [
           path.resolve(configDir, 'group.json'),
           path.resolve(configDir, 'mcp_server.json'),
           path.resolve(configDir, 'system.json'),
-        ].sort(),
+        ].toSorted(),
       );
     });
 

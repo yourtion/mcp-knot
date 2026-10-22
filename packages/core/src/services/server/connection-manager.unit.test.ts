@@ -468,8 +468,13 @@ describe('ServerConnectionManager', () => {
         connection.state = ConnectionState.ERROR;
 
         const reconnecting = connectionManager.reconnectServer('test-server');
+        // 先挂 rejection 断言再推进时钟：reject 发生在 advanceTimersByTimeAsync 期间，
+        // 事后挂处理器会跨宏任务边界成为 unhandled rejection（会挂掉 Stryker 干跑）
+        const expectation = expect(reconnecting).rejects.toThrow(
+          "连接 'test-server' 失败: 重连失败",
+        );
         await vi.advanceTimersByTimeAsync(1_100);
-        await expect(reconnecting).rejects.toThrow("连接 'test-server' 失败: 重连失败");
+        await expectation;
 
         expect(connection.state).toBe(ConnectionState.ERROR);
         expect(connection.lastError?.message).toBe('重连失败');
@@ -529,7 +534,7 @@ describe('ServerConnectionManager', () => {
       await connectionManager.createConnection('test-server', mockServerConfig);
       const info = connectionManager.getConnectionInfo('test-server');
       expect(info?.client).toMatchObject({ id: 'test-server', connected: true });
-      expect(typeof (info?.client as { close: () => void }).close).toBe('function');
+      expect(typeof (info!.client as { close: () => void }).close).toBe('function');
       expect(info?.tools.map((tool) => tool.name)).toEqual([
         'test-server_tool_1',
         'test-server_tool_2',
@@ -748,7 +753,7 @@ describe('ServerConnectionManager', () => {
       const completion = mockLogger.info.mock.calls.find(
         (call) => call[0] === '服务器连接管理器关闭完成',
       );
-      expect((completion?.[1] as { duration: number }).duration).toBeGreaterThanOrEqual(0);
+      expect((completion![1] as { duration: number }).duration).toBeGreaterThanOrEqual(0);
 
       // 单次关闭不应触发重复关闭告警
       expect(mockLogger.warn).not.toHaveBeenCalledWith('关闭已在进行中，等待完成');

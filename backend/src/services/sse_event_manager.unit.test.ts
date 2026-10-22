@@ -85,7 +85,7 @@ describe('SSEEventManager', () => {
     it('订阅列表记录在客户端信息中', async () => {
       const { clientId } = await connect(['tool_execution', 'activity']);
       const stats = manager.getConnectionStats();
-      expect(stats.clients[0]?.subscriptions.sort()).toEqual(['activity', 'tool_execution']);
+      expect(stats.clients[0]?.subscriptions.toSorted()).toEqual(['activity', 'tool_execution']);
       expect(clientId).toBeTruthy();
     });
   });
