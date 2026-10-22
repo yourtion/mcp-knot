@@ -214,6 +214,43 @@ describe('persistent skill repository', () => {
     ).rejects.toThrow('different configuration');
   });
 
+  it('lists validated historical revisions after restart without accessing upstream', async () => {
+    const repository = await local();
+    expect(await repository.listRevisions('team')).toEqual([]);
+    const first = await repository.sync('team');
+    await writeFile(
+      join(source, 'SKILL.md'),
+      '---\nname: grill-me\ndescription: Updated design.\n---\nNew instructions.',
+    );
+    const next = await repository.sync('team', 'update');
+    await repository.sync('team');
+    await writeFile(join(store, 'revisions', 'team', 'unfinished.tmp'), 'partial');
+    await rm(join(temp, 'source'), { recursive: true });
+    const restarted = new SkillRepository(store, async () => {
+      throw new Error('History must not fetch upstream');
+    });
+    const history = await restarted.listRevisions('team');
+    expect(history).toHaveLength(2);
+    expect(history).toEqual(expect.arrayContaining([first, next]));
+    expect(history[0].importedAt >= history[1].importedAt).toBe(true);
+    expect(await restarted.getRevision('team', first.revision)).toEqual(first);
+    expect(await restarted.latest('team')).toEqual(next);
+    expect(await restarted.getRevision('team', '0'.repeat(64))).toBeUndefined();
+    await expect(restarted.listRevisions('../team')).rejects.toThrow();
+    await expect(restarted.getRevision('team', '../latest')).rejects.toThrow();
+  });
+
+  it('does not offer a corrupted revision in the version history', async () => {
+    const repository = await local();
+    const imported = await repository.sync('team');
+    const path = join(store, 'revisions', 'team', `${imported.revision}.json`);
+    const persisted = JSON.parse(await readFile(path, 'utf8'));
+    persisted.snapshots[0].files[0].base64 = Buffer.from('corruption').toString('base64');
+    await writeFile(path, JSON.stringify(persisted));
+    await expect(repository.listRevisions('team')).rejects.toThrow();
+    await expect(repository.getRevision('team', imported.revision)).rejects.toThrow();
+  });
+
   it.each([
     'npx skills@latest add mattpocock/skills --skill=grill-me; touch stolen',
     'npx skills@latest add mattpocock/skills --skill=$(whoami)',

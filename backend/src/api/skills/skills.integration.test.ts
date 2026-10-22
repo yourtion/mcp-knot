@@ -148,6 +148,16 @@ describe('Skills management and formal Group publication', () => {
       .data as SkillImportResult;
     expect(next.revision).not.toBe(first.revision);
     expect((await list(client)).skills).toEqual(first.skills);
+    const historyResponse = await request('/api/skills/sources/team/revisions', 'GET');
+    expect(historyResponse.status).toBe(200);
+    expect(historyResponse.headers.get('Cache-Control')).toBe('private, no-store');
+    const history = (await historyResponse.json()).data as SkillImportResult[];
+    expect(history).toHaveLength(2);
+    expect(history).toEqual(expect.arrayContaining([first, next]));
+    expect(
+      (await (await request(`/api/skills/sources/team/revisions/${first.revision}`, 'GET')).json())
+        .data,
+    ).toEqual(first);
     const published = await request('/api/groups/design', 'PUT', {
       skills: { include: next.selections },
     });
@@ -161,6 +171,52 @@ describe('Skills management and formal Group publication', () => {
     expect(
       (await restarted.catalog({ include: first.selections }, 'rollback')).get(first.skills[0].uri),
     ).toEqual(first.skills[0]);
+    const rollback = await request('/api/groups/design', 'PUT', {
+      skills: { include: history.find((item) => item.revision === first.revision)!.selections },
+    });
+    expect(rollback.status).toBe(200);
+    const rolledBack = await connect('design');
+    expect((await list(rolledBack)).skills).toEqual(first.skills);
+    expect(await rolledBack.readResource({ uri: first.skills[0].uri })).toMatchObject({
+      contents: [{ text: expect.stringContaining('Original content.') }],
+    });
+    await expect(rolledBack.readResource({ uri: next.skills[0].uri })).rejects.toMatchObject({
+      code: -32602,
+    });
+    expect((await restarted.latest('team'))?.revision).toBe(next.revision);
+  });
+
+  it('reports missing history and protects version reads with administrator authorization', async () => {
+    const first = await imported();
+    expect((await request('/api/skills/sources/missing/revisions', 'GET')).status).toBe(404);
+    expect(
+      (await request(`/api/skills/sources/team/revisions/${'0'.repeat(64)}`, 'GET')).status,
+    ).toBe(404);
+    expect((await request('/api/skills/sources/team/revisions/invalid', 'GET')).status).toBe(400);
+    for (const role of ['', 'user']) {
+      expect(
+        (await request('/api/skills/sources/team/revisions', 'GET', undefined, role)).status,
+      ).toBe(403);
+      expect(
+        (
+          await request(
+            `/api/skills/sources/team/revisions/${first.revision}`,
+            'GET',
+            undefined,
+            role,
+          )
+        ).status,
+      ).toBe(403);
+    }
+    await request('/api/skills/sources', 'POST', {
+      id: 'pending',
+      type: 'local',
+      directory: join(temp, 'source'),
+      skills: ['grill-me'],
+    });
+    expect(
+      (await (await request('/api/skills/sources/pending/revisions', 'GET')).json()).data,
+    ).toEqual([]);
   });
 
   it('does not expose imported skills in another Group or an unselected view', async () => {

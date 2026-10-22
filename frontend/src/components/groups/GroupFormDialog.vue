@@ -53,7 +53,6 @@
 <script setup lang="ts">
 import { ref, reactive, watch, computed } from 'vue';
 
-import { useGroupStore } from '@/stores/group';
 import { useServerStore } from '@/stores/server';
 import { useToolStore } from '@/stores/tool';
 
@@ -72,7 +71,6 @@ const emit = defineEmits<{
 }>();
 
 const serverStore = useServerStore();
-const groupStore = useGroupStore();
 const toolStore = useToolStore();
 const formRef = ref<FormInstanceFunctions | null>(null);
 

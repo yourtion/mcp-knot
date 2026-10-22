@@ -43,6 +43,10 @@
         <span class="group-list__tools"> {{ row.filteredToolCount }}/{{ row.toolCount }} </span>
       </template>
 
+      <template #skills="{ row }">
+        {{ row.skills?.include.length ?? 0 }}
+      </template>
+
       <template #health="{ row }">
         <span :class="['group-list__health', healthColorClass(row.healthScore)]">
           {{ healthPercentage(row.healthScore) }}
@@ -65,6 +69,16 @@
 
       <template #actions="{ row }">
         <div class="group-list__actions">
+          <t-tooltip v-if="canManageSkills" content="发布技能 / 回滚">
+            <t-button
+              variant="text"
+              shape="square"
+              size="small"
+              @click="emit('manageSkills', row.id)"
+            >
+              <template #icon><BookOpenIcon /></template>
+            </t-button>
+          </t-tooltip>
           <t-tooltip content="编辑">
             <t-button variant="text" shape="square" size="small" @click="emit('edit', row)">
               <template #icon><EditIcon /></template>
@@ -130,6 +144,7 @@ import {
   CloseCircleIcon,
   ControlPlatformIcon,
   LockOnIcon,
+  BookOpenIcon,
 } from 'tdesign-icons-vue-next';
 import { ref, computed } from 'vue';
 
@@ -138,6 +153,7 @@ import type { GroupInfo } from '@/types/group';
 const props = defineProps<{
   groups: GroupInfo[];
   loading: boolean;
+  canManageSkills?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -145,6 +161,7 @@ const emit = defineEmits<{
   delete: [id: string];
   manageTools: [id: string];
   manageValidation: [id: string];
+  manageSkills: [id: string];
 }>();
 
 const searchQuery = ref('');
@@ -154,9 +171,10 @@ const columns = [
   { colKey: 'description', title: '描述', width: 200 },
   { colKey: 'servers', title: '服务器', width: 100 },
   { colKey: 'tools', title: '工具', width: 100 },
+  { colKey: 'skills', title: '技能', width: 80 },
   { colKey: 'health', title: '健康度', width: 100 },
   { colKey: 'validation', title: '验证', width: 120 },
-  { colKey: 'actions', title: '操作', width: 180, fixed: 'right' as const },
+  { colKey: 'actions', title: '操作', width: 210, fixed: 'right' as const },
 ];
 
 const filteredGroups = computed(() => {

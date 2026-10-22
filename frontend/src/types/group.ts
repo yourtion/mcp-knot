@@ -1,5 +1,7 @@
 // 组管理相关的类型定义
 
+import type { SkillSelection } from '@/types/skill';
+
 export interface GroupInfo {
   id: string;
   name: string;
@@ -10,6 +12,7 @@ export interface GroupInfo {
   toolCount: number;
   filteredToolCount: number;
   tools: string[];
+  skills?: { include: SkillSelection[] };
   toolFilterMode: 'whitelist' | 'none';
   isHealthy: boolean;
   healthScore: number;
@@ -132,6 +135,7 @@ export interface CreateGroupRequest {
   description?: string;
   servers: string[];
   tools: string[];
+  skills?: { include: SkillSelection[] };
 }
 
 export interface UpdateGroupRequest {
@@ -139,6 +143,7 @@ export interface UpdateGroupRequest {
   description?: string;
   servers?: string[];
   tools?: string[];
+  skills?: { include: SkillSelection[] };
 }
 
 export interface GroupOperationResponse {
@@ -149,6 +154,7 @@ export interface GroupOperationResponse {
     description?: string;
     servers: string[];
     tools: string[];
+    skills?: { include: SkillSelection[] };
     toolFilterMode: 'whitelist' | 'none';
     validation: {
       enabled: boolean;

@@ -11,6 +11,7 @@ const createTestRouter = () =>
       { path: '/dashboard', component: { template: '<div>Dashboard</div>' } },
       { path: '/servers', component: { template: '<div>Servers</div>' } },
       { path: '/tools', component: { template: '<div>Tools</div>' } },
+      { path: '/skills', component: { template: '<div>Skills</div>' } },
       { path: '/groups', component: { template: '<div>Groups</div>' } },
       { path: '/api-to-mcp', component: { template: '<div>ApiToMcp</div>' } },
       { path: '/debug', component: { template: '<div>Debug</div>' } },
@@ -74,6 +75,7 @@ describe('SideNavigation', () => {
     expect(text).toContain('仪表板');
     expect(text).toContain('服务器管理');
     expect(text).toContain('工具管理');
+    expect(text).toContain('技能管理');
     expect(text).toContain('组管理');
   });
 

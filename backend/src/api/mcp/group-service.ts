@@ -208,6 +208,22 @@ export class GroupMcpService {
   }
 
   /**
+   * HTTP serving owns and mutates each returned server (protocol era, client
+   * identity and transport). Never hand the cached service's server to it.
+   * Rebuild registrations over the shared upstream manager; no new upstream
+   * connections or polling loops are created by GroupMcpService.initialize().
+   */
+  async createRequestServer(): Promise<McpServer> {
+    const requestService = new GroupMcpService(
+      this.groupId,
+      this.coreServiceManager,
+      this.mrtrRelay,
+    );
+    await requestService.initialize();
+    return requestService.getMcpServer();
+  }
+
+  /**
    * 获取MCP服务器实例
    */
   getMcpServer(): McpServer {
@@ -670,7 +686,7 @@ export class GroupMcpService {
       // P5: registerTool 返回 RegisteredTool 句柄（带 remove()），保存以便 refreshTools 注销。
       const registered = this.mcpServer.registerTool(
         toolName,
-        { inputSchema: z.object(zodSchema) },
+        { description: tool.description, inputSchema: z.object(zodSchema) },
         async (args, extra) => {
           // P6/SEP-414：从请求 _meta 提取 trace context，注入 AsyncLocalStorage，
           // 使下游 server_manager.executeToolOnServer 的出站 callTool 能读到并注入上游 _meta。

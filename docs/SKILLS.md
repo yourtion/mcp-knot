@@ -4,11 +4,21 @@ MCP Knot 可以从本地目录、公共 HTTPS Git 仓库和 `skills` CLI 导入�
 
 ## 当前范围
 
-已实现来源登记、同步/更新、快照恢复、Group 固定版本选择和市场搜索管理 API。MCP 使用 `io.modelcontextprotocol/skills` 扩展，提供 `skills/list`、`skills/get` 以及文件的 `resources/read`，保留原 frontmatter、完整文件清单、SHA-256 和字节数。
+已实现 Web 技能导入、历史版本选择、Group 发布与回滚，以及对应的来源、版本和市场搜索管理 API。MCP 使用 `io.modelcontextprotocol/skills` 扩展，提供 `skills/list`、`skills/get` 以及文件的 `resources/read`，保留原 frontmatter、完整文件清单、SHA-256 和字节数。
 
 Hub 分发单个 Skill 及其附件。技能正文引用其他技能时，由模型判断需求、宿主读取已授权内容；Hub 不递归导入、不合并技能正文，也不执行附带脚本。
 
-当前通过 API 或配置操作，Web 界面尚未新增技能编辑入口。没有后台任务、定时同步、私有仓库凭据管理、Bundle 或自动 GC。生产 CLI/stdin 服务尚未接入 Skills；stdio 验证脚本仅用于协议测试。客户端需要支持 Skills 扩展，普通 MCP 资源读取不代表客户端会激活技能。
+Web 管理需要管理员权限；当前提供导入和发布管理，不提供技能正文编辑或市场搜索界面。没有后台任务、定时同步、私有仓库凭据管理、Bundle 或自动 GC。生产 CLI/stdin 服务尚未接入 Skills；stdio 验证脚本仅用于协议测试。客户端需要支持 Skills 扩展，普通 MCP 资源读取不代表客户端会激活技能。
+
+## Web 操作
+
+1. 打开侧边栏的 **技能管理**，点击 **导入技能**。填写唯一来源 ID，选择公共 Git 仓库、服务器本地目录、结构化 skills CLI 来源或受限 CLI 命令，再填写要导入的技能名称。目录指 Hub 服务器上的路径。
+2. 点击 **登记并导入**。来源先登记，再同步保存快照；若同步失败，窗口保留来源配置，可点击 **重试导入**，也可关闭后从来源列表重新同步。外部获取可能需要数分钟。
+3. 点击来源的 **查看版本**，选择已保存的 revision，检查导入时间、Git Commit / CLI 版本、技能描述、文件清单和 SHA-256。**更新候选** 只保存新的候选版本，已发布 Group 保持原版本。
+4. 点击 **发布到 Group / 回滚**，选择已有 Group、版本和本次要发布的技能。窗口展示当前发布版本与目标版本；确认发布后，同来源同名技能会被替换，其他技能以及 Group 的服务器、工具与认证配置保留。也可从组管理列表中的书本按钮打开此窗口。
+5. 回滚时选择历史 revision，再点击 **回滚 / 发布此历史版本**；读取本地快照，不重新获取来源，也不修改最新候选指针。当前已发布列表支持逐个撤销技能；没有服务器的纯技能 Group 必须至少保留一个技能。
+
+发布前会重新读取 Group；若技能选择已变化，窗口刷新当前版本并要求重新检查。保存失败时保留窗口和选择，便于检查错误或重试。
 
 ## 运行与存储
 
@@ -38,10 +48,14 @@ Hub 分发单个 Skill 及其附件。技能正文引用其他技能时，由模
 | `GET /api/skills/market/search?q=grill-me&owner=mattpocock&limit=20` | 搜索市场候选，返回本地导入/发布状态与来源配置 |
 | `GET /api/skills/sources`                                            | 查看登记来源、最新候选、技能清单与来源记录    |
 | `POST /api/skills/sources`                                           | 登记来源；已有来源 ID 的配置不能改变          |
+| `GET /api/skills/sources/:sourceId/revisions`                        | 按导入时间倒序查看本地历史版本及技能清单      |
+| `GET /api/skills/sources/:sourceId/revisions/:revision`              | 查看一个已保存的固定版本                      |
 | `POST /api/skills/sources/:sourceId/sync`                            | 获取、校验并保存候选快照                      |
 | `POST /api/skills/sources/:sourceId/update`                          | 更新并保存候选快照                            |
 
 来源与市场请求使用 `{ "success": true, "data": ... }` 响应。同步成功的 `data.selections` 包含 `{sourceId, revision, skill}`，可直接作为 Group 的 `skills.include`。来源同步错误返回 `400 / SKILLS_ERROR`；市场查询会区分参数、限流、网络、格式及超时错误，详见[市场验证报告](research/2026-10-12-skills-market-validation.md)。
+
+版本查询只读取本地持久化快照并校验完整性，不访问上游，也不返回附件的原始字节。已登记但尚未导入的来源返回空版本列表；不存在的来源或版本返回 404，非法 revision 返回 400。历史版本读取与来源管理使用相同管理员权限。
 
 ### 1. 登记来源
 
