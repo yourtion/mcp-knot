@@ -105,7 +105,7 @@ describe('Server Store', () => {
     });
 
     it('请求期间处于加载状态', async () => {
-      let resolveFn: (value: ServerListResponse) => void;
+      let resolveFn!: (value: ServerListResponse) => void;
       mockServerService.getServers.mockImplementation(
         () => new Promise<ServerListResponse>((resolve) => (resolveFn = resolve)),
       );
@@ -159,7 +159,10 @@ describe('Server Store', () => {
       mockServerService.getServers.mockResolvedValue(makeListResponse([makeServer({ id: 'a' })]));
 
       const store = useServerStore();
-      const request = { id: 'a', config: { type: 'stdio', command: 'node', enabled: true } };
+      const request = {
+        id: 'a',
+        config: { type: 'stdio' as const, command: 'node', enabled: true },
+      };
       await store.createServer(request);
 
       expect(mockServerService.createServer).toHaveBeenCalledWith(request);

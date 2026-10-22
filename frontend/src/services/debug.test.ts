@@ -46,7 +46,7 @@ describe('Debug Service', () => {
 
   it('testTool POST /debug/tool-test', async () => {
     mocked.post.mockResolvedValue(ok({ canExecute: true }));
-    const request = { arguments: { a: 1 } };
+    const request = { toolName: 'demo-tool', arguments: { a: 1 } };
 
     const result = await debugService.testTool(request);
 

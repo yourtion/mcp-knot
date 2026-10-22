@@ -65,7 +65,7 @@ const loadApi = async () => {
 
 const make401Error = (overrides: Record<string, unknown> = {}) => ({
   response: { status: 401 },
-  config: { headers: {}, ...overrides },
+  config: { headers: {} as Record<string, string | undefined>, ...overrides },
 });
 
 describe('api 服务', () => {
@@ -142,7 +142,10 @@ describe('api 服务', () => {
   describe('响应拦截器', () => {
     it('非 401 错误直接拒绝', async () => {
       const { responseInterceptor } = await loadApi();
-      const error = { response: { status: 500 }, config: { headers: {} } };
+      const error = {
+        response: { status: 500 },
+        config: { headers: {} } as Record<string, unknown>,
+      };
 
       await expect(responseInterceptor(error)).rejects.toBe(error);
       expect(error.config._retry).toBeUndefined();

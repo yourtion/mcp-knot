@@ -50,7 +50,7 @@ describe('ServerService', () => {
 
   it('createServer POST /servers', async () => {
     mocked.post.mockResolvedValue(ok({ id: 's1', message: 'ok' }));
-    const data = { id: 's1', config: { type: 'stdio', command: 'node', enabled: true } };
+    const data = { id: 's1', config: { type: 'stdio' as const, command: 'node', enabled: true } };
 
     await serverService.createServer(data);
 
@@ -59,7 +59,7 @@ describe('ServerService', () => {
 
   it('updateServer PUT /servers/:id', async () => {
     mocked.put.mockResolvedValue(ok({ id: 's1', message: 'ok' }));
-    const data = { config: { type: 'stdio', command: 'node', enabled: false } };
+    const data = { config: { type: 'stdio' as const, command: 'node', enabled: false } };
 
     await serverService.updateServer('s1', data);
 

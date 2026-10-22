@@ -9,6 +9,7 @@ import { useToolForm } from '../useToolForm';
 import * as toolService from '@/services/tool';
 
 import type { ToolInfo } from '@/types/tool';
+import type { UnwrapRef } from 'vue';
 
 vi.mock('tdesign-vue-next', () => ({
   MessagePlugin: {
@@ -44,6 +45,14 @@ const makeTool = (inputSchema: ToolInfo['inputSchema']): ToolInfo => ({
 const DummyView = defineComponent({ template: '<div />' });
 
 /**
+ * 组件实例（vm）上的 setup 返回值会被 proxyRefs 自动解包，
+ * 因此按解包后的形状描述 useToolForm 的返回类型。
+ */
+type ToolFormContext = {
+  [K in keyof ReturnType<typeof useToolForm>]: UnwrapRef<ReturnType<typeof useToolForm>[K]>;
+};
+
+/**
  * 挂载一个调用 useToolForm 的宿主组件并返回其上下文。
  * detail 传 'reject' 时模拟接口失败。
  */
@@ -64,7 +73,7 @@ async function mountToolForm(schema?: ToolInfo['inputSchema'], detail: 'reject' 
     mockToolService.getToolDetail.mockResolvedValue(makeTool(schema ?? { type: 'object' }));
   }
 
-  let context: ReturnType<typeof useToolForm> | undefined;
+  let context: ToolFormContext | undefined;
   const Host = defineComponent({
     setup() {
       // 直接返回组合式函数结果，通过 vm 访问时 ref 会自动解包
@@ -76,7 +85,7 @@ async function mountToolForm(schema?: ToolInfo['inputSchema'], detail: 'reject' 
   const wrapper = mount(Host, { global: { plugins: [router] } });
   await flushPromises();
 
-  context = wrapper.vm as unknown as ReturnType<typeof useToolForm>;
+  context = wrapper.vm as unknown as ToolFormContext;
   return { context, router };
 }
 

@@ -250,7 +250,7 @@ describe('Auth Store', () => {
   });
 
   it('登录请求期间处于加载状态', async () => {
-    let resolveFn: (value: { accessToken: string; refreshToken: string; user: never }) => void;
+    let resolveFn!: (value: { accessToken: string; refreshToken: string; user: never }) => void;
     vi.mocked(authService.login).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -287,7 +287,7 @@ describe('Auth Store', () => {
   });
 
   it('登出请求期间处于加载状态', async () => {
-    let resolveFn: () => void;
+    let resolveFn!: () => void;
     vi.mocked(authService.logout).mockImplementation(
       () =>
         new Promise<void>((resolve) => {

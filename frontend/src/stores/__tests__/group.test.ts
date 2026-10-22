@@ -584,30 +584,29 @@ describe('Group Store', () => {
   });
 
   describe('补充行为覆盖', () => {
-    const makeGroupInfo = (id: string) =>
-      ({
-        id,
-        name: `组 ${id}`,
-        description: '',
-        servers: [],
-        serverCount: 0,
-        connectedServers: 0,
-        toolCount: 0,
-        filteredToolCount: 0,
-        tools: [],
-        toolFilterMode: 'none',
-        isHealthy: true,
-        healthScore: 100,
-        validation: { enabled: false, hasKey: false },
-        stats: {
-          totalServers: 0,
-          availableServers: 0,
-          totalTools: 0,
-          filteredTools: 0,
-          healthPercentage: 100,
-        },
-        lastUpdated: '2024-01-01T00:00:00.000Z',
-      }) as never;
+    const makeGroupInfo = (id: string): GroupInfo => ({
+      id,
+      name: `组 ${id}`,
+      description: '',
+      servers: [],
+      serverCount: 0,
+      connectedServers: 0,
+      toolCount: 0,
+      filteredToolCount: 0,
+      tools: [],
+      toolFilterMode: 'none',
+      isHealthy: true,
+      healthScore: 100,
+      validation: { enabled: false, hasKey: false },
+      stats: {
+        totalServers: 0,
+        availableServers: 0,
+        totalTools: 0,
+        filteredTools: 0,
+        healthPercentage: 100,
+      },
+      lastUpdated: '2024-01-01T00:00:00.000Z',
+    });
 
     it('fetchGroups 时 summary 统计字段全部更新', async () => {
       mockGroupService.getGroups.mockResolvedValue({
@@ -677,7 +676,7 @@ describe('Group Store', () => {
     });
 
     it('fetchGroups 请求期间处于加载状态', async () => {
-      let resolveFn: (value: unknown) => void;
+      let resolveFn!: (value: unknown) => void;
       mockGroupService.getGroups.mockImplementation(
         () => new Promise((resolve) => (resolveFn = resolve)),
       );
@@ -947,7 +946,7 @@ describe('Group Store', () => {
 
     it('deleteGroupValidationKey 重置本地验证状态', async () => {
       const groupStore = useGroupStore();
-      const groupInfo = makeGroupInfo('g1') as { validation: Record<string, unknown> };
+      const groupInfo = makeGroupInfo('g1');
       groupInfo.validation = { enabled: true, hasKey: true };
       groupStore.groups.set('g1', groupInfo);
 

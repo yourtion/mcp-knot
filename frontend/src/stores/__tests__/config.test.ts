@@ -117,7 +117,7 @@ describe('Config Store', () => {
     });
 
     it('请求期间处于加载状态', async () => {
-      let resolveFn: (value: ConfigData) => void;
+      let resolveFn!: (value: ConfigData) => void;
       mockConfigService.getCurrentConfig.mockImplementation(
         () => new Promise<ConfigData>((resolve) => (resolveFn = resolve)),
       );

@@ -498,11 +498,11 @@ describe('ApiToMcpService', () => {
         data: { success: true, data: { configs: [], message: 'ok' }, timestamp: '' },
       });
 
-      await apiToMcpService.importConfig({ format: 'json', source: mockFile });
+      await apiToMcpService.importConfig({ format: 'openapi', source: mockFile });
 
       const formData = (api.post as unknown as Mock).mock.calls[0][1] as FormData;
       expect(formData.get('file')).toBe(mockFile);
-      expect(formData.get('format')).toBe('json');
+      expect(formData.get('format')).toBe('openapi');
       expect(formData.get('options')).toBeNull();
     });
 

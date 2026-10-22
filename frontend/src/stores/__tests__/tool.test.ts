@@ -6,6 +6,7 @@ import * as toolService from '@/services/tool';
 
 import type {
   ToolExecuteResponse,
+  ToolFilterParams,
   ToolInfo,
   ToolListResponse,
   ToolMonitoring,
@@ -115,7 +116,7 @@ describe('Tool Store', () => {
     });
 
     it('请求期间处于加载状态，结束后复位', async () => {
-      let resolveFetch: (value: ToolListResponse) => void;
+      let resolveFetch!: (value: ToolListResponse) => void;
       mockToolService.getTools.mockImplementation(
         () => new Promise<ToolListResponse>((resolve) => (resolveFetch = resolve)),
       );
@@ -239,7 +240,7 @@ describe('Tool Store', () => {
     });
 
     it('请求期间处于加载状态', async () => {
-      let resolveExec: (value: ToolExecuteResponse) => void;
+      let resolveExec!: (value: ToolExecuteResponse) => void;
       mockToolService.executeTool.mockImplementation(
         () => new Promise<ToolExecuteResponse>((resolve) => (resolveExec = resolve)),
       );
@@ -455,7 +456,8 @@ describe('Tool Store', () => {
     });
 
     it('serverList 去重汇总服务器', () => {
-      expect(store.serverList.toSorted()).toEqual(['server-a', 'server-b']);
+      // oxlint-disable-next-line no-array-sort
+      expect([...store.serverList].sort()).toEqual(['server-a', 'server-b']);
     });
 
     it('按服务器过滤', () => {
@@ -511,7 +513,8 @@ describe('Tool Store', () => {
     });
 
     it('未知排序字段回退到名称排序', () => {
-      store.updateFilters({ sortBy: 'unknown' as ToolInfo['status'] });
+      // 故意传入未定义的排序字段，验证排序逻辑回退到名称
+      store.updateFilters({ sortBy: 'unknown' as unknown as ToolFilterParams['sortBy'] });
       expect(store.filteredTools.map((t) => t.name)).toEqual(['alpha', 'beta', 'gamma']);
     });
 

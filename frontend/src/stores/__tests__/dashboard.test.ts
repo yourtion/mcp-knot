@@ -186,7 +186,13 @@ describe('Dashboard Store', () => {
       { id: '1', type: 'error', message: '最近错误', timestamp: oneHourAgo, severity: 'error' },
       { id: '2', type: 'error', message: '较早错误', timestamp: twoHoursAgo, severity: 'error' },
       // 非 error 级别的活动不计入
-      { id: '3', type: 'info', message: '普通信息', timestamp: oneHourAgo, severity: 'info' },
+      {
+        id: '3',
+        type: 'system_start',
+        message: '普通信息',
+        timestamp: oneHourAgo,
+        severity: 'info',
+      },
     ];
 
     expect(store.recentErrorCount).toBe(1);
@@ -207,7 +213,7 @@ describe('Dashboard Store', () => {
     });
 
     it('fetchDashboardStats 请求期间处于加载状态', async () => {
-      let resolveFn: (value: DashboardStats) => void;
+      let resolveFn!: (value: DashboardStats) => void;
       vi.mocked(dashboardService.getDashboardStats).mockImplementation(
         () => new Promise<DashboardStats>((resolve) => (resolveFn = resolve)),
       );
@@ -293,6 +299,7 @@ describe('Dashboard Store', () => {
       vi.mocked(dashboardService.queryLogs).mockResolvedValue({
         logs: logs as never[],
         total: 1,
+        query: { level: 'info', limit: 10 },
       });
 
       const store = useDashboardStore();
@@ -409,7 +416,7 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onServerStatus).mock.calls[0][0];
-      handler({ serverId: 's1', status: 'connected' });
+      handler({ serverId: 's1', status: 'connected', timestamp: new Date().toISOString() });
       await Promise.resolve();
 
       expect(dashboardService.getDashboardStats).toHaveBeenCalledTimes(1);
@@ -428,7 +435,7 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onServerStatus).mock.calls[0][0];
-      handler({ serverId: 's2', status: 'disconnected' });
+      handler({ serverId: 's2', status: 'disconnected', timestamp: new Date().toISOString() });
       await Promise.resolve();
 
       expect(store.activities[0].type).toBe('server_disconnected');
@@ -443,7 +450,7 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onServerStatus).mock.calls[0][0];
-      handler({ serverId: 's3', status: 'error' });
+      handler({ serverId: 's3', status: 'error', timestamp: new Date().toISOString() });
       await Promise.resolve();
 
       expect(store.activities[0].severity).toBe('error');
@@ -456,7 +463,7 @@ describe('Dashboard Store', () => {
       const store = useDashboardStore();
       store.activities = Array.from({ length: 100 }, (_, i) => ({
         id: `old-${i}`,
-        type: 'info',
+        type: 'system_start',
         message: '',
         timestamp: '',
         severity: 'info',
@@ -464,7 +471,7 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onServerStatus).mock.calls[0][0];
-      handler({ serverId: 's1', status: 'connected' });
+      handler({ serverId: 's1', status: 'connected', timestamp: new Date().toISOString() });
       await Promise.resolve();
 
       expect(store.activities).toHaveLength(100);
@@ -484,8 +491,22 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onToolExecution).mock.calls[0][0];
-      handler({ toolName: 't1', serverId: 's1', executionTime: 5, success: true });
-      handler({ toolName: 't2', serverId: 's1', executionTime: 5, success: false });
+      handler({
+        toolName: 't1',
+        serverId: 's1',
+        groupId: 'default',
+        executionTime: 5,
+        success: true,
+        timestamp: new Date().toISOString(),
+      });
+      handler({
+        toolName: 't2',
+        serverId: 's1',
+        groupId: 'default',
+        executionTime: 5,
+        success: false,
+        timestamp: new Date().toISOString(),
+      });
       await Promise.resolve();
 
       expect(dashboardService.getPerformanceStats).toHaveBeenCalledTimes(2);
@@ -526,7 +547,12 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onHealthCheck).mock.calls[0][0];
-      handler({ status: 'warning', lastCheck: '2024-06-01T00:00:00.000Z' });
+      handler({
+        status: 'warning',
+        timestamp: new Date().toISOString(),
+        lastCheck: '2024-06-01T00:00:00.000Z',
+        changes: [],
+      });
 
       expect(store.systemHealth?.status).toBe('warning');
       expect(store.systemHealth?.lastCheck).toBe('2024-06-01T00:00:00.000Z');
@@ -540,7 +566,7 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onHealthCheck).mock.calls[0][0];
-      handler({ status: 'error' });
+      handler({ status: 'error', timestamp: new Date().toISOString(), changes: [] });
 
       expect(store.systemHealth?.status).toBe('error');
       expect(store.systemHealth?.lastCheck).toBeDefined();
@@ -554,7 +580,12 @@ describe('Dashboard Store', () => {
       await store.connectSSE();
 
       const handler = vi.mocked(sseService.onHealthCheck).mock.calls[0][0];
-      handler({ status: 'healthy', lastCheck: '' });
+      handler({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        lastCheck: '',
+        changes: [],
+      });
 
       expect(store.systemHealth).toBeNull();
     });
