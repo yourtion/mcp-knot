@@ -2,10 +2,19 @@
  * CLI日志系统测试
  */
 
-import { LogLevel } from '@mcp-core/mcp-knot-share';
+import { EnvironmentDetector, LogLevel } from '@mcp-core/mcp-knot-share';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CliLogger, createCliLoggerFromOptions, DEFAULT_CLI_LOGGER_CONFIG } from './logger';
+
+import type { LoggerConfig } from '@mcp-core/mcp-knot-share';
+
+/** UnifiedLogger 未公开 config 读取器，测试中经此断言构造时派生的配置 */
+function getInternalConfig(logger: CliLogger): LoggerConfig {
+  return (logger as unknown as { config: LoggerConfig }).config;
+}
 
 describe('CliLogger', () => {
   let logger: CliLogger;
@@ -227,5 +236,128 @@ describe('createCliLoggerFromOptions', () => {
     });
 
     expect(logger).toBeInstanceOf(CliLogger);
+  });
+});
+
+describe('DEFAULT_CLI_LOGGER_CONFIG', () => {
+  it('应包含确定的默认配置值', () => {
+    expect(DEFAULT_CLI_LOGGER_CONFIG).toEqual({
+      level: LogLevel.INFO,
+      enableConsole: true,
+      enableFile: false,
+      format: 'text',
+      enableColors: true,
+      enableTimestamp: true,
+      quiet: EnvironmentDetector.isTestEnvironment() && !EnvironmentDetector.isDebugMode(),
+      verbose: false,
+      logDir: path.join(os.homedir(), '.mcp-knot', 'logs'),
+      maxFileSize: 5 * 1024 * 1024,
+      maxFiles: 3,
+      enableRotation: true,
+    });
+  });
+});
+
+describe('CliLogger 构造时的配置派生', () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // 显式锁定测试环境，避免依赖运行时的 NODE_ENV/VITEST 取值
+    process.env.VITEST = '1';
+    process.env.NODE_ENV = 'test';
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+    delete process.env.NODE_ENV;
+  });
+
+  it('测试环境下未显式指定 quiet 时应自动静默并提升日志级别', () => {
+    // quiet 未传（undefined）→ 测试环境自动开启静默 → 级别收敛到 WARN
+    const logger = new CliLogger({
+      level: LogLevel.DEBUG,
+      enableConsole: true,
+    });
+
+    expect(logger.getLevel()).toBe(LogLevel.WARN);
+  });
+
+  it('静默模式下若未显式开启控制台应禁用控制台输出', () => {
+    const quietLogger = new CliLogger({ quiet: true });
+    quietLogger.warn('静默警告');
+
+    expect(consoleSpy).not.toHaveBeenCalled();
+
+    // 显式 enableConsole: true 时静默模式不屏蔽控制台
+    consoleSpy.mockClear();
+    const explicitConsoleLogger = new CliLogger({ quiet: true, enableConsole: true });
+    explicitConsoleLogger.warn('显式控制台警告');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('显式控制台警告'));
+  });
+
+  it('verbose 优先级高于 quiet，两者同时设置时按 verbose 处理', () => {
+    const logger = new CliLogger({ verbose: true, quiet: true });
+
+    expect(logger.getLevel()).toBe(LogLevel.DEBUG);
+    expect(getInternalConfig(logger).quiet).toBe(false);
+  });
+
+  it('启用文件日志且提供 logDir 时应派生日志文件路径', () => {
+    const logger = new CliLogger({ enableFile: true, logDir: '/tmp/mcp-knot-test' });
+
+    expect(getInternalConfig(logger).filePath).toBe('/tmp/mcp-knot-test/mcp-knot-cli.log');
+  });
+});
+
+describe('createCliLoggerFromOptions 配置映射', () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it('默认应启用彩色输出', () => {
+    const logger = createCliLoggerFromOptions({ quiet: false });
+    logger.info('彩色消息');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('\x1b['));
+  });
+
+  it('noColor 选项应关闭彩色输出', () => {
+    const logger = createCliLoggerFromOptions({ quiet: false, noColor: true });
+    logger.info('纯文本消息');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('INFO [CLI] 纯文本消息'));
+    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('\x1b['));
+  });
+
+  it('仅指定 logLevel 时应使用该级别而不是默认 INFO', () => {
+    const warnLogger = createCliLoggerFromOptions({ logLevel: 'warn' });
+    expect(warnLogger.getLevel()).toBe(LogLevel.WARN);
+
+    const errorLogger = createCliLoggerFromOptions({ logLevel: 'ERROR' });
+    expect(errorLogger.getLevel()).toBe(LogLevel.ERROR);
+  });
+
+  it('提供 logFile 时应启用文件日志（注意：路径会被构造器的 logDir 派生值覆盖）', () => {
+    const logger = createCliLoggerFromOptions({ logFile: '/tmp/test-cli.log' });
+    const config = getInternalConfig(logger);
+
+    expect(config.enableFile).toBe(true);
+    // 疑似缺陷：options.logFile 传入的 filePath 在 CliLogger 构造器中被
+    // enableFile && logDir 分支改写为 logDir 下的默认文件名，此处断言现状。
+    expect(config.filePath).toBe(path.join(os.homedir(), '.mcp-knot', 'logs', 'mcp-knot-cli.log'));
+  });
+
+  it('未提供 logFile 时不应启用文件日志', () => {
+    const logger = createCliLoggerFromOptions({});
+
+    expect(getInternalConfig(logger).enableFile).toBe(false);
   });
 });

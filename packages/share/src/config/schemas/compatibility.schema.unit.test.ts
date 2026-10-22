@@ -52,6 +52,27 @@ describe('CompatibilityOptionsSchema', () => {
       CompatibilityOptionsSchema.parse({ outbound: { mrtrLegacyDegradation: 'force' } }),
     ).toThrow();
   });
+
+  it('显式 reject 值被接受并保留', () => {
+    const r = CompatibilityOptionsSchema.parse({
+      inbound: { legacyMode: 'reject' },
+      outbound: { mrtrLegacyDegradation: 'reject' },
+    });
+    expect(r.inbound.legacyMode).toBe('reject');
+    expect(r.outbound.mrtrLegacyDegradation).toBe('reject');
+  });
+
+  it('显式 false 关闭各段开关', () => {
+    const r = CompatibilityOptionsSchema.parse({
+      inbound: { enabled: false },
+      outbound: { enabled: false, modernOnly: true },
+      errors: { unified: false },
+    });
+    expect(r.inbound.enabled).toBe(false);
+    expect(r.outbound.enabled).toBe(false);
+    expect(r.outbound.modernOnly).toBe(true);
+    expect(r.errors.unified).toBe(false);
+  });
 });
 
 describe('SystemConfigSchema P7 compatibility 字段', () => {

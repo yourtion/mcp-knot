@@ -255,6 +255,13 @@ describe('ConfigTemplateGenerator', () => {
       expect(parsed).toHaveProperty('transport');
     });
 
+    it('各模板类型应输出对应的JSON内容', () => {
+      expect(generator.getTemplateJson('basic')).toContain('example_server');
+      expect(generator.getTemplateJson('advanced')).toContain('file_server');
+      expect(generator.getTemplateJson('development')).toContain('dev_server');
+      expect(generator.getTemplateJson('production')).toContain('main_server');
+    });
+
     it('应该生成美化的JSON格式', () => {
       const json = generator.getTemplateJson('basic');
 
@@ -287,12 +294,16 @@ describe('ConfigTemplateGenerator', () => {
     it('应该为不同类型包含特定注释', () => {
       const developmentTemplate = generator.getTemplateWithComments('development');
       const productionTemplate = generator.getTemplateWithComments('production');
+      const advancedTemplate = generator.getTemplateWithComments('advanced');
 
       expect(developmentTemplate).toContain('// 开发环境配置');
       expect(developmentTemplate).toContain('// - 启用调试日志');
 
       expect(productionTemplate).toContain('// 生产环境配置');
       expect(productionTemplate).toContain('// - 优化内存使用');
+
+      expect(advancedTemplate).toContain('// 高级配置示例');
+      expect(advancedTemplate).toContain('// - 日志文件输出');
     });
 
     it('应该包含JSON配置内容', () => {
