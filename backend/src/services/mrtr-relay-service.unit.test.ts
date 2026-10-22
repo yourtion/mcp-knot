@@ -72,6 +72,11 @@ describe('MrtrRelayService', () => {
       const result = await r1.relay('s1', 't', {}, 1);
       await expect(r2.verify(result.requestState!, MOCK_CTX)).rejects.toThrow();
     });
+
+    it('空 state verify 抛防御性错误（codec 对空 token 返回 undefined）', async () => {
+      const relay = new MrtrRelayService({ key: makeKey(), ttlSeconds: 600 });
+      await expect(relay.verify('', MOCK_CTX)).rejects.toThrow('MRTR verify 返回空 state');
+    });
   });
 
   describe('step 审计字段（非 Hub 层安全防御）', () => {

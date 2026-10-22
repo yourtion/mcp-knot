@@ -1,9 +1,15 @@
 import { defaultCompatibilityOptions } from '@mcp-core/mcp-knot-protocol';
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import {
+  Client,
+  SSEClientTransport,
+  StreamableHTTPClientTransport,
+} from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runWithTraceContext, type TraceContext } from '../middleware/trace-context.js';
 import { ServerStatus } from '../types/mcp-knot.js';
+import { logger } from '../utils/logger.js';
 import { ServerManager } from './server_manager.js';
 
 import type { ServerConfig } from '@mcp-core/mcp-knot-share';
@@ -33,6 +39,8 @@ vi.mock('../utils/logger.js');
 
 const MockClient = vi.mocked(Client);
 const MockStreamableTransport = vi.mocked(StreamableHTTPClientTransport);
+const MockSseTransport = vi.mocked(SSEClientTransport);
+const MockStdioTransport = vi.mocked(StdioClientTransport);
 
 describe('ServerManager', () => {
   let serverManager: ServerManager;
@@ -121,14 +129,110 @@ describe('ServerManager', () => {
   });
 
   describe('constructor', () => {
-    it('should store server configurations', () => {
-      const servers = serverManager.getAllServers();
-      expect(servers.size).toBe(0); // No servers initialized yet
-    });
-
     it('should handle empty configuration', () => {
       const emptyManager = new ServerManager({});
       expect(emptyManager.getAllServers().size).toBe(0);
+    });
+  });
+
+  describe('上游 era 探测（P7 probeUpstreamEra）', () => {
+    async function initSingleServer() {
+      const manager = new ServerManager({
+        one: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      return manager;
+    }
+
+    it('getProtocolEra 返回 modern 时记录 era=modern 并记 connected 日志', async () => {
+      mockClient.getProtocolEra = vi.fn().mockReturnValue('modern');
+      const manager = await initSingleServer();
+
+      const server = manager.getAllServers().get('one');
+      expect(server?.status).toBe(ServerStatus.CONNECTED);
+      expect(server?.era).toBe('modern');
+      expect(vi.mocked(logger.logServerConnection)).toHaveBeenCalledWith('one', 'connected');
+      await manager.shutdown();
+    });
+
+    it('getProtocolEra 返回 legacy 时（默认兼容）记录 era=legacy 且连接成功', async () => {
+      mockClient.getProtocolEra = vi.fn().mockReturnValue('legacy');
+      const manager = await initSingleServer();
+
+      const server = manager.getAllServers().get('one');
+      expect(server?.status).toBe(ServerStatus.CONNECTED);
+      expect(server?.era).toBe('legacy');
+      expect(mockClient.listTools).toHaveBeenCalled();
+      await manager.shutdown();
+    });
+
+    it('getProtocolEra 返回 undefined 时按 modern 假设并记 warn 日志', async () => {
+      mockClient.getProtocolEra = vi.fn().mockReturnValue(undefined);
+      const manager = await initSingleServer();
+
+      const server = manager.getAllServers().get('one');
+      expect(server?.era).toBe('modern');
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        '上游 era 探测返回 undefined，按 modern 假设处理（P7 MVP 占位）',
+        { serverId: 'one' },
+      );
+      await manager.shutdown();
+    });
+
+    it('getProtocolEra 抛错时 fail-open 为 modern 并记 warn 日志', async () => {
+      mockClient.getProtocolEra = vi.fn().mockImplementation(() => {
+        throw new Error('era probe crashed');
+      });
+      const manager = await initSingleServer();
+
+      const server = manager.getAllServers().get('one');
+      expect(server?.status).toBe(ServerStatus.CONNECTED);
+      expect(server?.era).toBe('modern');
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('探测上游 era 失败，按 modern 假设处理', {
+        serverId: 'one',
+        error: 'era probe crashed',
+      });
+      await manager.shutdown();
+    });
+  });
+
+  describe('versionNegotiation 模式（兼容配置）', () => {
+    it('outbound.enabled=false 时固定 pin 到 modern 协议', async () => {
+      const manager = new ServerManager(
+        { one: { type: 'stdio', command: 'node', args: [], enabled: true } },
+        {
+          compatibility: {
+            ...defaultCompatibilityOptions,
+            outbound: { ...defaultCompatibilityOptions.outbound, enabled: false },
+          },
+        },
+      );
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+
+      expect(MockClient).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          versionNegotiation: { mode: { pin: '2026-07-28' } },
+        }),
+      );
+      await manager.shutdown();
+    });
+
+    it('默认兼容配置时 versionNegotiation 使用 auto 模式', async () => {
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await serverManager.initialize();
+
+      expect(MockClient).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          versionNegotiation: { mode: 'auto' },
+        }),
+      );
     });
   });
 
@@ -174,6 +278,24 @@ describe('ServerManager', () => {
       expect(server1?.status).toBe(ServerStatus.CONNECTED);
       expect(server2?.status).toBe(ServerStatus.ERROR);
       expect(server2?.lastError?.message).toBe('Connection failed');
+    });
+
+    it('初始化完成日志精确记录 totalServers 与 connectedServers', async () => {
+      mockClient.connect
+        .mockResolvedValueOnce(undefined) // First server succeeds
+        .mockRejectedValueOnce(new Error('Connection failed')); // Second server fails
+
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await serverManager.initialize();
+
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'ServerManager initialization completed',
+        {
+          totalServers: 3,
+          connectedServers: 1,
+        },
+      );
     });
 
     it('should discover tools after successful connection', async () => {
@@ -427,6 +549,73 @@ describe('ServerManager', () => {
       );
     });
 
+    it('仅传 inputResponses（无 requestState）时 params 只含 inputResponses', async () => {
+      mockClient.callTool.mockResolvedValue({ content: [] });
+
+      await serverManager.executeToolOnServerWithContext(
+        'test-server-1',
+        'test-tool',
+        { a: 1 },
+        { inputResponses: { confirm: true } },
+      );
+
+      expect(mockClient.callTool).toHaveBeenCalledWith(
+        {
+          name: 'test-tool',
+          arguments: { a: 1 },
+          inputResponses: { confirm: true },
+        },
+        { allowInputRequired: true },
+      );
+    });
+
+    it('messageTracker 请求对象按需携带重试上下文字段', async () => {
+      const tracker = vi.fn();
+      serverManager.setMessageTracker(tracker);
+      mockClient.callTool.mockResolvedValue({ content: [] });
+
+      await serverManager.executeToolOnServerWithContext(
+        'test-server-1',
+        'test-tool',
+        {},
+        { inputResponses: { confirm: true } },
+      );
+
+      expect(tracker).toHaveBeenNthCalledWith(1, 'test-server-1', 'request', 'callTool', {
+        name: 'test-tool',
+        arguments: {},
+        inputResponses: { confirm: true },
+      });
+    });
+
+    it('legacy era 上游剥离 MRTR 重试字段（仅透传 name/arguments）', async () => {
+      mockClient.getProtocolEra = vi.fn().mockReturnValue('legacy');
+      const manager = new ServerManager({
+        legacy1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      expect(manager.getAllServers().get('legacy1')?.era).toBe('legacy');
+
+      mockClient.callTool.mockResolvedValue({ content: [] });
+      await manager.executeToolOnServerWithContext(
+        'legacy1',
+        'test-tool',
+        { a: 1 },
+        { inputResponses: { confirm: true }, requestState: 'opaque' },
+      );
+
+      expect(mockClient.callTool).toHaveBeenCalledWith(
+        {
+          name: 'test-tool',
+          arguments: { a: 1 },
+        },
+        { allowInputRequired: true },
+      );
+      await manager.shutdown();
+    });
+
     it('should throw error for non-existent server', async () => {
       await expect(
         serverManager.executeToolOnServerWithContext(
@@ -505,6 +694,244 @@ describe('ServerManager', () => {
     });
   });
 
+  describe('stdio transport 构造参数', () => {
+    it('transport 收到 command、args 与合并后的 env（process.env + config.env）', async () => {
+      process.env.MCP_UNIT_TEST_ENV = 'from-process';
+      try {
+        const manager = new ServerManager({
+          s1: {
+            type: 'stdio',
+            command: 'node',
+            args: ['server.js'],
+            enabled: true,
+            env: { TEST_VAR: 'test-value' },
+          },
+        });
+        mockClient.connect.mockResolvedValue(undefined);
+        mockClient.listTools.mockResolvedValue({ tools: [] });
+
+        await manager.initialize();
+
+        expect(MockStdioTransport).toHaveBeenCalledTimes(1);
+        const [ctorArg] = MockStdioTransport.mock.calls[0];
+        expect(ctorArg?.command).toBe('node');
+        expect(ctorArg?.args).toEqual(['server.js']);
+        expect(ctorArg?.env).toMatchObject({
+          TEST_VAR: 'test-value',
+          MCP_UNIT_TEST_ENV: 'from-process',
+        });
+        await manager.shutdown();
+      } finally {
+        delete process.env.MCP_UNIT_TEST_ENV;
+      }
+    });
+
+    it('config 未提供 args 时 transport 收到空数组', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'echo', enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      const [ctorArg] = MockStdioTransport.mock.calls[0];
+      expect(ctorArg?.args).toEqual([]);
+      await manager.shutdown();
+    });
+  });
+
+  describe('messageTracker 消息追踪', () => {
+    it('工具发现成功时按序记录 request 与 response（含 executionTime/toolCount）', async () => {
+      const tracker = vi.fn();
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      manager.setMessageTracker(tracker);
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({
+        tools: [{ name: 't1', description: 'd', inputSchema: {} }],
+      });
+
+      await manager.initialize();
+
+      expect(tracker).toHaveBeenNthCalledWith(1, 's1', 'request', 'listTools', {});
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'listTools', {
+        tools: [{ name: 't1', description: 'd', inputSchema: {} }],
+        executionTime: expect.any(Number),
+        toolCount: 1,
+      });
+      await manager.shutdown();
+    });
+
+    it('工具发现的耗时精确为 listTools 的执行时间', async () => {
+      vi.useFakeTimers();
+      const tracker = vi.fn();
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      manager.setMessageTracker(tracker);
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockImplementation(async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100);
+        });
+        return { tools: [] };
+      });
+
+      const initPromise = manager.initialize();
+      await vi.advanceTimersByTimeAsync(100);
+      await initPromise;
+
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'listTools', {
+        tools: [],
+        executionTime: 100,
+        toolCount: 0,
+      });
+      vi.useRealTimers();
+      await manager.shutdown();
+    });
+
+    it('工具发现失败时记录 isError 的 response', async () => {
+      const tracker = vi.fn();
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      manager.setMessageTracker(tracker);
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockRejectedValue(new Error('discovery boom'));
+
+      await manager.initialize();
+
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'listTools', {
+        error: 'discovery boom',
+        isError: true,
+      });
+      await manager.shutdown();
+    });
+
+    it('executeToolOnServer 成功时记录 callTool 的 request 与 response', async () => {
+      const tracker = vi.fn();
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      manager.setMessageTracker(tracker);
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      tracker.mockClear();
+
+      const mockResult = { content: [{ type: 'text', text: 'ok' }] };
+      mockClient.callTool.mockResolvedValue(mockResult);
+      await manager.executeToolOnServer('s1', 't1', { a: 1 });
+
+      expect(tracker).toHaveBeenNthCalledWith(1, 's1', 'request', 'callTool', {
+        name: 't1',
+        arguments: { a: 1 },
+      });
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'callTool', {
+        ...mockResult,
+        executionTime: expect.any(Number),
+      });
+      await manager.shutdown();
+    });
+
+    it('executeToolOnServer 失败时记录 isError 的 response 并向上抛错', async () => {
+      const tracker = vi.fn();
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      manager.setMessageTracker(tracker);
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      tracker.mockClear();
+
+      mockClient.callTool.mockRejectedValue(new Error('call boom'));
+      await expect(manager.executeToolOnServer('s1', 't1', {})).rejects.toThrow('call boom');
+
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'callTool', {
+        error: 'call boom',
+        isError: true,
+      });
+      await manager.shutdown();
+    });
+  });
+
+  describe('refetchServerTools（P5 变更检测）', () => {
+    it('server 不存在时返回空数组', async () => {
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await serverManager.initialize();
+
+      await expect(serverManager.refetchServerTools('non-existent')).resolves.toEqual([]);
+    });
+
+    it('server 非连接状态时返回空数组', async () => {
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await serverManager.initialize();
+
+      const server = serverManager.getAllServers().get('test-server-1');
+      if (server) {
+        server.status = ServerStatus.DISCONNECTED;
+      }
+
+      await expect(serverManager.refetchServerTools('test-server-1')).resolves.toEqual([]);
+      expect(mockClient.listTools).toHaveBeenCalledTimes(2); // 仅 initialize 时发现一次/每 server
+    });
+
+    it('重新拉取后更新缓存、返回最新工具并推进快照', async () => {
+      const detector = { saveSnapshot: vi.fn(), onUpstreamNotification: vi.fn() };
+      const manager = new ServerManager(
+        { s1: { type: 'stdio', command: 'node', args: [], enabled: true } },
+        { changeDetector: detector },
+      );
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools
+        .mockResolvedValueOnce({ tools: [{ name: 't1', inputSchema: {} }] })
+        .mockResolvedValueOnce({
+          tools: [
+            { name: 't1', description: 'd1', inputSchema: {} },
+            { name: 't2', description: 'd2', inputSchema: {} },
+          ],
+        });
+      await manager.initialize();
+
+      const tools = await manager.refetchServerTools('s1');
+
+      expect(tools).toHaveLength(2);
+      expect(tools[0]).toMatchObject({ name: 't1', serverId: 's1' });
+      expect(manager.getAllServers().get('s1')?.tools).toHaveLength(2);
+      expect(detector.saveSnapshot).toHaveBeenLastCalledWith('s1', [
+        { name: 't1' },
+        { name: 't2' },
+      ]);
+      await manager.shutdown();
+    });
+
+    it('重新拉取失败时保留旧缓存并返回旧工具', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools
+        .mockResolvedValueOnce({ tools: [{ name: 'old-tool', inputSchema: {} }] })
+        .mockRejectedValueOnce(new Error('refetch boom'));
+      await manager.initialize();
+
+      const tools = await manager.refetchServerTools('s1');
+
+      expect(tools).toHaveLength(1);
+      expect(tools[0]?.name).toBe('old-tool');
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'refetchServerTools 失败（保留旧缓存）',
+        expect.objectContaining({ serverId: 's1', error: 'refetch boom' }),
+      );
+      await manager.shutdown();
+    });
+  });
+
   describe('shutdown', () => {
     beforeEach(async () => {
       mockClient.connect.mockResolvedValue(undefined);
@@ -527,6 +954,131 @@ describe('ServerManager', () => {
       // Should not throw
       await expect(serverManager.shutdown()).resolves.not.toThrow();
       expect(serverManager.getAllServers().size).toBe(0);
+    });
+
+    it('非 timeout 的关闭失败不触发强制 kill', async () => {
+      const kill = vi.fn();
+      (mockClient as Record<string, unknown>).transport = { process: { kill, pid: 111 } };
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockRejectedValue(new Error('Close failed'));
+
+      await manager.shutdown();
+
+      expect(kill).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error during server shutdown',
+        expect.any(Error),
+        expect.objectContaining({ serverId: 's1' }),
+      );
+    });
+
+    it('关闭超时（5s）时强制 SIGKILL 子进程并记录日志', async () => {
+      vi.useFakeTimers();
+      const kill = vi.fn();
+      (mockClient as Record<string, unknown>).transport = { process: { kill, pid: 4242 } };
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockReturnValue(new Promise(() => {}));
+
+      try {
+        const shutdownPromise = manager.shutdown();
+        await vi.advanceTimersByTimeAsync(5000);
+        await shutdownPromise;
+
+        expect(kill).toHaveBeenCalledWith('SIGKILL');
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('已强制杀死服务器进程', {
+          serverId: 's1',
+          pid: 4242,
+        });
+      } finally {
+        // 清除 pending 的 close 返回值，避免 afterEach 的 shutdown 真实等待超时
+        mockClient.close.mockReset();
+        vi.useRealTimers();
+      }
+    });
+
+    it('错误消息含 timeout 字样时也触发强制 kill', async () => {
+      const kill = vi.fn();
+      (mockClient as Record<string, unknown>).transport = { process: { kill, pid: 222 } };
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockRejectedValue(new Error('close timeout exceeded'));
+
+      await manager.shutdown();
+
+      expect(kill).toHaveBeenCalledWith('SIGKILL');
+    });
+
+    it('关闭超时但无法访问子进程时记录无法终止警告', async () => {
+      const kill = vi.fn();
+      (mockClient as Record<string, unknown>).transport = {}; // 无 process
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockRejectedValue(new Error('close timeout exceeded'));
+
+      await manager.shutdown();
+
+      expect(kill).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('无法访问服务器进程，可能已经终止', {
+        serverId: 's1',
+      });
+    });
+
+    it('强制 kill 本身抛错时记录强制终止失败日志', async () => {
+      (mockClient as Record<string, unknown>).transport = {
+        process: {
+          kill: vi.fn(() => {
+            throw new Error('kill rejected');
+          }),
+          pid: 333,
+        },
+      };
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockRejectedValue(new Error('close timeout exceeded'));
+
+      await manager.shutdown();
+
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        '强制终止进程失败',
+        expect.any(Error),
+        expect.objectContaining({ serverId: 's1' }),
+      );
+    });
+
+    it('仅关闭处于连接状态的 server', async () => {
+      mockClient.connect
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('Connection failed'));
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await serverManager.initialize(); // server1 connected, server2 error
+
+      mockClient.close.mockResolvedValue(undefined);
+      await serverManager.shutdown();
+
+      // 只有 CONNECTED 的 test-server-1 被 close，ERROR 的 test-server-2 跳过
+      expect(mockClient.close).toHaveBeenCalledTimes(1);
     });
 
     it('should handle shutdown when no servers are initialized', async () => {
@@ -608,6 +1160,15 @@ describe('ServerManager', () => {
       expect(server?.status).toBe(ServerStatus.CONNECTED);
       expect(mockClient.connect).toHaveBeenCalledTimes(1);
 
+      // transport 收到 URL 与 headers（config.headers 展开）
+      expect(MockSseTransport).toHaveBeenCalledTimes(1);
+      const [sseUrl, sseOptions] = MockSseTransport.mock.calls[0];
+      expect(sseUrl).toBeInstanceOf(URL);
+      expect((sseUrl as URL).href).toBe('http://localhost:8080/sse');
+      expect(sseOptions?.requestInit).toMatchObject({
+        headers: { Authorization: 'Bearer test-token' },
+      });
+
       await sseManager.shutdown();
     });
 
@@ -684,6 +1245,15 @@ describe('ServerManager', () => {
 
       expect(server?.status).toBe(ServerStatus.CONNECTED);
       expect(mockClient.connect).toHaveBeenCalledTimes(1);
+
+      // transport 收到 URL 与 headers（config.headers 展开）
+      expect(MockStreamableTransport).toHaveBeenCalledTimes(1);
+      const [streamUrl, streamOptions] = MockStreamableTransport.mock.calls[0];
+      expect(streamUrl).toBeInstanceOf(URL);
+      expect((streamUrl as URL).href).toBe('https://mcp.example.com/mcp');
+      expect(streamOptions?.requestInit).toMatchObject({
+        headers: { 'X-API-Key': 'test-key' },
+      });
 
       await streamingManager.shutdown();
     });

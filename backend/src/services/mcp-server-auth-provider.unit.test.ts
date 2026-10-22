@@ -32,8 +32,26 @@ describe('createServerAuthProvider', () => {
     expect(await provider.token!()).toBe('env-token');
   });
 
-  it('bearer + ${VAR} 环境变量未定义抛 ConfigError', () => {
-    expect(() => createServerAuthProvider({ type: 'bearer', token: '${UNDEFINED_VAR}' })).toThrow();
+  it('bearer + ${VAR} 环境变量未定义抛 ConfigError（消息含变量名）', () => {
+    expect(() => createServerAuthProvider({ type: 'bearer', token: '${UNDEFINED_VAR}' })).toThrow(
+      /UNDEFINED_VAR/,
+    );
+  });
+
+  it('${VAR} 必须整体匹配：带前缀的值按明文处理', async () => {
+    const provider = createServerAuthProvider({
+      type: 'bearer',
+      token: 'prefix-${TEST_SECRET}',
+    })!;
+    expect(await provider.token!()).toBe('prefix-${TEST_SECRET}');
+  });
+
+  it('${VAR} 必须整体匹配：带后缀的值按明文处理', async () => {
+    const provider = createServerAuthProvider({
+      type: 'bearer',
+      token: '${TEST_SECRET}-suffix',
+    })!;
+    expect(await provider.token!()).toBe('${TEST_SECRET}-suffix');
   });
 
   it('oauth 返回 ClientCredentialsProvider 实例，options 正确', () => {

@@ -59,6 +59,57 @@ describe('UpstreamChangeFanout', () => {
     expect(refreshGroupTools).toHaveBeenCalledWith('g1', 's1');
     expect(refreshGroupTools).toHaveBeenCalledWith('g2', 's1');
   });
+
+  it('refresh 失败时记录 logger.warn（groupId 与错误信息）', async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const fanout = new UpstreamChangeFanout({
+      getGroupsForServer: () => [{ groupId: 'g1' }],
+      refreshGroupTools: vi.fn().mockRejectedValue(new Error('refresh failed')),
+      publishToolListChanged: vi.fn(),
+      debounceMs: 0,
+      logger,
+    });
+    await fanout.handleServerChange('s1');
+    await fanout.flush();
+
+    expect(logger.warn).toHaveBeenCalledWith('fan-out group 失败', {
+      groupId: 'g1',
+      error: 'Error: refresh failed',
+    });
+  });
+
+  it('flush 幂等：pending 清空后再次 flush 不重复 fan-out', async () => {
+    const refreshGroupTools = vi.fn().mockResolvedValue(undefined);
+    const fanout = new UpstreamChangeFanout({
+      getGroupsForServer: () => [{ groupId: 'g1' }],
+      refreshGroupTools,
+      publishToolListChanged: vi.fn(),
+      debounceMs: 50,
+    });
+    await fanout.handleServerChange('s1');
+    await fanout.flush();
+    expect(refreshGroupTools).toHaveBeenCalledTimes(1);
+
+    // 第二次 flush：pending 已被清空，不应再次触发
+    await fanout.flush();
+    expect(refreshGroupTools).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop() 清空 pending 记录：stop 后 flush 不再 fan-out', async () => {
+    const refreshGroupTools = vi.fn().mockResolvedValue(undefined);
+    const fanout = new UpstreamChangeFanout({
+      getGroupsForServer: () => [{ groupId: 'g1' }],
+      refreshGroupTools,
+      publishToolListChanged: vi.fn(),
+      debounceMs: 50,
+    });
+    await fanout.handleServerChange('s1');
+    fanout.stop();
+
+    // pending Map 应被清空：即使之后显式 flush 也不触发 fan-out
+    await fanout.flush();
+    expect(refreshGroupTools).not.toHaveBeenCalled();
+  });
 });
 
 describe('防抖', () => {

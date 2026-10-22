@@ -7,7 +7,14 @@
  * - POST /:group/mcp：handler.fetch 透传；工厂/执行错误 → 500 归一化 JSON-RPC
  * - GET /:group/status 与 /:group/tools：成功响应字段与 500 错误映射
  * - mcpAuthMiddleware 装配参数（resourceServer 配置映射 / 元数据路径）
- * - shutdownGroupMcpRouter：统一关闭 handler 与 service，单项失败不阻断
+ * - shutdownGroupMcpRouter：统一关闭 handler 与 service，单项失败不阻断，
+ *   handler 缓存读取自身抛错时向外传播
+ *
+ * 变异覆盖备注（等价/不可达，勿硬凑）：
+ * - groupValidationMiddleware 的 `!groupId` 分支（源码 L122-131）不可达：
+ *   路由 pattern `/:group/...` 决定了 Hono 参数恒存在，无法通过 request 触发。
+ * - `c.set('groupId', groupId)` 的 context key 字符串变异（源码 L147）在本文件
+ *   无消费者（下游 handler/中间件均被 mock），属跨模块契约 key，单测层不可杀。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -50,20 +57,28 @@ vi.mock('./group-service.js', () => ({
   GroupMcpService: class {},
 }));
 
-const { groupServices, groupHandlers, createHandlerMock, ensureServiceMock } = vi.hoisted(() => ({
-  groupServices: new Map<string, unknown>(),
-  groupHandlers: new Map<string, unknown>(),
-  createHandlerMock: vi.fn(),
-  ensureServiceMock: vi.fn(),
-}));
+const { groupServices, groupHandlers, createHandlerMock, ensureServiceMock, handlersCacheHook } =
+  vi.hoisted(() => ({
+    groupServices: new Map<string, unknown>(),
+    groupHandlers: new Map<string, unknown>(),
+    createHandlerMock: vi.fn(),
+    ensureServiceMock: vi.fn(),
+    // 测试钩子：置为 Error 时 getGroupHandlersCache 抛错（覆盖 shutdown 外层 catch）
+    handlersCacheHook: { error: null as Error | null },
+  }));
 
 vi.mock('./mcp-handler-factory.js', () => ({
   createGroupMcpHandler: createHandlerMock,
   ensureGroupMcpService: ensureServiceMock,
   getGroupServicesCache: vi.fn(() => groupServices),
-  getGroupHandlersCache: vi.fn(() => groupHandlers),
+  getGroupHandlersCache: vi.fn(() => {
+    if (handlersCacheHook.error) throw handlersCacheHook.error;
+    return groupHandlers;
+  }),
 }));
 
+// mock 的 logger（模块级 vi.mock 已替换真实 logger）
+import { logger } from '../../utils/logger.js';
 import { groupMcpRouter, shutdownGroupMcpRouter } from './group-router.js';
 
 function makeServiceStub(overrides: Record<string, unknown> = {}): {
@@ -101,6 +116,7 @@ beforeEach(() => {
   resourceServerDeps.length = 0;
   groupServices.clear();
   groupHandlers.clear();
+  handlersCacheHook.error = null;
   getAllConfigMock.mockReset();
   getAllConfigMock.mockResolvedValue({
     groups: { g1: { id: 'g1', name: 'G1', servers: ['s1'] } },
@@ -161,6 +177,24 @@ describe('groupMcpRouter - POST /:group/mcp', () => {
     expect(response.status).toBe(404);
     const body = await response.json();
     expect(body.error.data.error.code).toBe('GROUP_NOT_FOUND');
+    // 配置读取异常被 validateGroupExists 的 catch 记录为 error 日志
+    expect(logger.error).toHaveBeenCalledWith('验证组存在性时出错', expect.any(Error), {
+      groupId: 'g1',
+    });
+  });
+
+  it('组不存在时记录 warn 日志（含 groupId 上下文）', async () => {
+    await postMcp('ghost');
+
+    expect(logger.warn).toHaveBeenCalledWith('请求的组不存在', { groupId: 'ghost' });
+  });
+
+  it('成功处理时记录 info 日志（含 groupId 上下文）', async () => {
+    createHandlerMock.mockResolvedValue(makeHandlerStub());
+
+    await postMcp('g1');
+
+    expect(logger.info).toHaveBeenCalledWith('处理组特定MCP请求', { groupId: 'g1' });
   });
 
   it('MCP handler 工厂抛错时返回 500 归一化 JSON-RPC（INTERNAL_ERROR 嵌套）', async () => {
@@ -196,6 +230,10 @@ describe('groupMcpRouter - POST /:group/mcp', () => {
     const body = await response.json();
     expect(body.error.data.error.message).toBe('fetch boom');
     expect(body.error.data.error.groupId).toBe('g1');
+    // 执行异常被 catch 记录为 error 日志
+    expect(logger.error).toHaveBeenCalledWith('组MCP端点错误', expect.any(Error), {
+      groupId: 'g1',
+    });
   });
 });
 
@@ -212,6 +250,7 @@ describe('groupMcpRouter - GET /:group/status', () => {
     expect(body.status).toEqual({ groupId: 'g1', isInitialized: true });
     expect(typeof body.timestamp).toBe('string');
     expect(createHandlerMock).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith('获取组状态信息', { groupId: 'g1' });
   });
 
   it('组不存在时返回 404（验证中间件同样生效）', async () => {
@@ -236,6 +275,9 @@ describe('groupMcpRouter - GET /:group/status', () => {
         message: "获取组 'g1' 状态失败: status boom",
       },
     });
+    expect(logger.error).toHaveBeenCalledWith('获取组状态失败', expect.any(Error), {
+      groupId: 'g1',
+    });
   });
 });
 
@@ -257,6 +299,7 @@ describe('groupMcpRouter - GET /:group/tools', () => {
     expect(body.tools).toEqual(tools);
     expect(body.count).toBe(2);
     expect(typeof body.timestamp).toBe('string');
+    expect(logger.debug).toHaveBeenCalledWith('获取组工具列表', { groupId: 'g1' });
   });
 
   it('getAvailableTools 失败时返回 500 TOOLS_ERROR', async () => {
@@ -274,6 +317,9 @@ describe('groupMcpRouter - GET /:group/tools', () => {
         code: 'TOOLS_ERROR',
         message: "获取组 'g1' 工具列表失败: tools boom",
       },
+    });
+    expect(logger.error).toHaveBeenCalledWith('获取组工具列表失败', expect.any(Error), {
+      groupId: 'g1',
     });
   });
 });
@@ -328,6 +374,9 @@ describe('shutdownGroupMcpRouter', () => {
     expect(s2.shutdown).toHaveBeenCalledTimes(1);
     expect(groupServices.size).toBe(0);
     expect(groupHandlers.size).toBe(0);
+    // 开始/完成日志（含关闭流程边界）
+    expect(logger.info).toHaveBeenCalledWith('关闭组MCP路由服务');
+    expect(logger.info).toHaveBeenCalledWith('组MCP路由服务关闭完成');
   });
 
   it('单个 handler.close / service.shutdown 抛错不阻断其余关闭', async () => {
@@ -347,11 +396,21 @@ describe('shutdownGroupMcpRouter', () => {
     expect(s2.shutdown).toHaveBeenCalledTimes(1);
     expect(groupServices.size).toBe(0);
     expect(groupHandlers.size).toBe(0);
+    // 单项失败被各自的 catch 记录为 error 日志
+    expect(logger.error).toHaveBeenCalledWith('关闭组MCP handler 时出错', expect.any(Error));
+    expect(logger.error).toHaveBeenCalledWith('关闭组服务时出错', expect.any(Error));
   });
 
   it('空缓存时关闭幂等', async () => {
     await expect(shutdownGroupMcpRouter()).resolves.toBeUndefined();
     expect(groupServices.size).toBe(0);
+  });
+
+  it('获取 handler 缓存自身抛错时向外传播并记录 error 日志', async () => {
+    handlersCacheHook.error = new Error('handlers cache exploded');
+
+    await expect(shutdownGroupMcpRouter()).rejects.toThrow('handlers cache exploded');
+    expect(logger.error).toHaveBeenCalledWith('关闭组MCP路由服务时出错', expect.any(Error));
   });
 });
 

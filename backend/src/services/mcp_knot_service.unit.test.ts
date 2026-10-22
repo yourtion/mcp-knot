@@ -885,9 +885,14 @@ describe('McpKnotService', () => {
         );
 
         const shutdownPromise = svc.shutdown();
+        // 先挂 rejection 断言再推进时钟：reject 发生在 advanceTimersByTimeAsync 期间，
+        // 若事后才挂处理器会跨宏任务边界被 Node 记为 unhandled rejection（会拖垮 Stryker 干跑）
+        const expectation = expect(shutdownPromise).rejects.toThrow(
+          /Shutdown completed with 1 errors/,
+        );
         // 推进 10s 触发 shutdown 超时 → 强制关闭路径
         await vi.advanceTimersByTimeAsync(10_000);
-        await expect(shutdownPromise).rejects.toThrow(/Shutdown completed with 1 errors/);
+        await expectation;
       } finally {
         vi.useRealTimers();
       }

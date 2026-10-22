@@ -1,4 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock logger：validator 的日志分支（unknown type / 缺参告警 / 校验异常）需断言
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+vi.mock('../utils/logger.js', () => ({ logger: loggerMock }));
 
 import { validateArgumentType, validateToolArgsWithSchema } from './tool-arg-validator.js';
 
@@ -12,6 +21,10 @@ function makeTool(schema: Record<string, unknown>): Tool {
     inputSchema: schema,
   };
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('validateArgumentType', () => {
   describe('类型匹配时通过', () => {
@@ -71,13 +84,32 @@ describe('validateArgumentType', () => {
     expect(validateArgumentType('arg', 42, { description: 'no type' }).isValid).toBe(true);
   });
 
-  it('未知类型允许通过', () => {
+  it('schema 中没有 type 字段时提前返回（不走 default 分支、不记日志）', () => {
+    expect(validateArgumentType('arg', 'anything', {}).isValid).toBe(true);
+    expect(loggerMock.debug).not.toHaveBeenCalled();
+  });
+
+  it('未知类型允许通过（default 分支记录 debug 日志与上下文）', () => {
     const result = validateArgumentType('arg', 'value', { type: 'custom-unknown-type' });
     expect(result.isValid).toBe(true);
+    expect(loggerMock.debug).toHaveBeenCalledWith('Unknown type in schema, allowing', {
+      argName: 'arg',
+      expectedType: 'custom-unknown-type',
+    });
   });
 });
 
 describe('validateToolArgsWithSchema', () => {
+  it('入口记录 debug 日志（工具名、参数与 schema）', () => {
+    const tool = makeTool({ properties: {} });
+    validateToolArgsWithSchema(tool, { a: 1 });
+    expect(loggerMock.debug).toHaveBeenCalledWith('Validating tool arguments with schema', {
+      toolName: 'test-tool',
+      args: { a: 1 },
+      schema: { properties: {} },
+    });
+  });
+
   describe('无 schema 时', () => {
     it('inputSchema 为空对象时允许所有参数', () => {
       const tool = makeTool({});
@@ -87,6 +119,15 @@ describe('validateToolArgsWithSchema', () => {
     it('inputSchema 为 null 时允许所有参数', () => {
       const tool = makeTool(null as unknown as Record<string, unknown>);
       expect(validateToolArgsWithSchema(tool, { anything: 1 }).isValid).toBe(true);
+    });
+
+    it('inputSchema 为非对象真值（字符串）时允许所有参数并记录 debug', () => {
+      const tool = makeTool('not-an-object' as unknown as Record<string, unknown>);
+      const result = validateToolArgsWithSchema(tool, { anything: 1 });
+      expect(result.isValid).toBe(true);
+      expect(loggerMock.debug).toHaveBeenCalledWith('No schema provided, allowing all arguments', {
+        toolName: 'test-tool',
+      });
     });
   });
 
@@ -122,6 +163,33 @@ describe('validateToolArgsWithSchema', () => {
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('undefined');
     });
+
+    it('required 为非数组真值（字符串）时不做必填校验', () => {
+      const strRequiredTool = makeTool({
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: 'name' as unknown as string[],
+      });
+      // required 非数组 → 跳过必填检查（缺 name 也通过）
+      expect(validateToolArgsWithSchema(strRequiredTool, {}).isValid).toBe(true);
+    });
+
+    it('缺少必填字段时记录 warn 日志（含已提供的参数键）', () => {
+      validateToolArgsWithSchema(tool, { count: 1 });
+      expect(loggerMock.warn).toHaveBeenCalledWith('Missing required argument', {
+        toolName: 'test-tool',
+        requiredField: 'name',
+        providedArgs: ['count'],
+      });
+    });
+
+    it('必填字段为 null 时记录 warn 日志', () => {
+      validateToolArgsWithSchema(tool, { name: null, count: 1 });
+      expect(loggerMock.warn).toHaveBeenCalledWith('Required argument is null/undefined', {
+        toolName: 'test-tool',
+        requiredField: 'name',
+      });
+    });
   });
 
   describe('类型校验', () => {
@@ -144,8 +212,28 @@ describe('validateToolArgsWithSchema', () => {
       expect(result.error).toContain('string');
     });
 
-    it('未在 properties 中声明的参数不校验类型（自由通过）', () => {
+    it('类型错误时记录 warn 日志（含期望类型与错误信息）', () => {
+      validateToolArgsWithSchema(tool, { name: 123 });
+      expect(loggerMock.warn).toHaveBeenCalledWith(
+        'Argument type validation failed',
+        expect.objectContaining({
+          toolName: 'test-tool',
+          argName: 'name',
+          expectedType: 'string',
+        }),
+      );
+    });
+
+    it('未在 properties 中声明的参数不校验类型（自由通过，无内部异常）', () => {
       expect(validateToolArgsWithSchema(tool, { extra: true }).isValid).toBe(true);
+      // 未声明属性不应触发校验异常（logger.error 不被调用）
+      expect(loggerMock.error).not.toHaveBeenCalled();
+    });
+
+    it('properties 缺失时跳过类型校验且不产生内部异常', () => {
+      const noPropsTool = makeTool({ type: 'object', required: [] });
+      expect(validateToolArgsWithSchema(noPropsTool, { a: 1 }).isValid).toBe(true);
+      expect(loggerMock.error).not.toHaveBeenCalled();
     });
   });
 
@@ -167,6 +255,15 @@ describe('validateToolArgsWithSchema', () => {
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('extra');
       expect(result.error).toContain('Additional properties');
+    });
+
+    it('传了额外属性时记录 warn 日志（含多余属性与允许属性列表）', () => {
+      validateToolArgsWithSchema(tool, { name: 'ok', extra: 1 });
+      expect(loggerMock.warn).toHaveBeenCalledWith('Additional properties provided', {
+        toolName: 'test-tool',
+        extraProps: ['extra'],
+        allowedProps: ['name'],
+      });
     });
 
     it('额外属性为空对象时不拒绝（additionalProperties 默认允许）', () => {
@@ -198,6 +295,10 @@ describe('validateToolArgsWithSchema', () => {
         filters: { status: 'active' },
       });
       expect(result.isValid).toBe(true);
+      // 校验通过时记录 success debug 日志
+      expect(loggerMock.debug).toHaveBeenCalledWith('Tool arguments validation passed', {
+        toolName: 'test-tool',
+      });
     });
 
     it('同时违反多条规则时报告第一个遇到的错误', () => {
@@ -216,6 +317,24 @@ describe('validateToolArgsWithSchema', () => {
       // required 检查按声明顺序，先报 a 缺失
       expect(result.error).toContain('a');
       expect(result.error).toContain('Missing required');
+    });
+  });
+
+  describe('校验异常容错', () => {
+    it('args 为 null 时内部异常被吞掉并放行（记录 error 日志）', () => {
+      const tool = makeTool({
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+      });
+      // `'name' in null` 抛 TypeError → catch → 放行执行
+      const result = validateToolArgsWithSchema(tool, null as unknown as Record<string, unknown>);
+      expect(result.isValid).toBe(true);
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        'Error during schema validation',
+        expect.any(Error),
+        { toolName: 'test-tool', args: null },
+      );
     });
   });
 });
