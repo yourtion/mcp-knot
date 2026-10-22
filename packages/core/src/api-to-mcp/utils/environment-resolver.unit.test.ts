@@ -2,9 +2,30 @@
  * 环境变量解析器测试
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EnvironmentResolverImpl } from './environment-resolver.js';
+
+const { loggerSpies, mockCreateLogger } = vi.hoisted(() => {
+  const mockCreateLogger = vi.fn();
+  const loggerSpies = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  mockCreateLogger.mockReturnValue(loggerSpies);
+  return { loggerSpies, mockCreateLogger };
+});
+
+vi.mock('../../utils/logger.js', () => ({
+  createLogger: mockCreateLogger,
+}));
+
+describe('模块级 logger 初始化', () => {
+  beforeAll(() => {
+    expect(mockCreateLogger).toHaveBeenCalledWith({ component: 'EnvironmentResolver' });
+  });
+
+  it('应该以 EnvironmentResolver 组件名创建 logger', () => {
+    expect(mockCreateLogger).not.toBeNull();
+  });
+});
 
 describe('EnvironmentResolverImpl', () => {
   const resolver = new EnvironmentResolverImpl();
@@ -42,6 +63,17 @@ describe('EnvironmentResolverImpl', () => {
       const template = 'Bearer {{env.UNDEFINED_VAR}}';
       const result = resolver.resolve(template);
       expect(result).toBe('Bearer {{env.UNDEFINED_VAR}}');
+    });
+
+    it('未定义环境变量应输出包含变量名的警告日志', () => {
+      loggerSpies.warn.mockClear();
+
+      resolver.resolve('Bearer {{env.UNDEFINED_VAR}}');
+
+      expect(loggerSpies.warn).toHaveBeenCalledTimes(1);
+      expect(loggerSpies.warn).toHaveBeenCalledWith('环境变量 UNDEFINED_VAR 未定义，保持原始值', {
+        context: { varName: 'UNDEFINED_VAR' },
+      });
     });
 
     it('应该处理非字符串输入', () => {
@@ -173,6 +205,18 @@ describe('EnvironmentResolverImpl', () => {
     it('应该处理空对象', () => {
       const variables = resolver.extractAllEnvironmentVariables({});
       expect(variables).toEqual([]);
+    });
+
+    it('应该忽略 null 与原始类型值', () => {
+      expect(resolver.extractAllEnvironmentVariables({ a: null, b: 42, c: [{ d: null }] })).toEqual(
+        [],
+      );
+    });
+
+    it('应该跳过数组中的 null 元素', () => {
+      expect(resolver.extractAllEnvironmentVariables({ list: [null, '{{env.ARR_VAR}}'] })).toEqual([
+        'ARR_VAR',
+      ]);
     });
   });
 });

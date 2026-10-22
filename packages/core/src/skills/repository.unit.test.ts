@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -221,5 +221,167 @@ describe('persistent skill repository', () => {
     'npx skills@latest add mattpocock/skills --skill=grill-me --global',
   ])('rejects unsupported command syntax: %s', (command) => {
     expect(() => skillSourceFromCommand('team', command)).toThrow();
+  });
+
+  it('rejects concurrent mutations while holding the write lock and releases it afterwards', async () => {
+    const repository = await local();
+    await mkdir(join(store, '.write-lock'));
+    await expect(repository.sync('team')).rejects.toThrow('Another skills mutation is in progress');
+    await expect(
+      repository.saveSource({
+        id: 'other',
+        type: 'local',
+        directory: join(temp, 'source'),
+        skills: ['grill-me'],
+      }),
+    ).rejects.toThrow('Another skills mutation is in progress');
+    await rm(join(store, '.write-lock'), { recursive: true });
+
+    await repository.sync('team');
+    expect((await readdir(store)).includes('.write-lock')).toBe(false);
+
+    await writeFile(join(source, 'SKILL.md'), 'invalid');
+    await expect(repository.sync('team')).rejects.toThrow();
+    expect((await readdir(store)).includes('.write-lock')).toBe(false);
+  });
+
+  it('persists registry files owner-only and leaves no temporary files behind', async () => {
+    const repository = await local();
+    await repository.sync('team');
+    for (const file of [
+      join(store, 'sources.json'),
+      join(store, 'revisions', 'team', 'latest.json'),
+    ]) {
+      expect((await stat(file)).mode & 0o777).toBe(0o600);
+    }
+    const leftovers: string[] = [];
+    const walk = async (directory: string) => {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) await walk(path);
+        else if (path.endsWith('.tmp')) leftovers.push(path);
+      }
+    };
+    await walk(store);
+    expect(leftovers).toEqual([]);
+    expect((await readdir(join(store, 'staging'))).filter((name) => name !== '.gitkeep')).toEqual(
+      [],
+    );
+  });
+
+  it('accepts re-saving an identical source without duplicating it', async () => {
+    const repository = await local();
+    const again = await repository.saveSource({
+      id: 'team',
+      type: 'local',
+      directory: join(temp, 'source'),
+      skills: ['grill-me'],
+    });
+    expect(again.id).toBe('team');
+    const saved = JSON.parse(await readFile(join(store, 'sources.json'), 'utf8')) as unknown[];
+    expect(saved).toHaveLength(1);
+  });
+
+  it('rejects malformed source IDs before touching the registry', async () => {
+    const repository = await local();
+    await expect(repository.sync('../escape')).rejects.toThrow(/invalid/i);
+    await expect(repository.latest('UPPER')).rejects.toThrow(/invalid/i);
+  });
+
+  it('reports unknown sources explicitly', async () => {
+    const repository = await local();
+    await expect(repository.sync('never')).rejects.toThrow('Unknown skill source');
+  });
+
+  it('returns undefined before the first successful sync', async () => {
+    const repository = await local();
+    expect(await repository.latest('team')).toBeUndefined();
+  });
+
+  it('rejects a tampered latest pointer', async () => {
+    const repository = await local();
+    await repository.sync('team');
+    await writeFile(
+      join(store, 'revisions', 'team', 'latest.json'),
+      JSON.stringify({ revision: `${'a'.repeat(64)}zz` }),
+    );
+    await expect(repository.latest('team')).rejects.toThrow();
+  });
+
+  it('rejects a revision persisted under a different source ID', async () => {
+    const repository = await local();
+    const imported = await repository.sync('team');
+    await mkdir(join(store, 'revisions', 'other'), { recursive: true });
+    await cp(
+      join(store, 'revisions', 'team', `${imported.revision}.json`),
+      join(store, 'revisions', 'other', `${imported.revision}.json`),
+    );
+    await expect(
+      repository.catalog(
+        { include: [{ ...imported.selections[0], sourceId: 'other' }] },
+        'group-a',
+      ),
+    ).rejects.toThrow('Snapshot identity mismatch');
+  });
+
+  it('verifies the persisted digest against supporting files, not just the entry', async () => {
+    const repository = await local();
+    const imported = await repository.sync('team');
+    const file = join(store, 'revisions', 'team', `${imported.revision}.json`);
+    const persisted = JSON.parse(await readFile(file, 'utf8'));
+    const asset = persisted.snapshots[0].files.find((stored: { path: string }) =>
+      stored.path.endsWith('asset.bin'),
+    );
+    asset.base64 = Buffer.from('tampered').toString('base64');
+    await writeFile(file, JSON.stringify(persisted));
+    await expect(repository.catalog({ include: imported.selections }, 'group-a')).rejects.toThrow(
+      'Persisted snapshot integrity check failed',
+    );
+  });
+
+  it('syncs and updates a git source without requiring a workspace', async () => {
+    const runner: SkillCommandRunner = async (_command, args) => {
+      if (args.includes('clone')) await cp(join(temp, 'source'), args.at(-1)!, { recursive: true });
+      if (args.includes('rev-parse')) return 'f'.repeat(40);
+      return '';
+    };
+    const repository = new SkillRepository(store, runner);
+    await repository.saveSource({
+      id: 'git-team',
+      type: 'git',
+      repository: 'https://github.com/team/skills.git',
+      ref: 'main',
+      skills: ['grill-me'],
+    });
+    await repository.sync('git-team');
+    const updated = await repository.sync('git-team', 'update');
+    expect(updated.skills[0].frontmatter.name).toBe('grill-me');
+    const workspaces = await readdir(join(store, 'workspaces')).catch(() => [] as string[]);
+    expect(workspaces.includes('git-team')).toBe(false);
+  });
+
+  it('keeps an existing workspace when a repeated revision re-imports it', async () => {
+    const runner: SkillCommandRunner = async (_command, args, cwd) => {
+      if (args.includes('--version')) return '1.7.2\n';
+      if (args.includes('add')) {
+        await mkdir(join(cwd, '.agents', 'skills', 'grill-me'), { recursive: true });
+        await cp(join(source, 'SKILL.md'), join(cwd, '.agents', 'skills', 'grill-me', 'SKILL.md'));
+        await writeFile(join(cwd, 'skills-lock.json'), JSON.stringify({ version: 1 }));
+      }
+      return '';
+    };
+    const repository = new SkillRepository(store, runner);
+    await repository.saveSource(
+      skillSourceFromCommand(
+        'cli-team',
+        'npx skills@latest add mattpocock/skills --skill=grill-me',
+      ),
+    );
+    const first = await repository.sync('cli-team');
+    const workspace = join(store, 'workspaces', 'cli-team', first.revision);
+    await writeFile(join(workspace, 'existing.txt'), 'blocks rename');
+    const second = await repository.sync('cli-team');
+    expect(second.revision).toBe(first.revision);
+    expect((await readdir(workspace)).includes('existing.txt')).toBe(true);
   });
 });

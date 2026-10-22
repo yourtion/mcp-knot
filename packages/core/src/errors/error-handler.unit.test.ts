@@ -13,7 +13,11 @@ import {
   ErrorSeverity,
   type FallbackStrategy,
   McpKnotCoreError,
+  ServiceError,
+  ToolExecutionError,
   UnifiedErrorHandler,
+  ValidationError,
+  AuthError,
 } from './index';
 
 describe('UnifiedErrorHandler', () => {
@@ -147,6 +151,103 @@ describe('UnifiedErrorHandler', () => {
 
       expect(operation).toHaveBeenCalledTimes(1);
     });
+
+    it('应该按指数退避计算延迟并在日志中记录 attempt 与 delay', async () => {
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new ConnectionError(ErrorCode.CONNECTION_TIMEOUT))
+        .mockRejectedValueOnce(new ConnectionError(ErrorCode.CONNECTION_TIMEOUT))
+        .mockResolvedValue('success');
+      const context: ErrorContext = {
+        operation: 'test',
+        component: 'TestComponent',
+        metadata: { traceId: 't-1' },
+      };
+
+      await errorHandler.executeWithRetry(operation, context, {
+        maxAttempts: 3,
+        baseDelay: 10,
+        backoffMultiplier: 2,
+        maxDelay: 10000,
+      });
+
+      const retryCalls = mockLogger.mock.calls.filter(([, logData]) =>
+        String(logData?.error?.message ?? '').startsWith('重试第'),
+      );
+      expect(retryCalls.map(([, logData]) => logData.error.message)).toEqual([
+        '重试第 1 次失败，10ms 后重试',
+        '重试第 2 次失败，20ms 后重试',
+      ]);
+      // 日志消息使用 [component] operation 失败 格式
+      expect(retryCalls[0][0]).toBe('[TestComponent] test 失败');
+      // metadata 应保留原字段并附带 attempt/delay
+      expect(retryCalls[0][1].context.metadata).toEqual({ traceId: 't-1', attempt: 1, delay: 10 });
+      expect(retryCalls[1][1].context.metadata).toEqual({ traceId: 't-1', attempt: 2, delay: 20 });
+    });
+
+    it('最后一次尝试失败后应立即抛出，不再记录重试日志', async () => {
+      const operation = vi
+        .fn()
+        .mockRejectedValue(new ConnectionError(ErrorCode.CONNECTION_TIMEOUT));
+      const context: ErrorContext = {
+        operation: 'test',
+        component: 'TestComponent',
+      };
+
+      await expect(
+        errorHandler.executeWithRetry(operation, context, { maxAttempts: 2, baseDelay: 10 }),
+      ).rejects.toThrow();
+
+      expect(operation).toHaveBeenCalledTimes(2);
+      const retryCalls = mockLogger.mock.calls.filter(([, logData]) =>
+        String(logData?.error?.message ?? '').startsWith('重试第'),
+      );
+      expect(retryCalls).toHaveLength(1);
+    });
+
+    it('maxAttempts 为 0 时应直接抛出兜底错误', async () => {
+      const operation = vi.fn().mockResolvedValue('success');
+      const context: ErrorContext = {
+        operation: 'test',
+        component: 'TestComponent',
+      };
+
+      await expect(
+        errorHandler.executeWithRetry(operation, context, { maxAttempts: 0 }),
+      ).rejects.toThrow('Operation failed after retries');
+
+      expect(operation).not.toHaveBeenCalled();
+    });
+
+    it('重试之间应真实等待 sleep 时长', async () => {
+      vi.useFakeTimers();
+      try {
+        const operation = vi
+          .fn()
+          .mockRejectedValueOnce(new ConnectionError(ErrorCode.CONNECTION_TIMEOUT))
+          .mockResolvedValue('success');
+        const context: ErrorContext = {
+          operation: 'test',
+          component: 'TestComponent',
+        };
+
+        const promise = errorHandler.executeWithRetry(operation, context, {
+          maxAttempts: 2,
+          baseDelay: 5000,
+          maxDelay: 10000,
+        });
+
+        await vi.advanceTimersByTimeAsync(0);
+        // 第一次失败后处于 sleep(5000) 中，不应执行第二次
+        expect(operation).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(5000);
+        await expect(promise).resolves.toBe('success');
+        expect(operation).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('executeWithFallback', () => {
@@ -168,10 +269,12 @@ describe('UnifiedErrorHandler', () => {
     });
 
     it('应该在操作失败且启用降级时返回降级值', async () => {
-      const operation = vi.fn().mockRejectedValue(new Error('操作失败'));
+      const failure = new Error('操作失败');
+      const operation = vi.fn().mockRejectedValue(failure);
       const context: ErrorContext = {
         operation: 'test',
         component: 'TestComponent',
+        metadata: { traceId: 't-9' },
       };
       const fallbackStrategy: FallbackStrategy = {
         enabled: true,
@@ -181,7 +284,11 @@ describe('UnifiedErrorHandler', () => {
       const result = await errorHandler.executeWithFallback(operation, context, fallbackStrategy);
 
       expect(result).toBe('fallback');
-      expect(mockLogger).toHaveBeenCalled();
+      expect(mockLogger).toHaveBeenCalledTimes(1);
+      const [message, logData] = mockLogger.mock.calls[0];
+      expect(message).toBe('[TestComponent] test 失败');
+      expect(logData.error.message).toBe('操作失败，使用降级策略');
+      expect(logData.context.metadata).toEqual({ traceId: 't-9', originalError: failure });
     });
 
     it('应该在操作失败且启用降级函数时调用降级函数', async () => {
@@ -227,6 +334,37 @@ describe('UnifiedErrorHandler', () => {
       expect(response.success).toBe(true);
       expect(response.data).toEqual(data);
       expect(response.timestamp).toBeDefined();
+    });
+  });
+
+  describe('formatErrorResponse', () => {
+    it('普通 Error 应填充 originalError 与 context 精简信息', () => {
+      const response = errorHandler.formatErrorResponse(new TypeError('类型错误'), {
+        operation: 'op',
+        component: 'Comp',
+      });
+
+      expect(response.success).toBe(false);
+      expect(response.error.code).toBe(ErrorCode.UNKNOWN_ERROR);
+      expect(response.error.message).toBe('类型错误');
+      expect(response.error.details).toEqual({ originalError: 'TypeError' });
+      expect(response.error.context).toEqual({ operation: 'op', component: 'Comp' });
+    });
+
+    it('普通 Error 无 context 时 error.context 应为 undefined', () => {
+      const response = errorHandler.formatErrorResponse(new TypeError('类型错误'));
+
+      expect(response.error.context).toBeUndefined();
+    });
+
+    it('应该透传 requestId', () => {
+      const response = errorHandler.formatErrorResponse(
+        new McpKnotCoreError(ErrorCode.UNKNOWN_ERROR),
+        { operation: 'op', component: 'Comp' },
+        'req-42',
+      );
+
+      expect(response.requestId).toBe('req-42');
     });
   });
 });
@@ -275,6 +413,51 @@ describe('ErrorFactory', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe(ErrorCode.INVALID_REQUEST_FORMAT);
   });
+
+  it('应该创建认证错误', () => {
+    const error = ErrorFactory.createAuthError(
+      ErrorCode.AUTH_ACCESS_DENIED,
+      '自定义认证消息',
+      { reason: 'forbidden' },
+      { requestId: 'r-1' },
+    );
+
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error).toBeInstanceOf(McpKnotCoreError);
+    expect(error.name).toBe('AuthError');
+    expect(error.code).toBe(ErrorCode.AUTH_ACCESS_DENIED);
+    expect(error.message).toBe('自定义认证消息');
+    expect(error.details).toEqual({ reason: 'forbidden' });
+    expect(error.context).toEqual({ requestId: 'r-1' });
+    expect(error.severity).toBe(ErrorSeverity.HIGH);
+  });
+});
+
+describe('错误子类的 name 与类别', () => {
+  const cases = [
+    { factory: () => new ConfigError(ErrorCode.INVALID_SERVER_CONFIG), name: 'ConfigError' },
+    { factory: () => new ConnectionError(ErrorCode.CONNECTION_REFUSED), name: 'ConnectionError' },
+    { factory: () => new ServiceError(ErrorCode.SERVICE_UNAVAILABLE), name: 'ServiceError' },
+    {
+      factory: () => new ToolExecutionError(ErrorCode.TOOL_EXECUTION_FAILED),
+      name: 'ToolExecutionError',
+    },
+    {
+      factory: () => new ValidationError(ErrorCode.PARAMETER_TYPE_MISMATCH),
+      name: 'ValidationError',
+    },
+    { factory: () => new AuthError(ErrorCode.AUTH_TOKEN_INVALID), name: 'AuthError' },
+  ];
+
+  for (const { factory, name } of cases) {
+    it(`${name} 的 name 与 instanceof 应正确`, () => {
+      const error = factory();
+      expect(error.name).toBe(name);
+      expect(error).toBeInstanceOf(McpKnotCoreError);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.toJSON().name).toBe(name);
+    });
+  }
 });
 
 describe('McpKnotCoreError', () => {
@@ -299,6 +482,12 @@ describe('McpKnotCoreError', () => {
     const error = new McpKnotCoreError(ErrorCode.TOOL_NOT_FOUND);
 
     expect(error.message).toBe('工具未找到');
+  });
+
+  it('空字符串 message 应回落到错误码默认消息', () => {
+    const error = new McpKnotCoreError(ErrorCode.CONFIG_FILE_NOT_FOUND, '');
+
+    expect(error.message).toBe('配置文件未找到');
   });
 
   it('应该正确转换为JSON', () => {

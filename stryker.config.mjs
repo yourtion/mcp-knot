@@ -41,6 +41,9 @@ export default {
     '!backend/src/e2e/**',
     '!backend/src/integration/**',
     '!backend/src/test-app.ts',
+    // 启动引导入口：import 即拉起服务器/应用，单元测试不可行（与 test-app.ts 同类）
+    '!backend/src/index.ts',
+    '!frontend/src/index.ts',
     '!frontend/src/test-setup.ts',
   ],
   reporters: ['clear-text', 'progress', 'html', 'json'],

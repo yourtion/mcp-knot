@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { SkillCatalog } from './catalog.js';
-import { loadLocalSkillSnapshot } from './local-snapshot.js';
+import { loadLocalSkillSnapshot, snapshotFromFiles } from './local-snapshot.js';
 
 import type { SkillSnapshot } from './local-snapshot.js';
 
@@ -63,5 +63,77 @@ describe('published skill catalog views', () => {
   it('supports an empty publication and rejects duplicate URIs', () => {
     expect(new SkillCatalog([]).list()).toEqual({ skills: [] });
     expect(() => new SkillCatalog([first, first])).toThrow('Duplicate skill URI');
+  });
+});
+
+describe('catalog resource listings and cursor offsets', () => {
+  const markdown = (name: string, description: string) =>
+    Buffer.from(`---\nname: ${name}\ndescription: ${description}\n---\nBody.\n`);
+  const snapshot = (name: string, description = `${name} instructions.`) =>
+    snapshotFromFiles(
+      [
+        { path: 'SKILL.md', bytes: markdown(name, description) },
+        { path: 'notes.txt', bytes: Buffer.from('root-level notes') },
+        { path: 'references/checklist.md', bytes: Buffer.from('checklist') },
+      ],
+      'team',
+      name,
+    );
+
+  it('names the entry by its skill and every supporting file by its own filename', () => {
+    const catalog = new SkillCatalog([snapshot('demo-skill', 'The demo description.')]);
+    const resources = catalog.resources();
+    const entryResource = resources.find((file) => file.uri.endsWith('/SKILL.md'))!;
+    expect(entryResource).toMatchObject({
+      name: 'demo-skill',
+      description: 'The demo description.',
+      mimeType: 'text/markdown',
+    });
+    const rootFile = resources.find((file) => file.uri.endsWith('/notes.txt'))!;
+    expect(rootFile).toMatchObject({ name: 'notes.txt', mimeType: 'text/plain' });
+    expect('description' in rootFile).toBe(false);
+    const nestedFile = resources.find((file) => file.uri.endsWith('/checklist.md'))!;
+    expect(nestedFile).toMatchObject({ name: 'checklist.md', mimeType: 'text/markdown' });
+    expect('description' in nestedFile).toBe(false);
+  });
+
+  it('pages through every entry in ascending URI order', () => {
+    const snapshots = [snapshot('beta-skill'), snapshot('alpha-skill'), snapshot('gamma-skill')];
+    const catalog = new SkillCatalog(snapshots);
+    const ordered = catalog.list(undefined, 10).skills.map((skill) => skill.uri);
+    expect(ordered).toEqual([...ordered].sort());
+    const firstPage = catalog.list(undefined, 2);
+    expect(firstPage.skills.map((skill) => skill.uri)).toEqual(ordered.slice(0, 2));
+    const secondPage = catalog.list(firstPage.nextCursor, 2);
+    expect(secondPage.skills.map((skill) => skill.uri)).toEqual(ordered.slice(2));
+    expect(secondPage.nextCursor).toBeUndefined();
+  });
+
+  it('rejects forged cursors with out-of-range offsets for the same view', () => {
+    const catalog = new SkillCatalog([snapshot('alpha-skill'), snapshot('beta-skill')]);
+    const cursor = catalog.list(undefined, 1).nextCursor!;
+    const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      view: string;
+      offset: number;
+    };
+    const forge = (offset: number) =>
+      Buffer.from(JSON.stringify({ view: decoded.view, offset })).toString('base64url');
+    expect(() => catalog.list(forge(0), 1)).toThrow('Invalid skills cursor');
+    expect(() => catalog.list(forge(2), 1)).toThrow('Invalid skills cursor');
+    expect(() => catalog.list(forge(1.5), 1)).toThrow('Invalid skills cursor');
+    expect(() => catalog.list(forge(-1), 1)).toThrow('Invalid skills cursor');
+    expect(() => catalog.list(forge(Number.MAX_SAFE_INTEGER + 1), 1)).toThrow(
+      'Invalid skills cursor',
+    );
+  });
+
+  it('returns independent entry copies from get', () => {
+    const catalog = new SkillCatalog([snapshot('demo-skill')]);
+    const uri = catalog.list().skills[0].uri;
+    const leaked = catalog.get(uri)!;
+    leaked.frontmatter.description = 'changed';
+    leaked.resources.length = 0;
+    expect(catalog.get(uri)?.frontmatter.description).toBe('demo-skill instructions.');
+    expect(catalog.get(uri)?.resources).toHaveLength(3);
   });
 });

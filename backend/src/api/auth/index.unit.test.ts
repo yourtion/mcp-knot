@@ -166,6 +166,56 @@ describe('认证API', () => {
       expect(data.error.code).toBe('AUTH_INVALID_CREDENTIALS');
     });
 
+    it('应该把代理头解析为客户端 IP 与 User-Agent 传给登录服务（含回退链）', async () => {
+      const loginSpy = vi.spyOn(authService, 'login');
+
+      // X-Forwarded-For 优先
+      await app.request('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-For': '203.0.113.9',
+          'X-Real-IP': '10.0.0.1',
+          'CF-Connecting-IP': '10.0.0.2',
+          'User-Agent': 'curl/8.0',
+        },
+        body: JSON.stringify({ username: 'testuser', password: 'password' }),
+      });
+      expect(loginSpy).toHaveBeenLastCalledWith('testuser', 'password', '203.0.113.9', 'curl/8.0');
+
+      // 无 X-Forwarded-For 时回退 X-Real-IP；无 User-Agent 时回退 unknown
+      await app.request('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Real-IP': '198.51.100.7',
+        },
+        body: JSON.stringify({ username: 'testuser', password: 'password' }),
+      });
+      expect(loginSpy).toHaveBeenLastCalledWith('testuser', 'password', '198.51.100.7', 'unknown');
+
+      // 仅 CF-Connecting-IP 时取第三优先级
+      await app.request('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'CF-Connecting-IP': '198.51.100.8',
+        },
+        body: JSON.stringify({ username: 'testuser', password: 'password' }),
+      });
+      expect(loginSpy).toHaveBeenLastCalledWith('testuser', 'password', '198.51.100.8', 'unknown');
+
+      // 全部缺失时 ip/userAgent 均为 unknown
+      await app.request('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'testuser', password: 'password' }),
+      });
+      expect(loginSpy).toHaveBeenLastCalledWith('testuser', 'password', 'unknown', 'unknown');
+
+      loginSpy.mockRestore();
+    });
+
     it('应该验证请求参数', async () => {
       const res = await app.request('/auth/login', {
         method: 'POST',

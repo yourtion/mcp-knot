@@ -177,6 +177,30 @@ describe('API to MCP API Routes', () => {
       });
 
       expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('INVALID_JSON');
+      expect(body.error.message).toBe('请求体包含无效的JSON格式');
+    });
+
+    it('非 JSON 解析类错误不应误判为 INVALID_JSON（返回 500）', async () => {
+      // SyntaxError 但 message 不含 'JSON' 关键字 → 不走 INVALID_JSON 分支
+      vi.mocked(mockApiToMcpService.createConfig).mockRejectedValue(
+        new SyntaxError('parse failed elsewhere'),
+      );
+
+      const response = await app.request('/api/api-to-mcp/configs', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error?.code ?? body.error).not.toBe('INVALID_JSON');
     });
   });
 
