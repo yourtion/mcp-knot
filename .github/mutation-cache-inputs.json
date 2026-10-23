@@ -1,4 +1,22 @@
 {
+  "schema": 3,
   "trackedByStryker": [],
-  "alwaysHash": []
+  "alwaysHash": [],
+  "nonSemanticFiles": [
+    {
+      "path": "README.md",
+      "reason": "Reviewed maintainer documentation; not consumed by mutation tests or runtime."
+    },
+    {
+      "path": "docs/MUTATION_TESTING.md",
+      "reason": "Reviewed maintainer documentation; not consumed by mutation tests or runtime."
+    },
+    {
+      "path": "docs/DEVELOPMENT.md",
+      "reason": "Reviewed maintainer documentation; not consumed by mutation tests or runtime."
+    }
+  ],
+  "packageVersionFiles": [],
+  "npmLockVersionFiles": [],
+  "environment": []
 }
