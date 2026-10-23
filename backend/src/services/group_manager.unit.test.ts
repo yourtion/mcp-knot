@@ -222,6 +222,81 @@ describe('GroupManager', () => {
       const group = groups.get('no-servers');
       expect(group?.description).toContain('Fallback group created due to configuration errors');
     });
+
+    it('超过最大组数量（100）时第 101 个组走 fallback', async () => {
+      const oversizedConfig: Record<string, unknown> = {};
+      for (let i = 1; i <= 100; i++) {
+        oversizedConfig[`g${i}`] = {
+          id: `g${i}`,
+          name: `Group ${i}`,
+          servers: ['server1'],
+          tools: [],
+        };
+      }
+      oversizedConfig['g101'] = {
+        id: 'g101',
+        name: 'Group 101',
+        servers: ['server1'],
+        tools: [],
+      };
+
+      const manager = new GroupManager(
+        oversizedConfig as unknown as GroupConfig,
+        mockServerManager,
+      );
+      await manager.initialize();
+
+      const groups = manager.getAllGroups();
+      // 前 100 个正常加载（未配置 description，无 fallback 痕迹）
+      expect(groups.size).toBe(101);
+      const group100 = groups.get('g100');
+      expect(group100?.description).toBeUndefined();
+      // 第 101 个触发数量限制 → fallback（仍有 server 可用）
+      const group101 = groups.get('g101');
+      expect(group101?.description).toContain('Fallback group created due to configuration errors');
+    });
+
+    it('无可用的任何 server 时 fallback 创建失败（组不加载）', async () => {
+      const emptyServerManager = {
+        ...mockServerManager,
+        getAllServers: vi.fn().mockReturnValue(new Map()),
+      };
+      const cfg = {
+        'invalid-only': {
+          // 缺 id/name → 校验失败 → 尝试 fallback，但无可用 server → 放弃
+          servers: ['server1'],
+          tools: [],
+        } as Record<string, unknown>,
+      };
+      const manager = new GroupManager(cfg as unknown as GroupConfig, emptyServerManager);
+      await manager.initialize();
+
+      expect(manager.getAllGroups().has('invalid-only')).toBe(false);
+      expect(emptyServerManager.getAllServers).toHaveBeenCalled();
+    });
+
+    it('createFallbackGroup 内部异常被吞掉（不阻断 initialize）', async () => {
+      // 第一次 getAllServers（validateGroupServers 用）成功返回；
+      // 第二次（createFallbackGroup 内）抛错 → fallback catch → 组不加载但 initialize 不崩
+      let callCount = 0;
+      const failingManager = {
+        ...mockServerManager,
+        getAllServers: vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount >= 2) throw new Error('server manager exploded');
+          return new Map();
+        }),
+      };
+      const cfg = {
+        broken: {
+          servers: ['non-existent'], // 无有效 server → 抛错进 fallback → fallback 内 getAllServers 再抛
+          tools: [],
+        } as Record<string, unknown>,
+      };
+      const manager = new GroupManager(cfg as unknown as GroupConfig, failingManager);
+      await expect(manager.initialize()).resolves.toBeUndefined();
+      expect(manager.getAllGroups().has('broken')).toBe(false);
+    });
   });
 
   describe('getGroup', () => {
@@ -380,6 +455,62 @@ describe('GroupManager', () => {
       const result = await groupManager.findToolInGroup('default', 'non-existent-tool');
       expect(result).toBeNull();
     });
+
+    it('server 工具检索抛错时跳过该 server 继续搜索', async () => {
+      // server1 抛错，server2 正常返回 tool3 → 仍能在 server2 上找到 tool3
+      vi.mocked(mockServerManager.getServerTools)
+        .mockImplementationOnce(() => Promise.reject(new Error('server1 down')))
+        .mockImplementationOnce(() =>
+          Promise.resolve([{ name: 'tool3', serverId: 'server2' } as never]),
+        );
+
+      const result = await groupManager.findToolInGroup('default', 'tool3');
+      expect(result).not.toBeNull();
+      expect(result?.serverId).toBe('server2');
+    });
+  });
+
+  describe('getGroupToolsByServer', () => {
+    beforeEach(async () => {
+      await groupManager.initialize();
+    });
+
+    it('按 server 分组返回各自工具', async () => {
+      const byServer = await groupManager.getGroupToolsByServer('default');
+      expect(byServer.get('server1')?.map((t) => t.name)).toEqual(['tool1', 'tool2']);
+      expect(byServer.get('server2')?.map((t) => t.name)).toEqual(['tool3', 'tool4']);
+    });
+
+    it('应用组的工具白名单过滤', async () => {
+      const byServer = await groupManager.getGroupToolsByServer('filtered-tools');
+      expect(byServer.get('server1')?.map((t) => t.name)).toEqual(['tool1']);
+      expect(byServer.get('server2')?.map((t) => t.name)).toEqual(['tool3']);
+    });
+
+    it('组不存在时抛错', async () => {
+      await expect(groupManager.getGroupToolsByServer('non-existent')).rejects.toThrow(
+        'Group non-existent not found',
+      );
+    });
+
+    it('无可用 server 时返回空 Map', async () => {
+      const byServer = await groupManager.getGroupToolsByServer('disconnected-server');
+      expect(byServer.size).toBe(0);
+    });
+
+    it('单个 server 检索失败时该 server 记空数组，其余正常', async () => {
+      vi.mocked(mockServerManager.getServerTools)
+        .mockImplementationOnce(() => Promise.reject(new Error('server1 down')))
+        .mockImplementationOnce(() =>
+          Promise.resolve([
+            { name: 'tool3', description: 'Tool 3', inputSchema: {}, serverId: 'server2' },
+          ]),
+        );
+
+      const byServer = await groupManager.getGroupToolsByServer('default');
+      expect(byServer.get('server1')).toEqual([]);
+      expect(byServer.get('server2')?.map((t) => t.name)).toEqual(['tool3']);
+    });
   });
 
   describe('getGroupServers', () => {
@@ -521,6 +652,31 @@ describe('GroupManager', () => {
             name: 'Invalid Tools',
             servers: ['server1'],
             tools: 'not-an-array' as unknown as string[],
+          },
+        },
+        {
+          'invalid-description': {
+            id: 'invalid-description',
+            name: 'Invalid Description',
+            description: 123 as unknown as string,
+            servers: ['server1'],
+            tools: [],
+          },
+        },
+        {
+          'invalid-server-entry': {
+            id: 'invalid-server-entry',
+            name: 'Invalid Server Entry',
+            servers: ['server1', 42 as unknown as string],
+            tools: [],
+          },
+        },
+        {
+          'invalid-tool-entry': {
+            id: 'invalid-tool-entry',
+            name: 'Invalid Tool Entry',
+            servers: ['server1'],
+            tools: ['tool1', null as unknown as string],
           },
         },
       ];

@@ -5,7 +5,7 @@
 
 import { Buffer } from 'node:buffer';
 import process from 'node:process';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AuthenticationManager,
@@ -22,14 +22,26 @@ import type { AuthenticationStrategy } from './authentication.js';
 import type { CacheManager } from './cache-manager.js';
 import type { HttpClient } from './http-client.js';
 
+const { loggerSpies, mockCreateLogger } = vi.hoisted(() => {
+  const mockCreateLogger = vi.fn();
+  const loggerSpies = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  mockCreateLogger.mockReturnValue(loggerSpies);
+  return { loggerSpies, mockCreateLogger };
+});
+
 vi.mock('../../utils/logger.js', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: mockCreateLogger,
 }));
+
+describe('模块级 logger 初始化', () => {
+  beforeAll(() => {
+    expect(mockCreateLogger).toHaveBeenCalledWith({ component: 'Authentication' });
+  });
+
+  it('应该以 Authentication 组件名创建 logger', () => {
+    expect(mockCreateLogger).not.toBeNull();
+  });
+});
 
 /** 创建基础请求配置的辅助函数 */
 function createBaseRequest(): HttpRequestConfig {
@@ -70,6 +82,29 @@ describe('BearerTokenStrategy', function () {
       await expect(strategy.applyAuth(request, config)).rejects.toThrow(
         'Bearer token认证需要提供token',
       );
+    });
+
+    it('收到非 bearer 配置时应该抛出错误', async function () {
+      const request = createBaseRequest();
+      const config = { type: 'apikey', token: 'some-token' } as AuthConfig;
+
+      await expect(strategy.applyAuth(request, config)).rejects.toThrow(
+        'Bearer 策略收到非 bearer 配置',
+      );
+    });
+
+    it('应用认证时应保留原有请求头且不修改原始请求对象', async function () {
+      const request = createBaseRequest();
+      const config: AuthConfig = { type: 'bearer', token: 'my-secret-token' };
+
+      const result = await strategy.applyAuth(request, config);
+
+      expect(result.headers).toEqual({
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer my-secret-token',
+      });
+      // 原请求对象不应被修改
+      expect(request.headers).toEqual({ 'Content-Type': 'application/json' });
     });
   });
 
@@ -160,6 +195,27 @@ describe('ApiKeyStrategy', function () {
       const config: AuthConfig = { type: 'apikey' };
 
       await expect(strategy.applyAuth(request, config)).rejects.toThrow('API Key认证需要提供token');
+    });
+
+    it('收到非 apikey 配置时应该抛出错误', async function () {
+      const request = createBaseRequest();
+      const config = { type: 'bearer', token: 'some-token' } as AuthConfig;
+
+      await expect(strategy.applyAuth(request, config)).rejects.toThrow(
+        'API Key 策略收到非 apikey 配置',
+      );
+    });
+
+    it('应用认证时应保留原有请求头', async function () {
+      const request = createBaseRequest();
+      const config: AuthConfig = { type: 'apikey', token: 'my-api-key' };
+
+      const result = await strategy.applyAuth(request, config);
+
+      expect(result.headers).toEqual({
+        'Content-Type': 'application/json',
+        'X-API-Key': 'my-api-key',
+      });
     });
   });
 
@@ -296,6 +352,28 @@ describe('BasicAuthStrategy', function () {
       await expect(strategy.applyAuth(request, config)).rejects.toThrow(
         'Basic认证需要提供用户名和密码',
       );
+    });
+
+    it('收到非 basic 配置时应该抛出错误', async function () {
+      const request = createBaseRequest();
+      const config = { type: 'bearer', token: 'some-token' } as AuthConfig;
+
+      await expect(strategy.applyAuth(request, config)).rejects.toThrow(
+        'Basic 策略收到非 basic 配置',
+      );
+    });
+
+    it('应用认证时应保留原有请求头', async function () {
+      const request = createBaseRequest();
+      const config: AuthConfig = { type: 'basic', username: 'user', password: 'pass' };
+
+      const result = await strategy.applyAuth(request, config);
+
+      const expectedEncoded = Buffer.from('user:pass').toString('base64');
+      expect(result.headers).toEqual({
+        'Content-Type': 'application/json',
+        Authorization: `Basic ${expectedEncoded}`,
+      });
     });
   });
 
@@ -502,6 +580,15 @@ describe('AuthenticationManager', function () {
         '认证配置无效: Bearer认证需要提供token',
       );
     });
+
+    it('不支持的认证类型应该抛出错误并指明类型', async function () {
+      const request = createBaseRequest();
+      const config = { type: 'unknown-type' } as AuthConfig;
+
+      await expect(manager.applyAuthentication(request, config)).rejects.toThrow(
+        '不支持的认证类型: unknown-type',
+      );
+    });
   });
 
   describe('validateAuthConfig', function () {
@@ -518,6 +605,14 @@ describe('AuthenticationManager', function () {
 
       expect(result.valid).toBe(false);
       expect(result.error).toBe('Bearer认证需要提供token');
+    });
+
+    it('不支持的认证类型应返回错误信息', async function () {
+      const config = { type: 'mystery' } as AuthConfig;
+      const result = await manager.validateAuthConfig(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('不支持的认证类型: mystery');
     });
   });
 
@@ -713,6 +808,33 @@ describe('AuthenticationManager', function () {
       expect(result.valid).toBe(true);
       expect(result.missingVars).toHaveLength(0);
     });
+
+    it('apikey 类型的 token 与 header 都应被检查', function () {
+      delete process.env['MISSING_APIKEY_VAR'];
+      originalEnv['MISSING_APIKEY_VAR'] = process.env['MISSING_APIKEY_VAR'];
+      const config: AuthConfig = {
+        type: 'apikey',
+        token: '{{env.MISSING_APIKEY_VAR}}',
+        header: '{{env.MISSING_APIKEY_VAR}}',
+      };
+
+      const result = manager.validateEnvironmentVariables(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.missingVars).toEqual(['MISSING_APIKEY_VAR']);
+    });
+
+    it('未知类型只检查通用字段并返回 valid', function () {
+      const config = {
+        type: 'weird',
+        clientId: '{{env.MISSING_WEIRD_VAR}}',
+      } as unknown as AuthConfig;
+
+      const result = manager.validateEnvironmentVariables(config);
+
+      expect(result.valid).toBe(true);
+      expect(result.missingVars).toEqual([]);
+    });
   });
 });
 
@@ -761,6 +883,18 @@ describe('OAuth 策略（注入 deps）', () => {
     expect(plainManager.getSupportedTypes()).not.toContain('oauth');
   });
 
+  it('只注入 httpClient 时不注册 oauth', () => {
+    const partialManager = new AuthenticationManager({ httpClient: {} as HttpClient });
+    expect(partialManager.getSupportedTypes()).not.toContain('oauth');
+    expect(partialManager.getSupportedTypes()).toHaveLength(3);
+  });
+
+  it('只注入 cache 时不注册 oauth', () => {
+    const partialManager = new AuthenticationManager({ cache: {} as CacheManager });
+    expect(partialManager.getSupportedTypes()).not.toContain('oauth');
+    expect(partialManager.getSupportedTypes()).toHaveLength(3);
+  });
+
   it('注入 deps 的 manager 注册了 oauth', () => {
     expect(oauthManager.getSupportedTypes()).toContain('oauth');
   });
@@ -792,5 +926,96 @@ describe('defaultAuthManager', function () {
 
   it('应该包含默认注册的 3 个策略', function () {
     expect(defaultAuthManager.getSupportedTypes()).toHaveLength(3);
+  });
+});
+
+describe('日志输出', function () {
+  const savedLogTestVar = process.env['LOG_TEST_VAR'];
+  const savedLogMissingVar = process.env['LOG_MISSING_VAR'];
+
+  beforeEach(function () {
+    process.env['LOG_TEST_VAR'] = 'value';
+    delete process.env['LOG_MISSING_VAR'];
+  });
+
+  afterEach(function () {
+    if (savedLogTestVar === undefined) {
+      delete process.env['LOG_TEST_VAR'];
+    } else {
+      process.env['LOG_TEST_VAR'] = savedLogTestVar;
+    }
+    if (savedLogMissingVar === undefined) {
+      delete process.env['LOG_MISSING_VAR'];
+    } else {
+      process.env['LOG_MISSING_VAR'] = savedLogMissingVar;
+    }
+  });
+
+  it('构造管理器时应输出初始化日志并列出策略', function () {
+    const manager = new AuthenticationManager();
+    expect(manager.getSupportedTypes()).toHaveLength(3);
+
+    expect(loggerSpies.info).toHaveBeenCalledWith('认证管理器初始化完成', {
+      context: { strategies: ['bearer', 'apikey', 'basic'] },
+    });
+  });
+
+  it('注册自定义策略时应输出 debug 日志', function () {
+    const manager = new AuthenticationManager();
+    loggerSpies.debug.mockClear();
+    const customStrategy: AuthenticationStrategy = {
+      name: 'custom-x',
+      async applyAuth(request) {
+        return request;
+      },
+      async validateConfig() {
+        return { valid: true };
+      },
+    };
+
+    manager.registerStrategy(customStrategy);
+
+    expect(loggerSpies.debug).toHaveBeenCalledWith('注册认证策略: custom-x');
+  });
+
+  it('应用各策略时应输出对应的 debug 日志', async function () {
+    const request = createBaseRequest();
+    const manager = new AuthenticationManager();
+
+    loggerSpies.debug.mockClear();
+    await manager.applyAuthentication(request, { type: 'bearer', token: 't' });
+    expect(loggerSpies.debug).toHaveBeenCalledWith('应用Bearer Token认证');
+
+    loggerSpies.debug.mockClear();
+    await manager.applyAuthentication(request, { type: 'apikey', token: 'k' });
+    expect(loggerSpies.debug).toHaveBeenCalledWith('应用API Key认证: X-API-Key');
+
+    loggerSpies.debug.mockClear();
+    await manager.applyAuthentication(request, { type: 'basic', username: 'u', password: 'p' });
+    expect(loggerSpies.debug).toHaveBeenCalledWith('应用Basic认证: u');
+  });
+
+  it('解析与缺失环境变量时应输出对应日志', function () {
+    const manager = new AuthenticationManager();
+
+    loggerSpies.debug.mockClear();
+    const resolved = manager.resolveEnvironmentVariables({
+      type: 'bearer',
+      token: '{{env.LOG_TEST_VAR}}',
+    });
+    expect(resolved.token).toBe('value');
+    expect(loggerSpies.debug).toHaveBeenCalledWith('解析环境变量', {
+      context: { varName: 'LOG_TEST_VAR', hasValue: true },
+    });
+
+    loggerSpies.warn.mockClear();
+    const unresolved = manager.resolveEnvironmentVariables({
+      type: 'bearer',
+      token: '{{env.LOG_MISSING_VAR}}',
+    });
+    expect(unresolved.token).toBe('{{env.LOG_MISSING_VAR}}');
+    expect(loggerSpies.warn).toHaveBeenCalledWith('环境变量未定义', {
+      context: { varName: 'LOG_MISSING_VAR', originalValue: '{{env.LOG_MISSING_VAR}}' },
+    });
   });
 });

@@ -9,39 +9,48 @@ import {
 } from './normalized.js';
 
 describe('normalized model', () => {
-  it('normalizeInboundRequest 提取 method/params/meta/era', () => {
+  it('normalizeInboundRequest 提取 method/params/meta/era（浅拷贝键形态精确）', () => {
     const r = normalizeInboundRequest({
       method: 'tools/call',
       params: { name: 'foo', arguments: { x: 1 } },
       meta: { clientInfo: { name: 'c', version: '1' } },
       era: 'modern',
     });
-    expect(r.method).toBe('tools/call');
-    expect(r.era).toBe('modern');
-    expect((r.params as { name: string }).name).toBe('foo');
+    expect(r).toStrictEqual({
+      method: 'tools/call',
+      params: { name: 'foo', arguments: { x: 1 } },
+      meta: { clientInfo: { name: 'c', version: '1' } },
+      era: 'modern',
+    });
   });
 
-  it('okResult 包含 content', () => {
-    const r = okResult([{ type: 'text', text: 'hi' }]);
-    expect(r.kind).toBe('success');
+  it('okResult 默认 isError=false（成功结果键形态精确）', () => {
+    expect(okResult([{ type: 'text', text: 'hi' }])).toStrictEqual({
+      kind: 'success',
+      content: [{ type: 'text', text: 'hi' }],
+      isError: false,
+    });
   });
 
-  it('normalizeCall 组装 toolName/arguments/mrtr', () => {
-    const c = normalizeCall({ toolName: 'foo', arguments: { x: 1 } });
-    expect(c.toolName).toBe('foo');
-    expect((c.arguments as { x: number }).x).toBe(1);
-    expect(c.mrtr).toBeUndefined();
+  it('normalizeCall 组装 toolName/arguments，未提供 mrtr 时无 mrtr 键', () => {
+    expect(normalizeCall({ toolName: 'foo', arguments: { x: 1 } })).toStrictEqual({
+      toolName: 'foo',
+      arguments: { x: 1 },
+    });
   });
 
-  it('inputRequiredResult 携带 inputRequests', () => {
-    const r = inputRequiredResult({ key: {} });
-    expect(r.kind).toBe('input_required');
-    expect(r.mrtr).toBeDefined();
+  it('inputRequiredResult 携带 inputRequests，mrtr 默认空对象', () => {
+    expect(inputRequiredResult({ key: {} })).toStrictEqual({
+      kind: 'input_required',
+      inputRequests: { key: {} },
+      mrtr: {},
+    });
   });
 
-  it('errorResult 携带归一化错误', () => {
-    const r = errorResult({ code: -32603, message: 'boom' });
-    expect(r.kind).toBe('error');
-    expect(r.error.code).toBe(-32603);
+  it('errorResult 携带归一化错误（code/message 逐字段）', () => {
+    expect(errorResult({ code: -32603, message: 'boom' })).toStrictEqual({
+      kind: 'error',
+      error: { code: -32603, message: 'boom' },
+    });
   });
 });

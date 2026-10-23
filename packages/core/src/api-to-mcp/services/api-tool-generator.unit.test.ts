@@ -2,7 +2,7 @@
  * API工具生成器测试
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiToolGenerator } from './api-tool-generator.js';
 
@@ -10,13 +10,15 @@ import type { ApiToolConfig, JsonSchema, JsonSchemaProperty } from '../types/api
 import type { McpTool, ValidationResult } from '../types/api-tool.js';
 
 // Mock logger
+const loggerMocks = vi.hoisted(() => ({
+  info: vi.fn(),
+  debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock('../../utils/logger.js', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: () => loggerMocks,
 }));
 
 /**
@@ -61,6 +63,10 @@ describe('ApiToolGenerator', () => {
 
   beforeEach(() => {
     generator = new ApiToolGenerator();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
   });
 
   // ========================================================
@@ -546,19 +552,6 @@ describe('ApiToolGenerator', () => {
 
     it('Invalid name format (special chars) fails', () => {
       const tool = createBaseMcpTool({ name: 'invalid tool name!' });
-
-      const result = generator.validateGeneratedTool(tool);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual({
-        path: 'name',
-        message: '工具名称只能包含字母、数字、下划线和连字符',
-        code: 'INVALID_TOOL_NAME_FORMAT',
-      });
-    });
-
-    it('Name with spaces fails format validation', () => {
-      const tool = createBaseMcpTool({ name: 'has space' });
 
       const result = generator.validateGeneratedTool(tool);
 
@@ -1181,6 +1174,317 @@ describe('ApiToolGenerator', () => {
 
       // Original should not be affected
       expect(originalProp.enum).toEqual(['a', 'b']);
+    });
+  });
+
+  // ========================================================
+  // 补强：schema 转换边界与默认值
+  // ========================================================
+  describe('schema 转换边界', () => {
+    it('parameters 无 properties 字段 → 输出空 properties，不报错', () => {
+      const apiConfig = createBaseConfig({
+        parameters: { type: 'object' },
+      });
+
+      const mcpTool = generator.generateMcpTool(apiConfig);
+
+      expect(mcpTool.inputSchema.properties).toEqual({});
+      expect(mcpTool.inputSchema.required).toBeUndefined();
+    });
+
+    it('required 为空数组 → 不设置 required 字段', () => {
+      const apiConfig = createBaseConfig({
+        parameters: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          required: [],
+        },
+      });
+
+      const mcpTool = generator.generateMcpTool(apiConfig);
+
+      expect(mcpTool.inputSchema.required).toBeUndefined();
+    });
+
+    it('极简属性只保留 type，不引入未定义的可选字段', () => {
+      const apiConfig = createBaseConfig({
+        parameters: {
+          type: 'object',
+          properties: {
+            bare: { type: 'string' },
+          },
+        },
+      });
+
+      const mcpTool = generator.generateMcpTool(apiConfig);
+
+      expect(mcpTool.inputSchema.properties?.bare).toStrictEqual({ type: 'string' });
+    });
+
+    it('非 array/object 类型的属性不吞并 items/properties/required/additionalProperties', () => {
+      const apiConfig = createBaseConfig({
+        parameters: {
+          type: 'object',
+          properties: {
+            mixed: {
+              type: 'string',
+              items: { type: 'number' },
+              properties: { inner: { type: 'number' } },
+              required: ['inner'],
+              additionalProperties: true,
+            },
+          },
+        },
+      });
+
+      const mcpTool = generator.generateMcpTool(apiConfig);
+
+      expect(mcpTool.inputSchema.properties?.mixed).toStrictEqual({ type: 'string' });
+    });
+
+    it('描述按固定格式拼接 API 信息块', () => {
+      const apiConfig = createBaseConfig();
+
+      const mcpTool = generator.generateMcpTool(apiConfig);
+
+      expect(mcpTool.description).toBe(
+        '基础测试工具描述\n\nAPI端点: GET https://api.example.com/test',
+      );
+    });
+
+    it('生成成功日志记录 hasParameters 标志（有/无参数两种情况）', () => {
+      generator.generateMcpTool(createBaseConfig());
+      expect(loggerMocks.debug).toHaveBeenCalledWith('MCP工具定义生成成功', {
+        context: {
+          toolId: 'test-tool',
+          toolName: 'test-tool',
+          hasParameters: false,
+        },
+      });
+
+      vi.clearAllMocks();
+      generator.generateMcpTool(
+        createBaseConfig({
+          parameters: {
+            type: 'object',
+            properties: { q: { type: 'string' } },
+          },
+        }),
+      );
+      expect(loggerMocks.debug).toHaveBeenCalledWith('MCP工具定义生成成功', {
+        context: {
+          toolId: 'test-tool',
+          toolName: 'test-tool',
+          hasParameters: true,
+        },
+      });
+    });
+  });
+
+  // ========================================================
+  // 补强：validateGeneratedTool 类型与边界
+  // ========================================================
+  describe('validateGeneratedTool 边界', () => {
+    it('name 为非字符串（数字）→ 返回校验错误而非抛 TypeError', () => {
+      const tool = createBaseMcpTool({ name: 123 as unknown as string });
+
+      const result = generator.validateGeneratedTool(tool);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        path: 'name',
+        message: '工具名称不能为空',
+        code: 'INVALID_TOOL_NAME',
+      });
+    });
+
+    it('description 为非字符串 → 返回校验错误', () => {
+      const tool = createBaseMcpTool({ description: 42 as unknown as string });
+
+      const result = generator.validateGeneratedTool(tool);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        path: 'description',
+        message: '工具描述不能为空',
+        code: 'INVALID_TOOL_DESCRIPTION',
+      });
+    });
+
+    it('所有合法属性类型均通过校验', () => {
+      const tool = createBaseMcpTool({
+        inputSchema: {
+          type: 'object',
+          properties: {
+            s: { type: 'string' },
+            n: { type: 'number' },
+            b: { type: 'boolean' },
+            o: { type: 'object' },
+            a: { type: 'array' },
+            x: { type: 'null' },
+          },
+          additionalProperties: false,
+        },
+      });
+
+      const result = generator.validateGeneratedTool(tool);
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('required 引用的字段缺失且 properties 未定义 → 报缺失而非抛错', () => {
+      const tool = createBaseMcpTool({
+        inputSchema: {
+          type: 'object',
+          required: ['field'],
+        } as McpTool['inputSchema'],
+      });
+
+      const result = generator.validateGeneratedTool(tool);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual({
+        path: 'inputSchema.required',
+        message: "必需字段 'field' 在properties中未定义",
+        code: 'MISSING_REQUIRED_PROPERTY',
+      });
+    });
+
+    it('number 边界：minimum === maximum 合法', () => {
+      const result = generator.validateGeneratedTool(
+        createBaseMcpTool({
+          inputSchema: {
+            type: 'object',
+            properties: { count: { type: 'number', minimum: 10, maximum: 10 } },
+            additionalProperties: false,
+          },
+        }),
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it('string 边界：minLength === maxLength 合法', () => {
+      const result = generator.validateGeneratedTool(
+        createBaseMcpTool({
+          inputSchema: {
+            type: 'object',
+            properties: { code: { type: 'string', minLength: 4, maxLength: 4 } },
+            additionalProperties: false,
+          },
+        }),
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it('array 边界：minItems === maxItems 合法', () => {
+      const result = generator.validateGeneratedTool(
+        createBaseMcpTool({
+          inputSchema: {
+            type: 'object',
+            properties: { tags: { type: 'array', minItems: 2, maxItems: 2 } },
+            additionalProperties: false,
+          },
+        }),
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it('约束不跨类型误报：非 number 属性带数值范围仍合法', () => {
+      const result = generator.validateGeneratedTool(
+        createBaseMcpTool({
+          inputSchema: {
+            type: 'object',
+            properties: {
+              s: { type: 'string', minimum: 100, maximum: 1 },
+              b: { type: 'boolean', minLength: 100, maxLength: 1 },
+              o: { type: 'object', minItems: 100, maxItems: 1 },
+            },
+            additionalProperties: false,
+          },
+        }),
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it('非 array 属性不递归校验 items；非 object 属性不递归校验子 properties', () => {
+      const result = generator.validateGeneratedTool(
+        createBaseMcpTool({
+          inputSchema: {
+            type: 'object',
+            properties: {
+              s1: { type: 'string', items: { type: 'not-a-type' } },
+              s2: { type: 'string', properties: { bad: { type: 'not-a-type' } } },
+            },
+            additionalProperties: false,
+          },
+        }),
+      );
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+  });
+
+  // ========================================================
+  // 补强：generateAllTools 日志与错误收集
+  // ========================================================
+  describe('generateAllTools 日志与错误收集', () => {
+    it('全部成功 → 记录批量开始/完成日志，不触发失败告警', () => {
+      const configs = [
+        createBaseConfig({ id: 'a', description: 'A' }),
+        createBaseConfig({ id: 'b', description: 'B' }),
+      ];
+
+      const tools = generator.generateAllTools(configs);
+
+      expect(tools).toHaveLength(2);
+      expect(loggerMocks.info).toHaveBeenCalledWith('批量生成MCP工具', {
+        context: { configCount: 2 },
+      });
+      expect(loggerMocks.info).toHaveBeenCalledWith('批量工具生成完成', {
+        context: { successCount: 2, errorCount: 0, totalCount: 2 },
+      });
+      expect(loggerMocks.warn).not.toHaveBeenCalled();
+    });
+
+    it('部分验证失败 → warn 错误明细包含具体校验消息', () => {
+      const configs = [
+        createBaseConfig({ id: 'bad name!', description: '无效名称' }),
+        createBaseConfig({ id: 'good-tool', description: '有效' }),
+      ];
+
+      const tools = generator.generateAllTools(configs);
+
+      expect(tools).toHaveLength(1);
+      expect(loggerMocks.warn).toHaveBeenCalledWith('部分工具生成失败', {
+        context: {
+          errors: [
+            {
+              configId: 'bad name!',
+              error: expect.stringContaining('工具名称只能包含字母、数字、下划线和连字符'),
+            },
+          ],
+        },
+      });
+    });
+
+    it('生成阶段抛错的配置 → 错误记入明细，不中断批次', () => {
+      const throwingSchema: JsonSchema = {
+        type: 'object',
+        get properties(): Record<string, JsonSchemaProperty> {
+          throw new Error('Schema error');
+        },
+      };
+      const configs = [createBaseConfig({ id: 'throwing-tool', parameters: throwingSchema })];
+
+      const tools = generator.generateAllTools(configs);
+
+      expect(tools).toHaveLength(0);
+      expect(loggerMocks.warn).toHaveBeenCalledWith('部分工具生成失败', {
+        context: {
+          errors: [{ configId: 'throwing-tool', error: expect.stringContaining('Schema error') }],
+        },
+      });
     });
   });
 });

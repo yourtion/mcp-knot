@@ -548,10 +548,425 @@ describe('Group Store', () => {
       lastUpdated: '2024-01-01T00:00:00.000Z',
     });
 
-    expect(groupStore.groupList).toHaveLength(2);
-    expect(groupStore.healthyGroups).toHaveLength(1);
+    groupStore.groups.set('group3', {
+      id: 'group3',
+      name: 'Group 3',
+      description: '',
+      servers: ['server3'],
+      serverCount: 1,
+      connectedServers: 1,
+      toolCount: 2,
+      filteredToolCount: 1,
+      tools: ['tool-x'],
+      toolFilterMode: 'whitelist',
+      isHealthy: true,
+      healthScore: 80,
+      validation: { enabled: false, hasKey: false },
+      stats: {
+        totalServers: 1,
+        availableServers: 1,
+        totalTools: 2,
+        filteredTools: 1,
+        healthPercentage: 80,
+      },
+      lastUpdated: '2024-01-01T00:00:00.000Z',
+    });
+
+    // 数量刻意不对称，确保过滤条件本身被验证
+    expect(groupStore.groupList).toHaveLength(3);
+    expect(groupStore.healthyGroups).toHaveLength(2);
     expect(groupStore.unhealthyGroups).toHaveLength(1);
+    expect(groupStore.unhealthyGroups[0].id).toBe('group2');
     expect(groupStore.groupsWithValidation).toHaveLength(1);
-    expect(groupStore.groupsWithToolFilter).toHaveLength(1);
+    expect(groupStore.groupsWithValidation[0].id).toBe('group2');
+    expect(groupStore.groupsWithToolFilter).toHaveLength(2);
+    expect(groupStore.groupsWithToolFilter.map((g) => g.id)).toEqual(['group1', 'group3']);
+  });
+
+  describe('补充行为覆盖', () => {
+    const makeGroupInfo = (id: string): GroupInfo => ({
+      id,
+      name: `组 ${id}`,
+      description: '',
+      servers: [],
+      serverCount: 0,
+      connectedServers: 0,
+      toolCount: 0,
+      filteredToolCount: 0,
+      tools: [],
+      toolFilterMode: 'none',
+      isHealthy: true,
+      healthScore: 100,
+      validation: { enabled: false, hasKey: false },
+      stats: {
+        totalServers: 0,
+        availableServers: 0,
+        totalTools: 0,
+        filteredTools: 0,
+        healthPercentage: 100,
+      },
+      lastUpdated: '2024-01-01T00:00:00.000Z',
+    });
+
+    it('fetchGroups 时 summary 统计字段全部更新', async () => {
+      mockGroupService.getGroups.mockResolvedValue({
+        groups: [],
+        totalGroups: 7,
+        healthyGroups: 5,
+        unhealthyGroups: 2,
+        totalServers: 11,
+        connectedServers: 9,
+        totalTools: 40,
+        filteredTools: 30,
+        averageHealthScore: 71,
+        groupsWithValidation: 3,
+        groupsWithToolFilter: 4,
+        summary: { status: 'partial', issues: [] },
+        timestamp: '2024-01-01T00:00:00.000Z',
+      });
+
+      const groupStore = useGroupStore();
+      await groupStore.fetchGroups();
+
+      expect(groupStore.summary).toMatchObject({
+        totalGroups: 7,
+        healthyGroups: 5,
+        unhealthyGroups: 2,
+        totalServers: 11,
+        connectedServers: 9,
+        totalTools: 40,
+        filteredTools: 30,
+        averageHealthScore: 71,
+        groupsWithValidation: 3,
+        groupsWithToolFilter: 4,
+        summaryStatus: 'partial',
+        issues: [],
+      });
+    });
+
+    it('fetchGroups 响应缺少 unhealthyGroups 时按差值计算', async () => {
+      mockGroupService.getGroups.mockResolvedValue({
+        groups: [],
+        totalGroups: 10,
+        healthyGroups: 7,
+        totalServers: 0,
+        connectedServers: 0,
+        totalTools: 0,
+        filteredTools: 0,
+        averageHealthScore: 0,
+        groupsWithValidation: 0,
+        groupsWithToolFilter: 0,
+        summary: { status: 'healthy', issues: [] },
+        timestamp: '2024-01-01T00:00:00.000Z',
+      });
+
+      const groupStore = useGroupStore();
+      await groupStore.fetchGroups();
+
+      expect(groupStore.summary.unhealthyGroups).toBe(3);
+    });
+
+    it('fetchGroups 失败时非 Error 对象使用默认错误消息', async () => {
+      mockGroupService.getGroups.mockRejectedValue('boom');
+
+      const groupStore = useGroupStore();
+      await groupStore.fetchGroups();
+
+      expect(groupStore.error).toBe('获取组列表失败');
+    });
+
+    it('fetchGroups 请求期间处于加载状态', async () => {
+      let resolveFn!: (value: unknown) => void;
+      mockGroupService.getGroups.mockImplementation(
+        () => new Promise((resolve) => (resolveFn = resolve)),
+      );
+
+      const groupStore = useGroupStore();
+      const pending = groupStore.fetchGroups();
+
+      expect(groupStore.loading).toBe(true);
+
+      resolveFn({
+        groups: [],
+        totalGroups: 0,
+        healthyGroups: 0,
+        totalServers: 0,
+        connectedServers: 0,
+        totalTools: 0,
+        filteredTools: 0,
+        averageHealthScore: 0,
+        groupsWithValidation: 0,
+        groupsWithToolFilter: 0,
+        summary: { status: 'healthy', issues: [] },
+      });
+      await pending;
+    });
+
+    it('fetchGroup 成功时返回组详情且不覆盖列表缓存', async () => {
+      const detail = { ...makeGroupInfo('g1'), name: '详情' };
+      mockGroupService.getGroup.mockResolvedValue(detail);
+
+      const groupStore = useGroupStore();
+      const result = await groupStore.fetchGroup('g1');
+
+      expect(result).toBe(detail);
+      // 新契约：详情不写入 groups——详情含服务器/工具对象，写入会覆盖
+      // 列表中编辑表单依赖的 ID 与工具白名单
+      expect(groupStore.groups.get('g1')).toBeUndefined();
+    });
+
+    it('fetchGroup 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.getGroup.mockRejectedValue(null);
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.fetchGroup('g1')).rejects.toBeNull();
+
+      expect(groupStore.error).toBe('获取组信息失败');
+    });
+
+    it('updateGroup 会合并本地已有组信息', async () => {
+      const groupStore = useGroupStore();
+      groupStore.groups.set('g1', makeGroupInfo('g1'));
+
+      mockGroupService.updateGroup.mockResolvedValue({
+        success: true,
+        data: { name: '新名称', description: '新描述' },
+        timestamp: '2024-01-01T00:00:00.000Z',
+      });
+      // 让后续的 fetchGroups 失败，避免列表刷新覆盖本地合并结果
+      mockGroupService.getGroups.mockRejectedValue(new Error('refresh failed'));
+
+      await expect(groupStore.updateGroup('g1', { name: '新名称' })).resolves.toBeDefined();
+
+      const merged = groupStore.groups.get('g1') as {
+        name: string;
+        description: string;
+        id: string;
+      };
+      expect(merged.name).toBe('新名称');
+      expect(merged.description).toBe('新描述');
+      expect(merged.id).toBe('g1');
+    });
+
+    it('updateGroup 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.updateGroup.mockRejectedValue('x');
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.updateGroup('g1', {})).rejects.toBe('x');
+
+      expect(groupStore.error).toBe('更新组失败');
+    });
+
+    it('deleteGroup 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.deleteGroup.mockRejectedValue(1);
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.deleteGroup('g1')).rejects.toBe(1);
+
+      expect(groupStore.error).toBe('删除组失败');
+    });
+
+    it.each([
+      ['getGroupHealth', '获取组健康状态失败'],
+      ['getGroupTools', '获取组工具列表失败'],
+      ['getGroupServers', '获取组服务器列表失败'],
+      ['getGroupAvailableTools', '获取组可用工具失败'],
+      ['getGroupValidationKeyStatus', '获取组验证密钥状态失败'],
+      ['validateGroupKey', '验证组密钥失败'],
+    ] as const)('%s 失败时记录默认错误消息并抛出', async (method, message) => {
+      mockGroupService[method].mockRejectedValue(undefined);
+
+      const groupStore = useGroupStore();
+      const action =
+        method === 'validateGroupKey'
+          ? groupStore.validateGroupKey('g1', { validationKey: 'k' })
+          : groupStore[method]('g1');
+
+      await expect(action).rejects.toBeUndefined();
+      expect(groupStore.error).toBe(message);
+    });
+
+    it('getGroupHealth 等只读接口直接透传结果', async () => {
+      const tools = { tools: [] };
+      const servers = { servers: [] };
+      mockGroupService.getGroupTools.mockResolvedValue(tools);
+      mockGroupService.getGroupServers.mockResolvedValue(servers);
+
+      const groupStore = useGroupStore();
+
+      await expect(groupStore.getGroupTools('g1')).resolves.toBe(tools);
+      await expect(groupStore.getGroupServers('g1')).resolves.toBe(servers);
+      expect(mockGroupService.getGroupTools).toHaveBeenCalledWith('g1');
+      expect(mockGroupService.getGroupServers).toHaveBeenCalledWith('g1');
+    });
+
+    it('validateGroupToolAccess 以工具名调用服务', async () => {
+      const response = { allowed: true, reason: '' };
+      mockGroupService.validateGroupToolAccess.mockResolvedValue(response);
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.validateGroupToolAccess('g1', 'tool-x')).resolves.toBe(response);
+
+      expect(mockGroupService.validateGroupToolAccess).toHaveBeenCalledWith('g1', {
+        toolName: 'tool-x',
+      });
+    });
+
+    it('validateGroupToolAccess 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.validateGroupToolAccess.mockRejectedValue('denied');
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.validateGroupToolAccess('g1', 'tool-x')).rejects.toBe('denied');
+
+      expect(groupStore.error).toBe('验证工具访问权限失败');
+    });
+
+    it('configureGroupTools 更新本地工具白名单', async () => {
+      const groupStore = useGroupStore();
+      groupStore.groups.set('g1', makeGroupInfo('g1'));
+
+      mockGroupService.configureGroupTools.mockResolvedValue({
+        success: true,
+        timestamp: '2024-01-01T00:00:00.000Z',
+      });
+
+      await groupStore.configureGroupTools('g1', { tools: ['tool-a', 'tool-b'] });
+
+      const group = groupStore.groups.get('g1') as { tools: string[]; toolFilterMode: string };
+      expect(group.tools).toEqual(['tool-a', 'tool-b']);
+      expect(group.toolFilterMode).toBe('whitelist');
+      expect(mockGroupService.configureGroupTools).toHaveBeenCalledWith('g1', {
+        tools: ['tool-a', 'tool-b'],
+      });
+    });
+
+    it('configureGroupTools 清空工具时过滤模式回到 none', async () => {
+      const groupStore = useGroupStore();
+      groupStore.groups.set('g1', makeGroupInfo('g1'));
+
+      mockGroupService.configureGroupTools.mockResolvedValue({
+        success: true,
+        timestamp: '2024-01-01T00:00:00.000Z',
+      });
+
+      await groupStore.configureGroupTools('g1', { tools: [] });
+
+      const group = groupStore.groups.get('g1') as { tools: string[]; toolFilterMode: string };
+      expect(group.tools).toEqual([]);
+      expect(group.toolFilterMode).toBe('none');
+    });
+
+    it('configureGroupTools 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.configureGroupTools.mockRejectedValue('bad');
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.configureGroupTools('g1', { tools: [] })).rejects.toBe('bad');
+
+      expect(groupStore.error).toBe('配置组工具过滤失败');
+    });
+
+    it('setGroupValidationKey 更新本地验证状态', async () => {
+      const groupStore = useGroupStore();
+      groupStore.groups.set('g1', makeGroupInfo('g1'));
+
+      mockGroupService.setGroupValidationKey.mockResolvedValue({
+        success: true,
+        data: {
+          groupId: 'g1',
+          validation: {
+            enabled: true,
+            hasKey: true,
+            lastUpdated: '2024-02-01T00:00:00.000Z',
+          },
+        },
+        timestamp: '2024-02-01T00:00:00.000Z',
+      });
+
+      const response = await groupStore.setGroupValidationKey('g1', {
+        validationKey: 'k',
+        enabled: true,
+      });
+
+      expect(response.data.validation.enabled).toBe(true);
+      const group = groupStore.groups.get('g1') as { validation: Record<string, unknown> };
+      expect(group.validation).toMatchObject({
+        enabled: true,
+        hasKey: true,
+        lastUpdated: '2024-02-01T00:00:00.000Z',
+      });
+    });
+
+    it('setGroupValidationKey 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.setGroupValidationKey.mockRejectedValue('k');
+
+      const groupStore = useGroupStore();
+      await expect(
+        groupStore.setGroupValidationKey('g1', { validationKey: 'k', enabled: true }),
+      ).rejects.toBe('k');
+
+      expect(groupStore.error).toBe('设置组验证密钥失败');
+    });
+
+    it('generateGroupValidationKey 更新本地验证状态', async () => {
+      const groupStore = useGroupStore();
+      groupStore.groups.set('g1', makeGroupInfo('g1'));
+
+      mockGroupService.generateGroupValidationKey.mockResolvedValue({
+        success: true,
+        data: {
+          groupId: 'g1',
+          validationKey: 'new-key',
+          validation: {
+            enabled: true,
+            hasKey: true,
+            lastUpdated: '2024-03-01T00:00:00.000Z',
+          },
+        },
+        timestamp: '2024-03-01T00:00:00.000Z',
+      });
+
+      await groupStore.generateGroupValidationKey('g1');
+
+      const group = groupStore.groups.get('g1') as { validation: Record<string, unknown> };
+      expect(group.validation).toMatchObject({
+        enabled: true,
+        hasKey: true,
+        lastUpdated: '2024-03-01T00:00:00.000Z',
+      });
+    });
+
+    it('generateGroupValidationKey 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.generateGroupValidationKey.mockRejectedValue(false);
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.generateGroupValidationKey('g1')).rejects.toBe(false);
+
+      expect(groupStore.error).toBe('生成组验证密钥失败');
+    });
+
+    it('deleteGroupValidationKey 重置本地验证状态', async () => {
+      const groupStore = useGroupStore();
+      const groupInfo = makeGroupInfo('g1');
+      groupInfo.validation = { enabled: true, hasKey: true };
+      groupStore.groups.set('g1', groupInfo);
+
+      mockGroupService.deleteGroupValidationKey.mockResolvedValue({
+        success: true,
+        timestamp: '2024-04-01T00:00:00.000Z',
+      });
+
+      await groupStore.deleteGroupValidationKey('g1');
+
+      expect(groupStore.groups.get('g1')?.validation).toEqual({ enabled: false, hasKey: false });
+    });
+
+    it('deleteGroupValidationKey 失败时记录默认错误消息并抛出', async () => {
+      mockGroupService.deleteGroupValidationKey.mockRejectedValue('nope');
+
+      const groupStore = useGroupStore();
+      await expect(groupStore.deleteGroupValidationKey('g1')).rejects.toBe('nope');
+
+      expect(groupStore.error).toBe('删除组验证密钥失败');
+    });
   });
 });

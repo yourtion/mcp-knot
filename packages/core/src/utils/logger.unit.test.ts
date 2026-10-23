@@ -1,274 +1,295 @@
 /**
- * 日志系统测试
+ * Core 包日志系统测试
+ * 覆盖 utils/logger.ts 的 StructuredLogger 与本地封装
  */
-
-// 移除未使用的导入
-import {
-  ConsoleWriter,
-  createLogger,
-  JsonFormatter,
-  type LoggerConfig,
-  LogLevel,
-  McpLogger,
-  TextFormatter,
-  UnifiedLogger,
-} from '@mcp-core/mcp-knot-share';
+import { EnvironmentDetector, LogLevel } from '@mcp-core/mcp-knot-share';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock fs promises
-vi.mock('node:fs', async () => {
-  const actual = await vi.importActual('node:fs');
-  return {
-    ...actual,
-    promises: {
-      mkdir: vi.fn(),
-      stat: vi.fn(),
-      open: vi.fn(),
-      access: vi.fn(),
-      rename: vi.fn(),
-    },
-  };
-});
+import {
+  createLogger,
+  DEFAULT_LOGGER_CONFIG,
+  logger as moduleLogger,
+  StructuredLogger,
+  type LoggerConfig,
+} from './logger.js';
 
-describe('JsonFormatter', () => {
-  it('应该正确格式化日志条目为JSON', () => {
-    const formatter = new JsonFormatter();
-    const entry: LogEntry = {
-      timestamp: '2024-01-01T00:00:00.000Z',
-      level: LogLevel.INFO,
-      levelName: 'INFO',
-      message: '测试消息',
-      component: 'TestComponent',
-      operation: 'testOperation',
-      serverId: 'server1',
-      metadata: { key: 'value' },
-    };
-
-    const result = formatter.format(entry);
-    const parsed = JSON.parse(result);
-
-    expect(parsed.timestamp).toBe('2024-01-01T00:00:00.000Z');
-    expect(parsed.level).toBe(LogLevel.INFO);
-    expect(parsed.message).toBe('测试消息');
-    expect(parsed.component).toBe('TestComponent');
-    expect(parsed.serverId).toBe('server1');
-    expect(parsed.metadata).toEqual({ key: 'value' });
+/** 构造输出到控制台（文本格式、无颜色/时间戳）的记录器 */
+function makeLogger(config: Partial<LoggerConfig> = {}): StructuredLogger {
+  return new StructuredLogger({
+    level: LogLevel.DEBUG,
+    enableConsole: true,
+    enableFile: false,
+    format: 'text',
+    enableColors: false,
+    enableTimestamp: false,
+    ...config,
   });
-});
+}
 
-describe('TextFormatter', () => {
-  it('应该正确格式化日志条目为文本', () => {
-    const formatter = new TextFormatter(false); // 禁用颜色
-    const entry: LogEntry = {
-      timestamp: '2024-01-01T00:00:00.000Z',
-      level: LogLevel.INFO,
-      levelName: 'INFO',
-      message: '测试消息',
-      component: 'TestComponent',
-      operation: 'testOperation',
-      serverId: 'server1',
-    };
-
-    const result = formatter.format(entry);
-
-    expect(result).toContain('2024-01-01T00:00:00.000Z');
-    expect(result).toContain('INFO');
-    expect(result).toContain('[TestComponent]');
-    expect(result).toContain('testOperation');
-    expect(result).toContain('测试消息');
-    expect(result).toContain('server:server1');
-  });
-
-  it('应该正确格式化包含错误的日志条目', () => {
-    const formatter = new TextFormatter(false);
-    const entry: LogEntry = {
-      timestamp: '2024-01-01T00:00:00.000Z',
-      level: LogLevel.ERROR,
-      levelName: 'ERROR',
-      message: '操作失败',
-      component: 'TestComponent',
-      error: {
-        name: 'TestError',
-        message: '测试错误',
-        stack: 'Error stack trace',
-      },
-    };
-
-    const result = formatter.format(entry);
-
-    expect(result).toContain('操作失败');
-    expect(result).toContain('测试错误');
-  });
-
-  it('应该正确格式化包含持续时间的日志条目', () => {
-    const formatter = new TextFormatter(false);
-    const entry: LogEntry = {
-      timestamp: '2024-01-01T00:00:00.000Z',
-      level: LogLevel.INFO,
-      levelName: 'INFO',
-      message: '操作完成',
-      component: 'TestComponent',
-      duration: 1500,
-    };
-
-    const result = formatter.format(entry);
-
-    expect(result).toContain('操作完成');
-    expect(result).toContain('(1500ms)');
-  });
-});
-
-describe('ConsoleWriter', () => {
-  it('应该写入到控制台', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const writer = new ConsoleWriter();
-
-    await writer.write('测试日志消息');
-
-    expect(consoleSpy).toHaveBeenCalledWith('测试日志消息');
-    consoleSpy.mockRestore();
-  });
-});
-
-// FileWriter 测试已移除，因为该类现在在共享包中
-
-describe('UnifiedLogger', () => {
-  let logger: UnifiedLogger;
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    logger = new UnifiedLogger({
-      level: LogLevel.DEBUG,
-      enableConsole: true,
+describe('DEFAULT_LOGGER_CONFIG', () => {
+  it('默认配置值正确', () => {
+    expect(DEFAULT_LOGGER_CONFIG).toEqual({
+      level: EnvironmentDetector.getEnvironmentLogLevel(LogLevel.INFO),
+      enableConsole: EnvironmentDetector.getEnvironmentConsoleEnabled(true),
       enableFile: false,
-      format: 'text',
-      enableColors: false,
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.mockRestore();
-  });
-
-  it('应该记录不同级别的日志', () => {
-    logger.debug('调试消息');
-    logger.info('信息消息');
-    logger.warn('警告消息');
-    logger.error('错误消息');
-
-    expect(consoleSpy).toHaveBeenCalledTimes(4);
-  });
-
-  it('应该根据日志级别过滤消息', () => {
-    logger.setLevel(LogLevel.WARN);
-
-    logger.debug('调试消息');
-    logger.info('信息消息');
-    logger.warn('警告消息');
-    logger.error('错误消息');
-
-    expect(consoleSpy).toHaveBeenCalledTimes(2); // 只有 WARN 和 ERROR
-  });
-
-  it('应该正确记录带上下文的日志', () => {
-    logger.info('测试消息', {
-      component: 'TestComponent',
-      serverId: 'server1',
-      metadata: { key: 'value' },
-    });
-
-    expect(consoleSpy).toHaveBeenCalled();
-    const logMessage = consoleSpy.mock.calls[0][0];
-    expect(logMessage).toContain('TestComponent');
-    expect(logMessage).toContain('server:server1');
-  });
-
-  it('应该正确记录错误信息', () => {
-    const error = new Error('测试错误');
-    logger.error('操作失败', error, { component: 'TestComponent' });
-
-    expect(consoleSpy).toHaveBeenCalled();
-    const logMessage = consoleSpy.mock.calls[0][0];
-    expect(logMessage).toContain('操作失败');
-    expect(logMessage).toContain('测试错误');
-  });
-
-  // 这些方法在 McpLogger 中，需要单独测试
-});
-
-describe('McpLogger', () => {
-  let mcpLogger: McpLogger;
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mcpLogger = new McpLogger({
-      level: LogLevel.DEBUG,
-      enableConsole: true,
-      enableFile: false,
-      format: 'text',
-      enableColors: false,
-      enableTimestamp: false,
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.mockRestore();
-  });
-
-  it('应该正确记录服务器连接事件', () => {
-    mcpLogger.logServerConnection('server1', 'connected');
-    mcpLogger.logServerConnection('server2', 'failed');
-
-    expect(consoleSpy).toHaveBeenCalledTimes(2);
-    expect(consoleSpy.mock.calls[0][0]).toContain('Server connected');
-    expect(consoleSpy.mock.calls[1][0]).toContain('Server failed');
-  });
-
-  it('应该正确记录工具发现事件', () => {
-    mcpLogger.logToolDiscovery('server1', 5);
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Discovered 5 tools'));
-  });
-
-  it('应该正确记录工具执行事件', () => {
-    mcpLogger.logToolExecution('testTool', 'group1', 'started');
-    mcpLogger.logToolExecution('testTool', 'group1', 'failed');
-
-    expect(consoleSpy).toHaveBeenCalledTimes(2);
-    expect(consoleSpy.mock.calls[0][0]).toContain('Tool execution started');
-    expect(consoleSpy.mock.calls[1][0]).toContain('Tool execution failed');
-  });
-
-  it('应该正确记录配置重载事件', () => {
-    mcpLogger.logConfigReload(['server1', 'server2']);
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Configuration reloaded with changes: server1, server2'),
-    );
-  });
-});
-
-describe('createLogger', () => {
-  it('应该使用默认配置创建日志记录器', () => {
-    const logger = createLogger();
-
-    expect(logger).toBeInstanceOf(UnifiedLogger);
-    // 在测试环境中，默认日志级别是 WARN
-    expect(logger.getLevel()).toBe(LogLevel.WARN);
-  });
-
-  it('应该使用自定义配置创建日志记录器', () => {
-    const config: Partial<LoggerConfig> = {
-      level: LogLevel.DEBUG,
+      maxFileSize: 10 * 1024 * 1024,
+      maxFiles: 5,
+      enableRotation: true,
       format: 'json',
-      enableColors: false,
-    };
+      enableColors: true,
+      enableTimestamp: true,
+    });
+    // 具体数值断言，防止算术表达式被改写
+    expect(DEFAULT_LOGGER_CONFIG.maxFileSize).toBe(10_485_760);
+  });
+});
 
-    const logger = createLogger(config);
+describe('StructuredLogger', () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
 
-    expect(logger).toBeInstanceOf(UnifiedLogger);
-    expect(logger.getLevel()).toBe(LogLevel.DEBUG);
+  beforeEach(() => {
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it('未指定 component 时默认使用 Core', () => {
+    makeLogger().info('hello');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[Core]'));
+  });
+
+  it('指定 component 时使用传入的组件名', () => {
+    makeLogger({ component: 'CustomComponent' }).info('hello');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[CustomComponent]'));
+  });
+
+  it.each([
+    ['debug', '调试消息', 'DEBUG'],
+    ['info', '信息消息', 'INFO'],
+    ['warn', '警告消息', 'WARN'],
+  ] as const)('%s 级别日志输出消息与级别名', (method, message, levelName) => {
+    makeLogger()[method](message);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining(levelName));
+  });
+
+  it('error 级别日志包含错误对象信息', () => {
+    makeLogger().error('操作失败', new Error('具体错误原因'));
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('操作失败'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('具体错误原因'));
+  });
+
+  it('fatal 级别日志正常输出', () => {
+    makeLogger().fatal('致命错误', new Error('崩溃'));
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('致命错误'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('FATAL'));
+  });
+
+  it('getLevel 返回构造时的级别，setLevel 运行时可调整过滤', () => {
+    const log = makeLogger({ level: LogLevel.WARN });
+
+    expect(log.getLevel()).toBe(LogLevel.WARN);
+
+    log.info('不应输出');
+    expect(consoleSpy).not.toHaveBeenCalled();
+
+    log.setLevel(LogLevel.DEBUG);
+    log.info('应该输出');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('应该输出'));
+  });
+
+  describe('logServerConnection', () => {
+    it('connected/disconnected 记录 INFO 级别消息', () => {
+      const log = makeLogger({ level: LogLevel.INFO });
+
+      log.logServerConnection('srv-1', 'connected');
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Server srv-1 connected'));
+
+      log.logServerConnection('srv-1', 'disconnected');
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Server srv-1 disconnected'));
+    });
+
+    it('error 状态记录 ERROR 级别消息（WARN 级别下仍输出）', () => {
+      const log = makeLogger({ level: LogLevel.WARN });
+
+      log.logServerConnection('srv-1', 'error');
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Server srv-1 error'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('ERROR'));
+    });
+
+    it('非 error 状态在 WARN 级别下被过滤', () => {
+      const log = makeLogger({ level: LogLevel.WARN });
+
+      log.logServerConnection('srv-1', 'connected');
+
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logToolDiscovery', () => {
+    it('记录发现的工具数量与服务器 ID', () => {
+      makeLogger().logToolDiscovery('srv-1', 5);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Discovered 5 tools from server srv-1'),
+      );
+    });
+  });
+
+  describe('logToolExecution', () => {
+    it('started/completed 记录 INFO 级别消息', () => {
+      const log = makeLogger();
+
+      log.logToolExecution('tool-a', 'srv-1', 'started');
+      log.logToolExecution('tool-a', 'srv-1', 'completed', 42);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Tool tool-a execution started'),
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Tool tool-a execution completed'),
+      );
+    });
+
+    it('failed 状态记录 ERROR 级别（WARN 级别下仍输出）', () => {
+      const log = makeLogger({ level: LogLevel.WARN });
+
+      log.logToolExecution('tool-a', 'srv-1', 'failed');
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Tool tool-a execution failed'),
+      );
+    });
+
+    it('非 failed 状态在 ERROR 级别下被过滤', () => {
+      const log = makeLogger({ level: LogLevel.ERROR });
+
+      log.logToolExecution('tool-a', 'srv-1', 'completed');
+
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logConfigReload', () => {
+    it('记录配置重载消息', () => {
+      makeLogger().logConfigReload({ actor: 'tester' });
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Configuration reloaded'));
+    });
+  });
+
+  describe('操作追踪', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('startOperation 返回 req_ 前缀的请求 ID 并记录开始消息', () => {
+      const log = makeLogger();
+
+      const requestId = log.startOperation('fetchTools', 'ToolManager');
+
+      expect(requestId).toMatch(/^req_\d+_[a-z0-9]+$/);
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Starting fetchTools'));
+    });
+
+    it('startOperation 两次生成的请求 ID 不同', () => {
+      const log = makeLogger();
+
+      const id1 = log.startOperation('op-a', 'c');
+      const id2 = log.startOperation('op-b', 'c');
+
+      expect(id1).not.toBe(id2);
+    });
+
+    it('endOperation 记录完成消息与耗时', () => {
+      const log = makeLogger();
+      const requestId = log.startOperation('fetchTools', 'ToolManager');
+
+      vi.advanceTimersByTime(250);
+      log.endOperation('fetchTools', 'ToolManager', requestId, Date.now() - 250);
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Completed fetchTools'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('(250ms)'));
+    });
+
+    it('failOperation 记录失败消息、错误与耗时', () => {
+      const log = makeLogger();
+      const requestId = log.startOperation('fetchTools', 'ToolManager');
+
+      vi.advanceTimersByTime(120);
+      log.failOperation(
+        'fetchTools',
+        'ToolManager',
+        requestId,
+        new Error('工具调用失败'),
+        Date.now() - 120,
+      );
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Failed fetchTools'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('工具调用失败'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('(120ms)'));
+    });
+  });
+
+  it('close 不抛出异常', () => {
+    const log = makeLogger();
+
+    expect(() => log.close()).not.toThrow();
+  });
+});
+
+describe('createLogger（本地封装）', () => {
+  it('返回 StructuredLogger 实例并应用默认配置', () => {
+    const log = createLogger();
+
+    expect(log).toBeInstanceOf(StructuredLogger);
+    expect(log.getLevel()).toBe(DEFAULT_LOGGER_CONFIG.level);
+  });
+
+  it('自定义配置覆盖默认值', () => {
+    const log = createLogger({ level: LogLevel.DEBUG });
+
+    expect(log.getLevel()).toBe(LogLevel.DEBUG);
+  });
+});
+
+describe('logger 模块实例', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+  });
+
+  it('未设置 LOG_LEVEL 时使用环境推导级别（测试环境为 WARN）', () => {
+    delete process.env.LOG_LEVEL;
+
+    expect(moduleLogger.getLevel()).toBe(LogLevel.WARN);
+  });
+
+  it('LOG_LEVEL 指定有效级别时优先使用', async () => {
+    vi.stubEnv('LOG_LEVEL', 'error');
+    vi.resetModules();
+    const { logger } = await import('./logger.js');
+
+    expect(logger.getLevel()).toBe(LogLevel.ERROR);
+  });
+
+  it('LOG_LEVEL 指定无效级别时回退到 INFO', async () => {
+    vi.stubEnv('LOG_LEVEL', 'not-a-level');
+    vi.resetModules();
+    const { logger } = await import('./logger.js');
+
+    expect(logger.getLevel()).toBe(LogLevel.INFO);
   });
 });

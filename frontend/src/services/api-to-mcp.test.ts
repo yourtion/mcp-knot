@@ -469,4 +469,58 @@ describe('ApiToMcpService', () => {
       expect(api.get).toHaveBeenCalledWith('/api-to-mcp/configs/stats');
     });
   });
+
+  describe('importConfig 请求体构造', () => {
+    it('文件源使用 FormData 上传并序列化选项', async () => {
+      const mockFile = new File(['{}'], 'spec.json', { type: 'application/json' });
+      const options = { includeParameters: true, includeSecurity: false, generateTools: true };
+
+      (api.post as unknown as Mock).mockResolvedValue({
+        data: { success: true, data: { configs: [], message: 'ok' }, timestamp: '' },
+      });
+
+      await apiToMcpService.importConfig({ format: 'openapi', source: mockFile, options });
+
+      expect(api.post).toHaveBeenCalledWith('/api-to-mcp/configs/import', expect.any(FormData), {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const formData = (api.post as unknown as Mock).mock.calls[0][1] as FormData;
+      expect(formData.get('file')).toBe(mockFile);
+      expect(formData.get('format')).toBe('openapi');
+      expect(formData.get('options')).toBe(JSON.stringify(options));
+    });
+
+    it('文件源未提供选项时不附加 options 字段', async () => {
+      const mockFile = new File(['{}'], 'spec.json', { type: 'application/json' });
+
+      (api.post as unknown as Mock).mockResolvedValue({
+        data: { success: true, data: { configs: [], message: 'ok' }, timestamp: '' },
+      });
+
+      await apiToMcpService.importConfig({ format: 'openapi', source: mockFile });
+
+      const formData = (api.post as unknown as Mock).mock.calls[0][1] as FormData;
+      expect(formData.get('file')).toBe(mockFile);
+      expect(formData.get('format')).toBe('openapi');
+      expect(formData.get('options')).toBeNull();
+    });
+
+    it('字符串源以普通 JSON 体提交且无 options 时省略该字段', async () => {
+      (api.post as unknown as Mock).mockResolvedValue({
+        data: { success: true, data: { configs: [], message: 'ok' }, timestamp: '' },
+      });
+
+      await apiToMcpService.importConfig({
+        format: 'openapi',
+        source: 'https://api.example.com/openapi.json',
+      });
+
+      expect(api.post).toHaveBeenCalledWith('/api-to-mcp/configs/import', {
+        source: 'https://api.example.com/openapi.json',
+        format: 'openapi',
+        options: undefined,
+      });
+    });
+  });
 });

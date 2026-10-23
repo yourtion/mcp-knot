@@ -2,9 +2,13 @@
  * 带缓存功能的API执行器测试
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CachedApiExecutor, type CacheExecutorConfig } from './cached-api-executor.js';
+import {
+  CachedApiExecutor,
+  createCachedApiExecutor,
+  type CacheExecutorConfig,
+} from './cached-api-executor.js';
 
 import type { ApiToolConfig } from '../types/api-config.js';
 import type { ApiResponse, HttpResponse } from '../types/http-client.js';
@@ -12,14 +16,16 @@ import type { ApiExecutor } from './api-executor.js';
 import type { CacheKeyManager } from './cache-key-manager.js';
 import type { CacheManager } from './cache-manager.js';
 
-// Mock日志记录器
+// Mock日志记录器（可引用）
+const loggerMocks = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
+
 vi.mock('../../utils/logger.js', () => ({
-  createLogger: vi.fn(() => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  })),
+  createLogger: () => loggerMocks,
 }));
 
 describe('CachedApiExecutor', () => {
@@ -94,6 +100,11 @@ describe('CachedApiExecutor', () => {
     };
 
     mockParameters = { param1: 'value1' };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   describe('基本缓存功能', () => {
@@ -531,6 +542,291 @@ describe('CachedApiExecutor', () => {
       expect(stats.averageApiTime).toBeGreaterThan(0);
       expect(stats.averageCacheTime).toBeGreaterThan(0);
       expect(stats.timeSaved).toBeGreaterThan(0);
+    });
+
+    it('初始统计的平均耗时为 0 而非 NaN', () => {
+      const stats = cachedExecutor.getStats();
+
+      expect(stats.averageApiTime).toBe(0);
+      expect(stats.averageCacheTime).toBe(0);
+      expect(stats.totalApiCalls).toBe(0);
+      expect(stats.cachedApiCalls).toBe(0);
+    });
+  });
+
+  describe('精确计时统计（fake timers）', () => {
+    const T0 = new Date('2026-01-01T00:00:00Z').getTime();
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(T0);
+    });
+
+    it('API 50ms、缓存命中 5ms → timeSaved=45 且均值精确', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      // 第一次：miss，API 耗时 50ms
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall).mockImplementation(async () => {
+        vi.setSystemTime(T0 + 50);
+        return { raw: {} as HttpResponse, data: { ok: true }, success: true };
+      });
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      // 第二次：命中，get 耗时 5ms
+      vi.mocked(mockCacheManager.get).mockImplementation(async () => {
+        vi.setSystemTime(T0 + 55);
+        return { raw: {} as HttpResponse, data: { ok: true }, success: true };
+      });
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      const stats = cachedExecutor.getStats();
+      expect(stats.averageApiTime).toBe(50); // 上界：不可为 now+startTime 之类的爆炸值
+      expect(stats.averageCacheTime).toBe(5);
+      expect(stats.timeSaved).toBe(45);
+    });
+
+    it('平均值只保留最近 1000 个样本', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+
+      // 第 1 次调用耗时长，后续 1000 次耗时 1ms
+      let call = 0;
+      vi.mocked(mockBaseExecutor.executeApiCall).mockImplementation(async () => {
+        call++;
+        vi.setSystemTime(Date.now() + (call === 1 ? 5000 : 1));
+        return { raw: {} as HttpResponse, data: { ok: true }, success: true };
+      });
+
+      for (let i = 0; i < 1001; i++) {
+        await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+      }
+
+      // 截断后最早的 5000ms 样本被丢弃，均值收敛到 1ms
+      expect(cachedExecutor.getStats().averageApiTime).toBe(1);
+    });
+  });
+
+  describe('clearToolCache', () => {
+    it('基于键模式清理并返回 0（简化实现），输出 warn 日志', async () => {
+      vi.mocked(mockKeyManager.generateToolKeyPattern).mockReturnValue('tool:test-tool:*');
+
+      const count = await cachedExecutor.clearToolCache('test-tool');
+
+      expect(count).toBe(0);
+      expect(mockKeyManager.generateToolKeyPattern).toHaveBeenCalledWith('test-tool');
+      expect(loggerMocks.warn).toHaveBeenCalledWith(
+        '清除工具缓存: test-tool (模式: tool:test-tool:*) - 需要实现具体的清理逻辑',
+      );
+    });
+
+    it('键模式生成抛错 → 返回 0 并记录错误日志', async () => {
+      vi.mocked(mockKeyManager.generateToolKeyPattern).mockImplementation(() => {
+        throw new Error('pattern error');
+      });
+
+      const count = await cachedExecutor.clearToolCache('test-tool');
+
+      expect(count).toBe(0);
+      expect(loggerMocks.error).toHaveBeenCalledWith(
+        '清除工具缓存失败: test-tool',
+        expect.any(Error),
+      );
+    });
+  });
+
+  describe('warmupCache 异常分支', () => {
+    it('executeApiCall 抛错 → 计入 failed 而非中断', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall)
+        .mockResolvedValueOnce({
+          raw: {} as HttpResponse,
+          data: { ok: true },
+          success: true,
+        })
+        .mockRejectedValueOnce(new Error('boom'));
+
+      const result = await cachedExecutor.warmupCache(mockConfig, [{ p: 1 }, { p: 2 }]);
+
+      expect(result).toEqual({ success: 1, failed: 1 });
+      expect(loggerMocks.warn).toHaveBeenCalledWith('预热缓存失败', expect.any(Error));
+    });
+
+    it('预热开始与完成输出 info 日志', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      await cachedExecutor.warmupCache(mockConfig, [{ p: 1 }]);
+
+      expect(loggerMocks.info).toHaveBeenCalledWith('开始预热缓存: test-tool, 1 个参数组合');
+      expect(loggerMocks.info).toHaveBeenCalledWith('缓存预热完成: test-tool, 成功: 1, 失败: 0');
+    });
+  });
+
+  describe('clearAllCache 与统计重置', () => {
+    it('清空缓存后统计全部归零', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      await cachedExecutor.clearAllCache();
+
+      const stats = cachedExecutor.getStats();
+      expect(stats.totalApiCalls).toBe(0);
+      expect(stats.cachedApiCalls).toBe(0);
+      expect(stats.timeSaved).toBe(0);
+      expect(stats.averageApiTime).toBe(0);
+      expect(stats.averageCacheTime).toBe(0);
+      expect(mockCacheManager.clear).toHaveBeenCalled();
+      expect(loggerMocks.info).toHaveBeenCalledWith('所有缓存已清除');
+    });
+  });
+
+  describe('动态配置（行为验证）', () => {
+    it('updateConfig 更新 defaultTtl 后按新 TTL 缓存', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      cachedExecutor.updateConfig({ defaultTtl: 777 });
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(mockCacheManager.set).toHaveBeenCalledWith('k', expect.anything(), 777);
+      expect(loggerMocks.info).toHaveBeenCalledWith('缓存配置已更新');
+    });
+  });
+
+  describe('缓存日志开关', () => {
+    it('默认开启：命中与写入缓存均输出 debug 日志', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(loggerMocks.debug).toHaveBeenCalledWith('缓存命中: test-tool');
+    });
+
+    it('未命中并写入缓存 → 输出"响应已缓存"日志', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(loggerMocks.debug).toHaveBeenCalledWith('响应已缓存: test-tool');
+    });
+
+    it('enableCacheLogging=false → 不输出缓存 debug 日志', async () => {
+      const quietExecutor = new CachedApiExecutor(
+        mockBaseExecutor,
+        mockCacheManager,
+        mockKeyManager,
+        {
+          enableCacheLogging: false,
+        },
+      );
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      await quietExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(loggerMocks.debug).not.toHaveBeenCalledWith('缓存命中: test-tool');
+    });
+  });
+
+  describe('错误日志', () => {
+    it('键生成抛错 → error 日志包含工具ID，并回退基础执行器', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockImplementation(() => {
+        throw new Error('Key generation failed');
+      });
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(loggerMocks.error).toHaveBeenCalledWith(
+        '缓存API执行失败: test-tool',
+        expect.any(Error),
+      );
+    });
+
+    it('cache.get 抛错 → 记录"从缓存获取响应失败"', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockRejectedValue(new Error('get failed'));
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(loggerMocks.error).toHaveBeenCalledWith('从缓存获取响应失败', expect.any(Error));
+    });
+
+    it('cache.set 抛错 → 记录"缓存响应失败"且不影响返回', async () => {
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      const response: ApiResponse = {
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      };
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue(response);
+      vi.mocked(mockCacheManager.set).mockRejectedValue(new Error('set failed'));
+
+      const result = await cachedExecutor.executeApiCall(mockConfig, mockParameters);
+
+      expect(result).toEqual(response);
+      expect(loggerMocks.error).toHaveBeenCalledWith('缓存响应失败', expect.any(Error));
+    });
+  });
+
+  describe('createCachedApiExecutor 工厂', () => {
+    it('返回可用的缓存执行器实例', async () => {
+      const executor = createCachedApiExecutor(mockBaseExecutor, mockCacheManager, mockKeyManager);
+
+      expect(executor).toBeInstanceOf(CachedApiExecutor);
+
+      vi.mocked(mockKeyManager.generateKey).mockReturnValue('k');
+      vi.mocked(mockCacheManager.get).mockResolvedValue(null);
+      vi.mocked(mockBaseExecutor.executeApiCall).mockResolvedValue({
+        raw: {} as HttpResponse,
+        data: { ok: true },
+        success: true,
+      });
+
+      const result = await executor.executeApiCall(mockConfig, mockParameters);
+      expect(result.success).toBe(true);
     });
   });
 });

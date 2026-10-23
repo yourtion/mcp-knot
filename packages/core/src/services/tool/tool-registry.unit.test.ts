@@ -119,6 +119,16 @@ describe('ToolRegistry', () => {
 
       expect(() => registry.registerTool('server1', mockTool1)).toThrow(ToolRegistryError);
     });
+
+    it('未初始化时应给出明确的错误信息', () => {
+      const registry = new ToolRegistry();
+
+      expect(() => registry.getAllTools()).toThrow('工具注册表必须在使用前初始化');
+      expect(() => registry.registerTools('server1', [])).toThrow('工具注册表必须在使用前初始化');
+      expect(() => registry.getToolStats()).toThrow(
+        new ToolRegistryError('工具注册表必须在使用前初始化', 'NOT_INITIALIZED'),
+      );
+    });
   });
 
   describe('工具注册', () => {
@@ -220,6 +230,60 @@ describe('ToolRegistry', () => {
       } as ToolInfo;
       expect(() => toolRegistry.registerTool('server1', invalidTool3)).toThrow(ToolValidationError);
     });
+
+    it('应该拒绝非法的字段类型并报告具体原因', () => {
+      const nonStringName = { name: 123, description: '有效描述' } as unknown as ToolInfo;
+      expect(() => toolRegistry.registerTool('server1', nonStringName)).toThrow(
+        "工具 '123' 验证失败: 工具名称无效",
+      );
+
+      const emptyName = { name: '', description: '有效描述' } as ToolInfo;
+      expect(() => toolRegistry.registerTool('server1', emptyName)).toThrow(
+        "工具 'unknown' 验证失败: 工具名称无效",
+      );
+
+      const nonStringDescription = { name: 't', description: 42 } as unknown as ToolInfo;
+      expect(() => toolRegistry.registerTool('server1', nonStringDescription)).toThrow(
+        "工具 't' 验证失败: 工具描述无效",
+      );
+
+      const nonStringParamName = {
+        name: 't',
+        description: '有效描述',
+        parameters: [{ name: 5, type: 'string' }],
+      } as unknown as ToolInfo;
+      expect(() => toolRegistry.registerTool('server1', nonStringParamName)).toThrow(
+        '参数名称无效: 5',
+      );
+
+      const badParamType = {
+        name: 't',
+        description: '有效描述',
+        parameters: [{ name: 'p', type: 'integer' }],
+      } as unknown as ToolInfo;
+      expect(() => toolRegistry.registerTool('server1', badParamType)).toThrow(
+        '参数类型无效: integer',
+      );
+    });
+
+    it('覆盖注册同名工具时保留既有执行统计', () => {
+      toolRegistry.registerTool('server1', mockTool1);
+      toolRegistry.recordToolExecution(
+        {
+          toolName: 'test_tool_1',
+          serverId: 'server1',
+          args: {},
+          executionId: 'exec-1',
+          timestamp: new Date(),
+        },
+        { success: true, data: null },
+      );
+      toolRegistry.registerTool('server1', { ...mockTool1, description: '覆盖后的描述' });
+
+      const stats = toolRegistry.getToolStats();
+      expect(stats.totalTools).toBe(1);
+      expect(stats.executionCount).toBe(1);
+    });
   });
 
   describe('工具查询', () => {
@@ -268,6 +332,13 @@ describe('ToolRegistry', () => {
       });
       expect(excludedTools).toHaveLength(2);
       expect(excludedTools.find((t) => t.name === 'test_tool_2')).toBeUndefined();
+    });
+
+    it('空过滤数组不应过滤掉任何工具', () => {
+      expect(toolRegistry.getAllTools({ serverIds: [] })).toHaveLength(3);
+      expect(toolRegistry.getAllTools({ categories: [] })).toHaveLength(3);
+      expect(toolRegistry.getAllTools({ toolNames: [] })).toHaveLength(3);
+      expect(toolRegistry.getAllTools({ excludeToolNames: [] })).toHaveLength(3);
     });
 
     it('应该根据名称获取工具', () => {
@@ -368,6 +439,77 @@ describe('ToolRegistry', () => {
         param2: 42,
       });
       expect(result3.isValid).toBe(true);
+      expect(result3.warnings).toBeUndefined();
+    });
+
+    it('应该验证布尔、对象与数组参数类型', () => {
+      toolRegistry.registerTool('server1', {
+        name: 'typed_tool',
+        description: '多类型参数工具',
+        parameters: [
+          { name: 'flag', type: 'boolean', required: true },
+          { name: 'payload', type: 'object', required: true },
+          { name: 'list', type: 'array', required: true },
+        ],
+      });
+
+      const valid = toolRegistry.validateToolArgs('typed_tool', {
+        flag: true,
+        payload: { key: 'value' },
+        list: [1, 2, 3],
+      });
+      expect(valid.isValid).toBe(true);
+      expect(valid.warnings).toBeUndefined();
+
+      const cases: Array<[string, unknown, string]> = [
+        ['flag', 'yes', "参数 'flag' 必须是布尔类型"],
+        ['flag', 1, "参数 'flag' 必须是布尔类型"],
+        // 必需参数为 null 会先于类型检查被拒绝
+        ['payload', null, "必需参数 'payload' 不能为空"],
+        ['payload', [1], "参数 'payload' 必须是对象类型"],
+        ['payload', 'text', "参数 'payload' 必须是对象类型"],
+        ['list', 'text', "参数 'list' 必须是数组类型"],
+        ['list', { length: 0 }, "参数 'list' 必须是数组类型"],
+      ];
+      for (const [name, value, message] of cases) {
+        const result = toolRegistry.validateToolArgs('typed_tool', {
+          flag: true,
+          payload: {},
+          list: [],
+          [name]: value,
+        });
+        expect(result.isValid).toBe(false);
+        expect(result.error).toContain(message);
+      }
+    });
+
+    it('应该拒绝 NaN 数字参数', () => {
+      const result = toolRegistry.validateToolArgs('test_tool_1', {
+        param1: 'test',
+        param2: Number.NaN,
+      });
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain("参数 'param2' 必须是数字类型");
+    });
+
+    it('必需参数为 undefined 时应视为缺失', () => {
+      const result = toolRegistry.validateToolArgs('test_tool_1', {
+        param1: undefined,
+      });
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain("必需参数 'param1' 不能为空");
+    });
+
+    it('未声明参数的工具应接受任意参数且不产生警告', () => {
+      toolRegistry.registerTool('server1', {
+        name: 'freeform_tool',
+        description: '无参数定义',
+      });
+      const result = toolRegistry.validateToolArgs('freeform_tool', { anything: 1 });
+      expect(result).toStrictEqual({ isValid: true });
+
+      const emptyList = toolRegistry.validateToolArgs('test_tool_3', { anything: 1 });
+      expect(emptyList).toStrictEqual({ isValid: true });
     });
 
     it('应该验证枚举值', () => {
@@ -547,6 +689,83 @@ describe('ToolRegistry', () => {
       expect(stats.executionCount).toBe(1);
       expect(stats.errorCount).toBe(1);
       expect(stats.averageExecutionTime).toBe(50);
+    });
+
+    it('平均执行时间应为总耗时除以执行次数', () => {
+      const base: ToolExecutionContext = {
+        toolName: 'test_tool_1',
+        serverId: 'server1',
+        args: {},
+        executionId: 'exec',
+        timestamp: new Date(),
+      };
+      toolRegistry.recordToolExecution(base, { success: true, data: null, executionTime: 100 });
+      toolRegistry.recordToolExecution({ ...base, executionId: 'exec-2' }, {
+        success: false,
+        data: null,
+        executionTime: 50,
+      } as ToolResult);
+      // executionTime 缺失或为 0 时不计入总耗时，但计入执行次数
+      toolRegistry.recordToolExecution(
+        { ...base, executionId: 'exec-3' },
+        {
+          success: true,
+          data: null,
+        },
+      );
+      toolRegistry.recordToolExecution(
+        { ...base, executionId: 'exec-4' },
+        {
+          success: true,
+          data: null,
+          executionTime: 0,
+        },
+      );
+
+      const stats = toolRegistry.getToolStats();
+      expect(stats.executionCount).toBe(4);
+      expect(stats.errorCount).toBe(1);
+      expect(stats.averageExecutionTime).toBe(37.5);
+    });
+
+    it('执行历史最多保留 100 条并淘汰最旧记录', () => {
+      for (let index = 0; index <= 100; index++) {
+        toolRegistry.recordToolExecution(
+          {
+            toolName: 'test_tool_1',
+            serverId: 'server1',
+            args: {},
+            executionId: `exec-${index}`,
+            timestamp: new Date(index),
+          },
+          { success: true, data: null },
+        );
+      }
+
+      const history = toolRegistry.getToolExecutionHistory('test_tool_1', 'server1');
+      expect(history).toHaveLength(100);
+      expect(history.map((entry) => entry.executionId)).not.toContain('exec-0');
+      expect(history.map((entry) => entry.executionId)).toContain('exec-100');
+    });
+
+    it('按单一维度查询历史时返回全部记录，双维度才限定到具体工具', () => {
+      const record = (toolName: string, serverId: string, executionId: string) =>
+        toolRegistry.recordToolExecution(
+          { toolName, serverId, args: {}, executionId, timestamp: new Date() },
+          { success: true, data: null },
+        );
+      record('shared_tool', 'server1', 'exec-1');
+      record('shared_tool', 'server2', 'exec-2');
+      record('other_tool', 'server1', 'exec-3');
+
+      // 只提供任一维度时返回合并后的全部历史
+      expect(toolRegistry.getToolExecutionHistory('shared_tool')).toHaveLength(3);
+      expect(toolRegistry.getToolExecutionHistory(undefined, 'server1')).toHaveLength(3);
+      // 同时提供工具名与服务器才返回该工具自己的历史
+      expect(
+        toolRegistry.getToolExecutionHistory('shared_tool', 'server1').map((e) => e.executionId),
+      ).toEqual(['exec-1']);
+      expect(toolRegistry.getToolExecutionHistory('missing_tool', 'server1')).toEqual([]);
     });
 
     it('应该获取执行历史', () => {

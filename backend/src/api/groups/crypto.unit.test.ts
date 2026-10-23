@@ -19,6 +19,21 @@ describe('crypto', () => {
       expect(() => encryptValidationKey('test')).toThrow('密钥加密失败');
     });
 
+    it('未配置密钥时错误上下文指向 VALIDATION_KEY_SECRET 配置项', () => {
+      vi.stubEnv('VALIDATION_KEY_SECRET', '');
+      try {
+        encryptValidationKey('test');
+        expect.unreachable('应抛出密钥加密失败');
+      } catch (error) {
+        // McpKnotCoreError 第 3 个构造参数挂到 details：包装时保留了指向
+        // VALIDATION_KEY_SECRET 的原始 ConfigError
+        const details = (error as { details?: unknown }).details as
+          | { message?: string }
+          | undefined;
+        expect(details?.message).toContain('VALIDATION_KEY_SECRET');
+      }
+    });
+
     it('VALIDATION_KEY_SECRET 长度不足 32 字符时加密应抛出错误', () => {
       vi.stubEnv('VALIDATION_KEY_SECRET', 'short-secret-only-20');
       expect(() => encryptValidationKey('test')).toThrow('密钥加密失败');
@@ -46,7 +61,7 @@ describe('crypto', () => {
       expect(decryptValidationKey(encrypted)).toBe(plainKey);
     });
 
-    it('每次加密生成不同密文（IV 随机性）', () => {
+    it('每次加密生成不同密文（IV 随机性）', async () => {
       const plainKey = 'same-key';
       const enc1 = encryptValidationKey(plainKey);
       const enc2 = encryptValidationKey(plainKey);
@@ -54,6 +69,19 @@ describe('crypto', () => {
       expect(enc1).not.toBe(enc2);
       expect(decryptValidationKey(enc1)).toBe(plainKey);
       expect(decryptValidationKey(enc2)).toBe(plainKey);
+    });
+
+    it('长文本跨多个加密块也能完整往返', () => {
+      // 超过单个 AES 块（16 字节）的长密钥，密文必须包含 final 块
+      const longKey = 'k'.repeat(200);
+      const encrypted = encryptValidationKey(longKey);
+      const [iv, data] = encrypted.split(':');
+
+      expect(iv).toHaveLength(32); // 16 字节 IV 的 hex
+      // 200 字节明文 + PKCS#7 填充 = 208 字节密文（hex 416 字符），
+      // 其中 final 块贡献 16 字节 —— 移除 final 调用后密文会缺失
+      expect(data!.length).toBeGreaterThanOrEqual(416);
+      expect(decryptValidationKey(encrypted)).toBe(longKey);
     });
 
     it('解密篡改过的数据应抛出错误', () => {

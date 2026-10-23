@@ -11,12 +11,9 @@ import {
 describe('OutboundProtocolAdapter', () => {
   const call = normalizeCall({ toolName: 'foo', arguments: { x: 1 } });
 
-  it('modern upstream：inputResponses/requestState 作为顶层字段', () => {
+  it('modern upstream：无 mrtr 时 wire 仅含 name/arguments（键形态精确）', () => {
     const wire = translateCallForUpstream(call, 'modern');
-    expect(wire.name).toBe('foo');
-    expect(wire.arguments).toEqual({ x: 1 });
-    // 无 mrtr 时不带 inputResponses/requestState
-    expect('inputResponses' in wire).toBe(false);
+    expect(wire).toStrictEqual({ name: 'foo', arguments: { x: 1 } });
   });
 
   it('modern upstream 带 mrtr：顶层 inputResponses + requestState', () => {
@@ -25,56 +22,97 @@ describe('OutboundProtocolAdapter', () => {
       arguments: { x: 1 },
       mrtr: { requestState: 'rs-token', inputResponses: { k: 'v' } },
     });
-    const wire = translateCallForUpstream(callMrtr, 'modern');
-    expect(wire.requestState).toBe('rs-token');
-    expect(wire.inputResponses).toEqual({ k: 'v' });
+    expect(translateCallForUpstream(callMrtr, 'modern')).toStrictEqual({
+      name: 'foo',
+      arguments: { x: 1 },
+      requestState: 'rs-token',
+      inputResponses: { k: 'v' },
+    });
   });
 
-  it('legacy upstream：丢弃 _meta envelope 风格字段，保留 name/arguments', () => {
-    const wire = translateCallForUpstream(call, 'legacy');
-    expect(wire.name).toBe('foo');
-    expect('inputResponses' in wire).toBe(false);
+  it('legacy upstream：携带 mrtr 的 call 也只产出 name/arguments（era 分派不可退化为 modern）', () => {
+    const callMrtr = normalizeCall({
+      toolName: 'foo',
+      arguments: { x: 1 },
+      mrtr: { requestState: 'rs-token', inputResponses: { k: 'v' } },
+    });
+    expect(translateCallForUpstream(callMrtr, 'legacy')).toStrictEqual({
+      name: 'foo',
+      arguments: { x: 1 },
+    });
   });
 
-  it('upstream 成功结果归一为 success', () => {
-    const r = translateUpstreamResult({ content: [{ type: 'text', text: 'ok' }] }, 'modern');
-    expect(r.kind).toBe('success');
+  it('modern result 缺 content 时归一为空 success（覆盖 ?? [] 与 isError ?? false 假分支）', () => {
+    expect(translateUpstreamResult({}, 'modern')).toStrictEqual({
+      kind: 'success',
+      content: [],
+      isError: false,
+    });
   });
 
-  it('modern result 缺 content 时归一为空 success（覆盖 ?? [] 分支）', () => {
-    const r = translateUpstreamResult({}, 'modern');
-    expect(r.kind).toBe('success');
-    if (r.kind === 'success') expect(r.content).toEqual([]);
-  });
-
-  it('modern result isError=true 透传（覆盖 isError ?? false 真分支）', () => {
+  it('modern result isError=true 透传且 content 原样归一', () => {
     const r = translateUpstreamResult(
       { content: [{ type: 'text', text: 'err' }], isError: true },
       'modern',
     );
-    expect(r.kind).toBe('success');
-    if (r.kind === 'success') expect(r.isError).toBe(true);
+    expect(r).toStrictEqual({
+      kind: 'success',
+      content: [{ type: 'text', text: 'err' }],
+      isError: true,
+    });
   });
 
   it('legacy result 缺 content/isError 时归一为空 success（覆盖 legacy translator 的 ?? 分支）', () => {
-    const r = translateUpstreamResult({}, 'legacy');
-    expect(r.kind).toBe('success');
-    if (r.kind === 'success') {
-      expect(r.content).toEqual([]);
-      expect(r.isError).toBe(false);
-    }
+    expect(translateUpstreamResult({}, 'legacy')).toStrictEqual({
+      kind: 'success',
+      content: [],
+      isError: false,
+    });
   });
 
-  it('upstream input_required 归一为 input_required', () => {
+  it('legacy result isError=true 透传（legacy translator 的 isError ?? false 真分支）', () => {
+    const r = translateUpstreamResult(
+      { content: [{ type: 'text', text: 'legacy err' }], isError: true },
+      'legacy',
+    );
+    expect(r).toStrictEqual({
+      kind: 'success',
+      content: [{ type: 'text', text: 'legacy err' }],
+      isError: true,
+    });
+  });
+
+  it('legacy era 忽略 modern 专属 resultType=input_required（era 分派不可退化为 modern）', () => {
     const r = translateUpstreamResult(
       {
+        content: [{ type: 'text', text: 'ok' }],
         resultType: 'input_required',
         inputRequests: { key: {} },
         requestState: 'rs',
       },
+      'legacy',
+    );
+    expect(r).toStrictEqual({
+      kind: 'success',
+      content: [{ type: 'text', text: 'ok' }],
+      isError: false,
+    });
+  });
+
+  it('upstream input_required 归一：inputRequests 与 requestState 逐字段透传', () => {
+    const r = translateUpstreamResult(
+      {
+        resultType: 'input_required',
+        inputRequests: { key: { id: 'k1' } },
+        requestState: 'rs',
+      },
       'modern',
     );
-    expect(r.kind).toBe('input_required');
+    expect(r).toStrictEqual({
+      kind: 'input_required',
+      inputRequests: { key: { id: 'k1' } },
+      mrtr: { requestState: 'rs' },
+    });
   });
 });
 
@@ -150,9 +188,7 @@ describe('OutboundProtocolAdapter 类方法', () => {
         mrtr: { requestState: 'rs', inputResponses: { k: 'v' } },
       });
       const wire = adapter.translateCall(callMrtr, 'legacy');
-      expect(wire.name).toBe('foo');
-      expect('requestState' in wire).toBe(false);
-      expect('inputResponses' in wire).toBe(false);
+      expect(wire).toStrictEqual({ name: 'foo', arguments: {} });
     });
   });
 

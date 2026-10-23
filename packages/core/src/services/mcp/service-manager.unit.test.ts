@@ -97,6 +97,30 @@ describe('McpServiceManager', () => {
       // 构造函数不会同步初始化
       expect(status.initialized).toBe(false);
     });
+
+    it('传入配置时应在后台完成初始化', async () => {
+      const manager = new McpServiceManager(mockConfig);
+      // 模拟连接需要 ~100ms，等待后台初始化完成
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const status = manager.getServiceStatus();
+      expect(status.initialized).toBe(true);
+      expect(status.serverCount).toBe(3);
+      expect(status.activeConnections).toBe(2);
+
+      await manager.shutdown();
+    });
+
+    it('未传配置时不应触发后台初始化', async () => {
+      const manager = new McpServiceManager();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(manager.getServiceStatus().initialized).toBe(false);
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        'MCP服务管理器初始化失败',
+        expect.any(Error),
+      );
+    });
   });
 
   describe('initializeFromConfig', () => {
@@ -172,6 +196,73 @@ describe('McpServiceManager', () => {
       (serviceManager as unknown as { initializeServer: unknown }).initializeServer =
         originalInitializeServer;
     });
+
+    it('全部服务器失败时应清理连接并以 INITIALIZATION_FAILED 失败', async () => {
+      const originalInitializeServer = (serviceManager as unknown as { initializeServer: unknown })
+        .initializeServer;
+      (serviceManager as unknown as { initializeServer: unknown }).initializeServer = vi
+        .fn()
+        .mockRejectedValue(new Error('连接失败'));
+
+      await expect(serviceManager.initializeFromConfig(mockConfig)).rejects.toMatchObject({
+        code: 'INITIALIZATION_FAILED',
+      });
+
+      // 恢复原方法
+      (serviceManager as unknown as { initializeServer: unknown }).initializeServer =
+        originalInitializeServer;
+
+      // 失败的初始化应清理所有连接
+      expect(serviceManager.getServerConnections().size).toBe(0);
+      expect(serviceManager.getServiceStatus().initialized).toBe(false);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'MCP服务管理器初始化失败',
+        expect.any(Error),
+        expect.objectContaining({ serverCount: 3 }),
+      );
+    });
+
+    it('部分服务器失败时整体初始化仍算成功', async () => {
+      // 让 server2 的底层连接模拟失败，保留 initializeServer 的状态机
+      const manager = serviceManager;
+      const originalSimulate = (
+        manager as unknown as { simulateServerConnection: (c: unknown) => Promise<void> }
+      ).simulateServerConnection;
+      (manager as unknown as { simulateServerConnection: unknown }).simulateServerConnection =
+        async (connection: { id: string }) => {
+          if (connection.id === 'server2') throw new Error('server2 不可用');
+          return originalSimulate.call(manager, connection);
+        };
+
+      await serviceManager.initializeFromConfig(mockConfig);
+
+      (manager as unknown as { simulateServerConnection: unknown }).simulateServerConnection =
+        originalSimulate;
+
+      const status = serviceManager.getServiceStatus();
+      expect(status.initialized).toBe(true);
+      expect(status.activeConnections).toBe(1);
+
+      const connections = serviceManager.getServerConnections();
+      expect(connections.get('server2')).toMatchObject({
+        status: ServerStatus.ERROR,
+        lastError: expect.any(Error),
+      });
+      expect(connections.get('server2')?.tools).toEqual([]);
+      expect(connections.get('server1')?.status).toBe(ServerStatus.CONNECTED);
+      expect(mockLogger.error).toHaveBeenCalledWith('服务器初始化失败', expect.any(Error), {
+        serverId: 'server2',
+      });
+    });
+
+    it('空服务器配置应初始化为就绪状态', async () => {
+      await serviceManager.initializeFromConfig({ servers: {} });
+
+      const status = serviceManager.getServiceStatus();
+      expect(status.initialized).toBe(true);
+      expect(status.serverCount).toBe(0);
+      expect(status.activeConnections).toBe(0);
+    });
   });
 
   describe('registerServer', () => {
@@ -198,6 +289,29 @@ describe('McpServiceManager', () => {
       expect(mockLogger.info).toHaveBeenCalledWith('MCP服务器注册成功', {
         serverId: 'newServer',
       });
+    });
+
+    it('初始化之前注册的服务器只保存配置、不建立连接', async () => {
+      const manager = new McpServiceManager();
+      await manager.registerServer('lateServer', {
+        command: 'node',
+        args: ['late.js'],
+      });
+
+      const status = manager.getServiceStatus();
+      expect(status.serverCount).toBe(1);
+      expect(status.initialized).toBe(false);
+      expect(manager.getServerConnections().size).toBe(0);
+
+      // 后续初始化会把已保存的配置一并连接
+      await manager.initializeFromConfig({ servers: {} });
+      expect(manager.getServiceStatus().initialized).toBe(true);
+      expect(manager.getServiceStatus().activeConnections).toBe(1);
+      expect((await manager.getServerTools('lateServer')).map((tool) => tool.name)).toEqual([
+        'lateServer_tool_1',
+        'lateServer_tool_2',
+      ]);
+      await manager.shutdown();
     });
 
     it('应该处理注册错误', async () => {
@@ -249,6 +363,25 @@ describe('McpServiceManager', () => {
         }),
       );
     });
+
+    it('应该在缓存有效期内返回缓存的工具列表', async () => {
+      await serviceManager.initializeFromConfig(mockConfig);
+
+      const before = await serviceManager.getAllTools();
+      expect(before).toHaveLength(4);
+
+      // 注册新服务器后，60 秒缓存内仍返回旧结果
+      await serviceManager.registerServer('newServer', {
+        command: 'node',
+        args: ['new-server.js'],
+      });
+      const cached = await serviceManager.getAllTools();
+      expect(cached).toHaveLength(4);
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        '从缓存获取所有工具',
+        expect.objectContaining({ context: { toolCount: 4 } }),
+      );
+    });
   });
 
   describe('getServerTools', () => {
@@ -262,6 +395,13 @@ describe('McpServiceManager', () => {
       expect(tools).toHaveLength(2);
       expect(tools[0].serverId).toBe('server1');
       expect(tools[1].serverId).toBe('server1');
+    });
+
+    it('返回的工具列表应为副本，修改不影响内部状态', async () => {
+      const tools = await serviceManager.getServerTools('server1');
+      tools.length = 0;
+
+      expect(await serviceManager.getServerTools('server1')).toHaveLength(2);
     });
 
     it('应该在服务器不存在时抛出错误', async () => {
@@ -337,6 +477,49 @@ describe('McpServiceManager', () => {
 
       await expect(serviceManager.executeToolCall('server1_tool_1', {}, 'server1')).rejects.toThrow(
         McpServiceError,
+      );
+    });
+
+    it('服务器处于错误状态时也应拒绝执行', async () => {
+      const connections = serviceManager.getServerConnections();
+      const server2 = connections.get('server2');
+      if (server2) {
+        server2.status = ServerStatus.ERROR;
+      }
+
+      await expect(serviceManager.executeToolCall('server2_tool_1', {}, 'server2')).rejects.toThrow(
+        /未连接.*error/u,
+      );
+    });
+  });
+
+  describe('executeToolCallWithContext', () => {
+    beforeEach(async () => {
+      await serviceManager.initializeFromConfig(mockConfig);
+    });
+
+    it('mock 壳应记录告警并委托 executeToolCall 执行', async () => {
+      const result = await serviceManager.executeToolCallWithContext(
+        'server1_tool_1',
+        { param: 'value' },
+        'server1',
+        { inputResponses: { question: 'answer' }, requestState: 'opaque-state' },
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        metadata: { serverId: 'server1', toolName: 'server1_tool_1' },
+      });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'executeToolCallWithContext 在 core mock 壳中被调用；应经 backend 适配器执行',
+        { toolName: 'server1_tool_1', serverId: 'server1' },
+      );
+    });
+
+    it('未初始化时应拒绝调用', async () => {
+      const manager = new McpServiceManager();
+      await expect(manager.executeToolCallWithContext('tool', {}, 'server', {})).rejects.toThrow(
+        ServiceNotInitializedError,
       );
     });
   });

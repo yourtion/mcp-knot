@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '../../utils/logger.js';
 import { ApiToMcpServiceManagerImpl, ServiceStatus } from './api-to-mcp-service-manager.js';
 
 import type { ApiToolsConfig } from '../types/api-config.js';
@@ -37,6 +38,8 @@ describe('ApiToMcpServiceManagerImpl', () => {
   let configPath: string;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    mockFetch.mockReset();
     serviceManager = new ApiToMcpServiceManagerImpl();
 
     // 创建临时目录和配置文件
@@ -111,26 +114,76 @@ describe('ApiToMcpServiceManagerImpl', () => {
       expect(health.toolStats.total).toBe(0);
     });
 
-    it('应该在重复初始化时发出警告', async () => {
+    it('应该在重复初始化时发出警告且不重新加载', async () => {
       const validConfig: ApiToolsConfig = {
         version: '1.0',
-        tools: [],
+        tools: [
+          {
+            id: 'dup-tool',
+            name: '重复工具',
+            description: '测试重复初始化',
+            api: { url: 'https://api.example.com/dup', method: 'GET' },
+            parameters: { type: 'object', properties: {} },
+            response: {},
+          },
+        ],
       };
 
       await fs.writeFile(configPath, JSON.stringify(validConfig));
       await serviceManager.initialize(configPath);
 
-      // 第二次初始化应该不会抛出错误，但会发出警告
+      // 修改配置后再次初始化：应警告并直接返回，不重新加载
+      await fs.writeFile(configPath, JSON.stringify({ version: '1.0', tools: [] }));
       await serviceManager.initialize(configPath);
 
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('服务管理器已初始化或正在初始化中', {
+        status: ServiceStatus.RUNNING,
+      });
       const health = serviceManager.getHealthStatus();
       expect(health.status).toBe(ServiceStatus.RUNNING);
+      // 原有工具未被清空
+      expect(health.toolStats.total).toBe(1);
+    });
+
+    it('ERROR 状态下应允许重新初始化', async () => {
+      await fs.writeFile(configPath, '{ invalid json }');
+      await expect(serviceManager.initialize(configPath)).rejects.toThrow('初始化失败');
+      expect(serviceManager.getHealthStatus().status).toBe(ServiceStatus.ERROR);
+
+      // 修复配置文件后可以从 ERROR 状态重新初始化
+      const validConfig: ApiToolsConfig = {
+        version: '1.0',
+        tools: [],
+      };
+      await fs.writeFile(configPath, JSON.stringify(validConfig));
+      await serviceManager.initialize(configPath);
+
+      expect(serviceManager.getHealthStatus().status).toBe(ServiceStatus.RUNNING);
+    });
+
+    it('初始化失败时应抛出包含原因的 ServiceError', async () => {
+      await fs.writeFile(configPath, '{ invalid json }');
+
+      await expect(serviceManager.initialize(configPath)).rejects.toThrow(/初始化失败: .+/);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'API转MCP服务管理器初始化失败',
+        expect.any(Error),
+      );
     });
 
     it('应该成功关闭服务管理器', async () => {
       const validConfig: ApiToolsConfig = {
         version: '1.0',
-        tools: [],
+        tools: [
+          {
+            id: 'shutdown-tool',
+            name: '关闭工具',
+            description: '测试关闭',
+            api: { url: 'https://api.example.com/shutdown', method: 'GET' },
+            parameters: { type: 'object', properties: {} },
+            response: {},
+          },
+        ],
       };
 
       await fs.writeFile(configPath, JSON.stringify(validConfig));
@@ -140,6 +193,24 @@ describe('ApiToMcpServiceManagerImpl', () => {
 
       const health = serviceManager.getHealthStatus();
       expect(health.status).toBe(ServiceStatus.SHUTDOWN);
+      expect(health.healthy).toBe(false);
+      // 关闭后工具被清空
+      expect(health.toolStats.total).toBe(0);
+      // 关闭后执行被拒绝
+      await expect(serviceManager.getApiTools()).rejects.toThrow(
+        '服务管理器未运行，当前状态: shutdown',
+      );
+    });
+
+    it('重复关闭应只记录警告且状态保持 SHUTDOWN', async () => {
+      await fs.writeFile(configPath, JSON.stringify({ version: '1.0', tools: [] }));
+      await serviceManager.initialize(configPath);
+
+      await serviceManager.shutdown();
+      await serviceManager.shutdown();
+
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('服务管理器已关闭');
+      expect(serviceManager.getHealthStatus().status).toBe(ServiceStatus.SHUTDOWN);
     });
 
     it('应该成功重启服务管理器', async () => {
@@ -260,7 +331,9 @@ describe('ApiToMcpServiceManagerImpl', () => {
     });
 
     it('应该在未初始化时拒绝重新加载配置', async () => {
-      await expect(serviceManager.reloadConfig()).rejects.toThrow('服务管理器未运行');
+      await expect(serviceManager.reloadConfig()).rejects.toThrow(
+        '服务管理器未运行，当前状态: not_initialized',
+      );
     });
   });
 
@@ -415,19 +488,152 @@ describe('ApiToMcpServiceManagerImpl', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('参数验证失败');
+      expect(result.content[0].text).toContain('required_param');
+    });
+
+    it('应该在工具不存在时返回包含工具名的错误', async () => {
+      const result = await serviceManager.executeApiTool('missing-tool', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe("工具 'missing-tool' 不存在");
+    });
+  });
+
+  describe('工具执行与响应处理', () => {
+    const writeConfig = async (jsonata?: string) => {
+      const config: ApiToolsConfig = {
+        version: '1.0',
+        tools: [
+          {
+            id: 'mock-tool',
+            name: 'Mock工具',
+            description: '用于测试的Mock工具',
+            api: {
+              url: 'https://api.example.com/data',
+              method: 'GET',
+            },
+            parameters: { type: 'object', properties: {} },
+            response: jsonata ? { jsonata } : {},
+          },
+        ],
+      };
+      await fs.writeFile(configPath, JSON.stringify(config));
+      await serviceManager.initialize(configPath);
+    };
+
+    it('成功响应应返回 JSON 序列化后的数据', async () => {
+      await writeConfig();
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ result: 'ok', count: 3 }), { status: 200 }),
+      );
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe('text');
+      expect(result.content[0].text).toBe(JSON.stringify({ result: 'ok', count: 3 }, null, 2));
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('配置 JSONata 表达式时应返回转换后的结果', async () => {
+      await writeConfig('{ "value": x, "doubled": x * 2 }');
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ x: 21 }), { status: 200 }));
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toBe(JSON.stringify({ value: 21, doubled: 42 }, null, 2));
+    });
+
+    it('字符串响应数据应原样返回不进行 JSON 序列化', async () => {
+      await writeConfig();
+      // JSON 字符串体经 Response.json() 解析后为 string 类型的 data
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify('plain text result'), { status: 200 }),
+      );
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toBe('plain text result');
+    });
+
+    it('JSONata 表达式执行失败时应返回响应处理失败', async () => {
+      await writeConfig('$invalidField.sub[+]');
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ x: 1 }), { status: 200 }));
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/^响应处理失败: /);
+    });
+
+    it('HTTP 错误响应应返回提取后的错误信息', async () => {
+      await writeConfig();
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: '服务端错误' }), { status: 500 }),
+      );
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe('服务端错误');
+    });
+
+    it('无错误详情的 HTTP 错误应返回状态文本', async () => {
+      await writeConfig();
+      mockFetch.mockResolvedValue(
+        new Response('', { status: 503, statusText: 'Service Unavailable' }),
+      );
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe('Service Unavailable');
+    });
+
+    it('请求失败时应返回执行失败信息而不抛出异常', async () => {
+      await writeConfig();
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({}), { status: 404, statusText: 'Not Found' }),
+      );
+
+      const result = await serviceManager.executeApiTool('mock-tool', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe('Not Found');
     });
   });
 
   describe('健康检查', () => {
-    it('应该返回基本的健康状态', () => {
+    it('未初始化时应返回 NOT_INITIALIZED 状态且 uptime 为 0', () => {
       const health = serviceManager.getHealthStatus();
 
-      expect(health).toHaveProperty('status');
-      expect(health).toHaveProperty('healthy');
-      expect(health).toHaveProperty('toolStats');
-      expect(health.toolStats).toHaveProperty('total');
-      expect(health.toolStats).toHaveProperty('registered');
-      expect(health.toolStats).toHaveProperty('failed');
+      expect(health.status).toBe(ServiceStatus.NOT_INITIALIZED);
+      expect(health.healthy).toBe(false);
+      expect(health.initializationTime).toBeUndefined();
+      expect(health.lastHealthCheck).toBeUndefined();
+      expect(health.uptime).toBe(0);
+      expect(health.toolStats).toEqual({ total: 0, registered: 0, failed: 0 });
+    });
+
+    it('运行中应根据初始化时间计算 uptime', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
+
+      await fs.writeFile(configPath, JSON.stringify({ version: '1.0', tools: [] }));
+      await serviceManager.initialize(configPath);
+
+      const initTime = serviceManager.getHealthStatus().initializationTime;
+      expect(initTime).toBeDefined();
+
+      // 推进 5 秒后 uptime 应随之增长
+      vi.setSystemTime(new Date('2026-01-01T12:00:05Z'));
+      const health = serviceManager.getHealthStatus();
+      expect(health.uptime).toBeGreaterThanOrEqual(5000);
+      expect(health.uptime).toBeLessThan(6000);
+      expect(health.initializationTime).toBe(initTime);
     });
 
     it('应该执行健康检查', async () => {
@@ -459,22 +665,18 @@ describe('ApiToMcpServiceManagerImpl', () => {
       expect(health.healthy).toBe(true);
       expect(health.status).toBe(ServiceStatus.RUNNING);
       expect(health.lastHealthCheck).toBeDefined();
-      expect(health.toolStats.total).toBe(1);
+      expect(health.errors).toBeUndefined();
+      expect(health.toolStats).toEqual({ total: 1, registered: 1, failed: 0 });
     });
 
-    it('应该检测到没有工具的问题', async () => {
-      const emptyConfig: ApiToolsConfig = {
-        version: '1.0',
-        tools: [],
-      };
-
-      await fs.writeFile(configPath, JSON.stringify(emptyConfig));
-      await serviceManager.initialize(configPath);
-
+    it('未初始化的服务执行健康检查应报告全部问题', async () => {
       const health = await serviceManager.performHealthCheck();
 
       expect(health.healthy).toBe(false);
-      expect(health.errors).toContain('没有注册的API工具');
+      expect(health.errors).toEqual(['没有注册的API工具', '配置文件路径未设置']);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('健康检查发现问题', {
+        context: { errors: ['没有注册的API工具', '配置文件路径未设置'] },
+      });
     });
 
     it('应该在未初始化时报告不健康状态', () => {
@@ -483,15 +685,37 @@ describe('ApiToMcpServiceManagerImpl', () => {
       expect(health.healthy).toBe(false);
       expect(health.status).toBe(ServiceStatus.NOT_INITIALIZED);
     });
+
+    it('应定期执行健康检查并更新检查时间', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      await fs.writeFile(configPath, JSON.stringify({ version: '1.0', tools: [] }));
+      await serviceManager.initialize(configPath);
+
+      // 等待 setImmediate 触发的初始健康检查
+      await vi.advanceTimersByTimeAsync(0);
+      const firstCheck = serviceManager.getHealthStatus().lastHealthCheck;
+      expect(firstCheck).toBeDefined();
+
+      // 推进 30 秒触发定时健康检查
+      await vi.advanceTimersByTimeAsync(31000);
+      const secondCheck = serviceManager.getHealthStatus().lastHealthCheck;
+      expect(secondCheck).toBeDefined();
+      expect(secondCheck!.getTime()).toBeGreaterThan(firstCheck!.getTime());
+    });
   });
 
   describe('错误处理', () => {
     it('应该在未初始化时拒绝获取工具', async () => {
-      await expect(serviceManager.getApiTools()).rejects.toThrow('服务管理器未运行');
+      await expect(serviceManager.getApiTools()).rejects.toThrow(
+        '服务管理器未运行，当前状态: not_initialized',
+      );
     });
 
     it('应该在未初始化时拒绝执行工具', async () => {
-      await expect(serviceManager.executeApiTool('test', {})).rejects.toThrow('服务管理器未运行');
+      await expect(serviceManager.executeApiTool('test', {})).rejects.toThrow(
+        '服务管理器未运行，当前状态: not_initialized',
+      );
     });
 
     it('应该处理配置文件格式错误', async () => {
@@ -534,6 +758,56 @@ describe('ApiToMcpServiceManagerImpl', () => {
       restartPromise.catch(() => {});
       await vi.advanceTimersByTimeAsync(1500);
       await expect(restartPromise).rejects.toThrow('无法重启：配置文件路径未设置');
+
+      vi.useRealTimers();
+    });
+
+    it('重启时初始化失败应进入 ERROR 状态并抛出原始错误', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      await fs.writeFile(configPath, JSON.stringify({ version: '1.0', tools: [] }));
+      await serviceManager.initialize(configPath);
+
+      // 写入无效配置后重启
+      await fs.writeFile(configPath, '{ invalid }');
+      const restartPromise = serviceManager.restart();
+      restartPromise.catch(() => {});
+      await vi.advanceTimersByTimeAsync(1500);
+      await expect(restartPromise).rejects.toThrow('初始化失败');
+
+      expect(serviceManager.getHealthStatus().status).toBe(ServiceStatus.ERROR);
+
+      vi.useRealTimers();
+    });
+
+    it('重启后应重建组件并恢复工具', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      const config: ApiToolsConfig = {
+        version: '1.0',
+        tools: [
+          {
+            id: 'restart-tool',
+            name: '重启工具',
+            description: '测试重启重建',
+            api: { url: 'https://api.example.com/restart-tool', method: 'GET' },
+            parameters: { type: 'object', properties: {} },
+            response: {},
+          },
+        ],
+      };
+      await fs.writeFile(configPath, JSON.stringify(config));
+      await serviceManager.initialize(configPath);
+
+      const restartPromise = serviceManager.restart();
+      await vi.advanceTimersByTimeAsync(1500);
+      await restartPromise;
+
+      const health = serviceManager.getHealthStatus();
+      expect(health.status).toBe(ServiceStatus.RUNNING);
+      expect(health.toolStats.total).toBe(1);
+      expect(serviceManager.getToolDefinition('restart-tool')).toBeDefined();
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('服务管理器重启完成');
 
       vi.useRealTimers();
     });

@@ -111,6 +111,49 @@ describe('DomainWhitelistImpl', () => {
       expect(domainWhitelist.isAllowed('https://api.test.com/api')).toBe(true);
       expect(domainWhitelist.isAllowed('https://www.example.com/test')).toBe(false);
     });
+
+    it('非通配符域名不应误放行其他子域名', () => {
+      domainWhitelist.addDomain('example.com');
+
+      // 仅精确域名允许；子域名与前缀相似的域名都应拒绝
+      expect(domainWhitelist.isAllowed('https://example.com/path')).toBe(true);
+      expect(domainWhitelist.isAllowed('https://api.example.com/path')).toBe(false);
+      expect(domainWhitelist.isAllowed('https://notexample.com/path')).toBe(false);
+    });
+  });
+
+  describe('validateDomain', () => {
+    it('白名单内域名应返回 allowed 且无 reason', () => {
+      domainWhitelist.addDomain('api.example.com');
+
+      const result = domainWhitelist.validateDomain('https://api.example.com/test');
+
+      expect(result.allowed).toBe(true);
+      expect(result.domain).toBe('api.example.com');
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('白名单外域名应返回拒绝原因', () => {
+      domainWhitelist.addDomain('api.example.com');
+
+      const result = domainWhitelist.validateDomain('https://evil.com/path');
+
+      expect(result).toEqual({
+        allowed: false,
+        domain: 'evil.com',
+        reason: '域名不在白名单中',
+      });
+    });
+
+    it('无效 URL 应返回空域名与格式错误原因', () => {
+      domainWhitelist.addDomain('api.example.com');
+
+      const result = domainWhitelist.validateDomain('not-a-url');
+
+      expect(result.allowed).toBe(false);
+      expect(result.domain).toBe('');
+      expect(result.reason).toContain('无效的URL格式');
+    });
   });
 
   describe('配置和初始化', () => {
