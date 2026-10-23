@@ -1,0 +1,49 @@
+name: Inspect existing mutation artifact
+
+on:
+  push:
+    branches: ["codex/inspect-mutation-artifact-20261023"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download the existing share report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/yourtion/mcp-knot/actions/artifacts/12501304588/zip > artifact.zip
+
+      - name: Inspect mutation error classifications
+        run: |
+          python3 - <<'PY'
+          import collections, json, zipfile
+          with zipfile.ZipFile('artifact.zip') as archive:
+              names = archive.namelist()
+              print('Artifact entries:', json.dumps(names))
+              candidates = [name for name in names if name.endswith('mutation.json')]
+              if not candidates:
+                  raise SystemExit('Missing mutation.json')
+              report = json.loads(archive.read(candidates[0]))
+              counts = collections.Counter()
+              errors = []
+              normal = {'Killed', 'Survived', 'NoCoverage', 'Timeout', 'Ignored', 'Pending'}
+              for file_name, file_report in report['files'].items():
+                  source = file_report.get('source', '').splitlines()
+                  for mutant in file_report.get('mutants', []):
+                      counts[mutant['status']] += 1
+                      if mutant['status'] not in normal:
+                          first = mutant.get('location', {}).get('start', {}).get('line', 1)
+                          errors.append({'file': file_name, **mutant, 'sourceContext': source[max(0, first-2):first+2]})
+              print('STATUS_COUNTS_JSON=' + json.dumps(dict(counts), ensure_ascii=False, sort_keys=True))
+              for error in errors:
+                  print('MUTANT_ERROR_JSON=' + json.dumps(error, ensure_ascii=False, sort_keys=True))
+              if sum(counts.values()) != 1026:
+                  raise SystemExit('Unexpected share scope')
+              if len(errors) != 7:
+                  raise SystemExit('Unexpected error count')
+          PY
