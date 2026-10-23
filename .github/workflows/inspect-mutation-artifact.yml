@@ -1,49 +1,58 @@
 name: Inspect existing mutation artifact
-
 on:
   push:
     branches: ["codex/inspect-mutation-artifact-20261023"]
-
 permissions:
   contents: read
   actions: read
-
 jobs:
   inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Download the existing share report
+      - name: Download existing PR and main share reports
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api repos/yourtion/mcp-knot/actions/artifacts/12501304588/zip > artifact.zip
-
-      - name: Inspect mutation error classifications
+        run: |
+          gh api repos/yourtion/mcp-knot/actions/artifacts/12501304588/zip > pr.zip
+          gh api repos/yourtion/mcp-knot/actions/artifacts/12524795272/zip > main.zip
+      - name: Compare error signatures and verify the main baseline pair
         run: |
           python3 - <<'PY'
-          import collections, json, zipfile
-          with zipfile.ZipFile('artifact.zip') as archive:
-              names = archive.namelist()
-              print('Artifact entries:', json.dumps(names))
-              candidates = [name for name in names if name.endswith('mutation.json')]
-              if not candidates:
-                  raise SystemExit('Missing mutation.json')
-              report = json.loads(archive.read(candidates[0]))
-              counts = collections.Counter()
-              errors = []
-              normal = {'Killed', 'Survived', 'NoCoverage', 'Timeout', 'Ignored', 'Pending'}
-              for file_name, file_report in report['files'].items():
-                  source = file_report.get('source', '').splitlines()
-                  for mutant in file_report.get('mutants', []):
-                      counts[mutant['status']] += 1
-                      if mutant['status'] not in normal:
-                          first = mutant.get('location', {}).get('start', {}).get('line', 1)
-                          errors.append({'file': file_name, **mutant, 'sourceContext': source[max(0, first-2):first+2]})
-              print('STATUS_COUNTS_JSON=' + json.dumps(dict(counts), ensure_ascii=False, sort_keys=True))
-              for error in errors:
-                  print('MUTANT_ERROR_JSON=' + json.dumps(error, ensure_ascii=False, sort_keys=True))
-              if sum(counts.values()) != 1026:
-                  raise SystemExit('Unexpected share scope')
-              if len(errors) != 7:
-                  raise SystemExit('Unexpected error count')
+          import collections, hashlib, json, re, zipfile
+          def inspect(path):
+              with zipfile.ZipFile(path) as archive:
+                  names = archive.namelist()
+                  report_name = next(name for name in names if name.endswith('mutation.json'))
+                  report = json.loads(archive.read(report_name))
+                  counts = collections.Counter()
+                  errors = []
+                  for file_name, data in report['files'].items():
+                      for mutant in data.get('mutants', []):
+                          counts[mutant['status']] += 1
+                          if mutant['status'] == 'RuntimeError':
+                              errors.append({'file': file_name, **mutant})
+                  result = {'counts': dict(counts), 'errors': errors}
+                  if path == 'main.zip':
+                      incremental_name = next(name for name in names if name.endswith('stryker-incremental.json'))
+                      sidecar_name = next(name for name in names if name.endswith('stryker-incremental.json.inputs.json'))
+                      data = archive.read(incremental_name)
+                      sidecar = json.loads(archive.read(sidecar_name))
+                      result['baselineIntegrity'] = {'schema': sidecar['schema'], 'hash': sidecar['hash'], 'semanticHash': sidecar['semanticHash'], 'digestMatches': sidecar['reportDigest'] == hashlib.sha256(data).hexdigest(), 'wrapperDigest': sidecar['wrapperDigest']}
+                      assert result['baselineIntegrity']['digestMatches']
+                      assert sidecar['schema'] == 3
+                  return result
+          pr, main = inspect('pr.zip'), inspect('main.zip')
+          def signature(error):
+              return json.dumps({key: error.get(key) for key in ['file', 'id', 'status', 'location', 'mutatorName', 'replacement', 'static']}, sort_keys=True)
+          comparison = {'sameErrorSignatures': sorted(map(signature, pr['errors'])) == sorted(map(signature, main['errors'])), 'prCounts': pr['counts'], 'mainCounts': main['counts'], 'baselineIntegrity': main['baselineIntegrity']}
+          print('COMPARISON_JSON=' + json.dumps(comparison, ensure_ascii=False, sort_keys=True))
+          for error in main['errors']:
+              reason = error.get('statusReason', '')
+              match = re.search(r'message: (.*),', reason)
+              item = {key: error.get(key) for key in ['file', 'id', 'status', 'location', 'mutatorName', 'replacement', 'static']}
+              item['message'] = match.group(1) if match else reason[:300]
+              print('MAIN_ERROR_JSON=' + json.dumps(item, ensure_ascii=False, sort_keys=True))
+          assert comparison['sameErrorSignatures']
+          assert len(main['errors']) == 7 and sum(main['counts'].values()) == 1026
           PY
