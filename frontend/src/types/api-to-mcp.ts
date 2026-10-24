@@ -54,13 +54,7 @@ export interface ApiEndpointConfig {
 /**
  * 响应配置
  */
-export interface ResponseConfig {
-  statusCodePath?: string;
-  dataPath?: string;
-  errorMessagePath?: string;
-  successCodes?: number[];
-  errorCodes?: number[];
-}
+export type ResponseConfig = SharedApiToolConfig['response'];
 
 /**
  * API工具配置

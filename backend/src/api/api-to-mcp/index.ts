@@ -303,9 +303,27 @@ apiToMcpRoutes.post('/configs/:id/test', async (c) => {
 });
 
 /**
- * 获取API配置详情
- * GET /api/api-to-mcp/configs/:id
+ * 获取API配置统计（必须在动态配置ID路由之前注册）
+ * GET /api/api-to-mcp/configs/stats
  */
+apiToMcpRoutes.get('/configs/stats', async (c) => {
+  try {
+    const service = c.get('apiToMcpWebService') as ApiToMcpWebService;
+    const { configs } = await service.getConfigs();
+    return successResponse(c, {
+      totalConfigs: configs.length,
+      activeConfigs: configs.filter((config) => config.status === 'active').length,
+      totalTools: configs.reduce((total, config) => total + config.toolsGenerated, 0),
+      lastUpdated: configs.reduce(
+        (latest, config) => (config.lastUpdated > latest ? config.lastUpdated : latest),
+        '',
+      ),
+    });
+  } catch (error) {
+    return errorResponse(c, error as Error, 500);
+  }
+});
+
 apiToMcpRoutes.get('/configs/:id', async (c) => {
   try {
     const configId = c.req.param('id');
