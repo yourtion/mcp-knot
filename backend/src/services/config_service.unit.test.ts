@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '../utils/logger.js';
 import { ConfigService } from './config_service.js';
 
 import type { GroupConfig, McpConfig, SystemConfig } from '@mcp-core/mcp-knot-share';
@@ -9,6 +11,7 @@ import type { GroupConfig, McpConfig, SystemConfig } from '@mcp-core/mcp-knot-sh
 // Mock dependencies
 vi.mock('node:fs/promises');
 vi.mock('../utils/config.js');
+vi.mock('../utils/logger.js');
 vi.mock('./skills-service.js', () => ({
   getSkillRepository: vi.fn().mockReturnValue({
     catalog: vi.fn().mockResolvedValue([]),
@@ -110,6 +113,52 @@ describe('ConfigService', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('constructor 目录初始化', () => {
+    afterEach(() => {
+      delete process.env.CONFIG_PATH;
+    });
+
+    it('CONFIG_PATH 显式指定时 history/backup 目录用其子目录', async () => {
+      process.env.CONFIG_PATH = '/tmp/cs-unit-config';
+      const service = new ConfigService();
+      // 构造器不等待 ensureDirectories：第二个 mkdir 排在首个 await 之后，先刷新微任务
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockFs.mkdir).toHaveBeenCalledWith('/tmp/cs-unit-config/.history', {
+        recursive: true,
+      });
+      expect(mockFs.mkdir).toHaveBeenCalledWith('/tmp/cs-unit-config/.backups', {
+        recursive: true,
+      });
+
+      // 读写路径同样落在 CONFIG_PATH 下
+      mockFs.readdir.mockResolvedValue([] as never);
+      await service.getBackupCount();
+      expect(String(mockFs.readdir.mock.calls[0][0])).toBe('/tmp/cs-unit-config/.backups');
+    });
+
+    it('未设置 CONFIG_PATH 时默认使用 cwd/config 目录', async () => {
+      delete process.env.CONFIG_PATH;
+      const service = new ConfigService();
+
+      mockFs.stat.mockResolvedValue({ mtime: new Date(0) } as never);
+      await service.getLastUpdatedTime();
+      expect(String(mockFs.stat.mock.calls[0][0])).toBe(
+        path.resolve(process.cwd(), 'config', 'system.json'),
+      );
+    });
+
+    it('目录创建失败时记录错误且构造不抛错', async () => {
+      mockFs.mkdir.mockRejectedValue(new Error('mkdir boom') as never);
+      expect(() => new ConfigService()).not.toThrow();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith('创建配置目录失败', expect.any(Error), {
+        dir: expect.any(String),
+      });
+    });
   });
 
   describe('getCurrentConfig', () => {
@@ -391,10 +440,12 @@ describe('ConfigService', () => {
 
       const result = await configService.analyzeConfigImpact('system', systemConfig);
 
-      expect(result.affectedServices).toContain('认证服务');
-      expect(result.affectedServices).toContain('Web服务器');
-      expect(result.requiresRestart).toBe(true);
-      expect(result.recommendations).toContain('建议在维护窗口期间进行系统配置更新');
+      expect(result).toStrictEqual({
+        affectedServices: ['认证服务', 'Web服务器', '监控服务'],
+        requiresRestart: true,
+        potentialIssues: [],
+        recommendations: ['建议在维护窗口期间进行系统配置更新'],
+      });
     });
 
     it('应该正确分析MCP配置的影响', async () => {
@@ -409,9 +460,12 @@ describe('ConfigService', () => {
 
       const result = await configService.analyzeConfigImpact('mcp', mcpConfig);
 
-      expect(result.affectedServices).toContain('MCP服务管理器');
-      expect(result.requiresRestart).toBe(false);
-      expect(result.recommendations).toContain('MCP服务器配置更改将在下次连接时生效');
+      expect(result).toStrictEqual({
+        affectedServices: ['MCP服务管理器', '工具管理器'],
+        requiresRestart: false,
+        potentialIssues: [],
+        recommendations: ['MCP服务器配置更改将在下次连接时生效'],
+      });
     });
 
     it('应该正确分析组配置的影响', async () => {
@@ -426,9 +480,12 @@ describe('ConfigService', () => {
 
       const result = await configService.analyzeConfigImpact('groups', groupConfig);
 
-      expect(result.affectedServices).toContain('组管理器');
-      expect(result.requiresRestart).toBe(false);
-      expect(result.recommendations).toContain('组配置更改将立即生效');
+      expect(result).toStrictEqual({
+        affectedServices: ['组管理器', '工具过滤器'],
+        requiresRestart: false,
+        potentialIssues: [],
+        recommendations: ['组配置更改将立即生效'],
+      });
     });
   });
 
@@ -794,10 +851,38 @@ describe('ConfigService', () => {
         },
       };
       await expect(configService.updateConfig('groups', invalidGroups)).rejects.toThrow(
-        /启用验证时必须提供验证密钥/,
+        /default\.validation\.validationKey: 启用验证时必须提供验证密钥/,
       );
       const { saveConfig } = await import('../utils/config.js');
       expect(vi.mocked(saveConfig)).not.toHaveBeenCalled();
+    });
+
+    it('配置无变化时历史记录的 changes 为空数组', async () => {
+      const sameConfig = buildSystemConfig();
+      await configService.updateConfig('system', sameConfig);
+
+      const history = JSON.parse(mockFs.writeFile.mock.calls[0][1] as string);
+      expect(history.changes).toEqual([]);
+    });
+
+    it('历史记录失败被吞掉：配置仍写入且不抛错', async () => {
+      mockFs.writeFile.mockRejectedValueOnce(new Error('history io boom') as never);
+      const newConfig = buildSystemConfig({ server: { port: 3002, host: 'localhost' } });
+
+      await expect(configService.updateConfig('system', newConfig)).resolves.toBeUndefined();
+      const { saveConfig } = await import('../utils/config.js');
+      expect(vi.mocked(saveConfig)).toHaveBeenCalledWith('system.json', newConfig);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith('记录配置历史失败', expect.any(Error));
+    });
+
+    it('历史文件名包含时间戳、配置类型与 UUID', async () => {
+      await configService.updateConfig('mcp', { servers: { s1: { command: 'node' } } });
+
+      const filePath = String(mockFs.writeFile.mock.calls[0][0]);
+      expect(filePath).toContain(`${path.sep}.history${path.sep}`);
+      expect(filePath).toMatch(
+        /-mcp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/,
+      );
     });
 
     it('不支持的配置类型抛 ConfigError', async () => {
@@ -822,13 +907,62 @@ describe('ConfigService', () => {
       ]);
     });
 
+    it('端口恰为 1024 时不产生权限警告（边界不含）', async () => {
+      const boundaryPortConfig = buildSystemConfig({ server: { port: 1024, host: 'localhost' } });
+      const result = await configService.validateConfig('system', boundaryPortConfig);
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('JWT 密钥恰为 32 字符时合法；31 字符时报错（边界）', async () => {
+      const exactSecret = buildSystemConfig();
+      (exactSecret.auth.jwt as { secret: string }).secret = 'a'.repeat(32);
+      const exact = await configService.validateConfig('system', exactSecret);
+      expect(exact.valid).toBe(true);
+      expect(exact.errors).toEqual([]);
+
+      const shortSecret = buildSystemConfig();
+      (shortSecret.auth.jwt as { secret: string }).secret = 'a'.repeat(31);
+      const short = await configService.validateConfig('system', shortSecret);
+      expect(short.valid).toBe(false);
+      // 31 字符同时触发 zod too_small 与自定义 JWT_SECRET_TOO_SHORT 两条错误
+      expect(short.errors).toEqual(
+        expect.arrayContaining([
+          {
+            path: 'auth.jwt.secret',
+            message: 'JWT密钥长度不能少于32个字符',
+            code: 'JWT_SECRET_TOO_SHORT',
+            severity: 'error',
+          },
+        ]),
+      );
+      expect(short.errors.some((e) => e.path === 'auth.jwt.secret')).toBe(true);
+    });
+
+    it('server/auth 整块缺失时不因自定义校验崩溃（无 VALIDATION_ERROR）', async () => {
+      const result = await configService.validateConfig('system', {
+        server: undefined,
+        auth: undefined,
+      });
+      expect(result.errors.every((error) => error.code !== 'VALIDATION_ERROR')).toBe(true);
+    });
+
+    it('transport-only 的 MCP server 不误报 MISSING_COMMAND', async () => {
+      const result = await configService.validateConfig('mcp', {
+        servers: {
+          s1: { transport: { type: 'sse', url: 'http://upstream/sse' } },
+        },
+      });
+      expect(result.errors.every((error) => error.code !== 'MISSING_COMMAND')).toBe(true);
+    });
+
     it('不支持的配置类型进入 catch 产生 root 错误', async () => {
       const result = await configService.validateConfig('unknown' as never, {});
       expect(result.valid).toBe(false);
       expect(result.errors).toEqual([
         {
           path: 'root',
-          message: expect.stringContaining('不支持的配置类型'),
+          message: '不支持的配置类型: unknown',
           code: 'VALIDATION_ERROR',
           severity: 'error',
         },
@@ -1036,11 +1170,68 @@ describe('ConfigService', () => {
       // 恢复操作的历史记录
       const history = JSON.parse(mockFs.writeFile.mock.calls[0][1] as string);
       expect(history.configType).toBe('system');
+      expect(history.description).toBe(`从备份 ${backupId} 恢复配置`);
+      expect(history.user).toBe('system');
       expect(history.changes[0]).toMatchObject({
         path: 'root',
         operation: 'update',
         newValue: { restored: true, backupId, configTypes: ['system', 'mcp', 'groups'] },
       });
+    });
+
+    it('configTypes 含 groups 但备份缺 groups 时跳过并告警（不抛错）', async () => {
+      const { getAllConfig, saveConfig } = await import('../utils/config.js');
+      vi.mocked(getAllConfig).mockResolvedValue({
+        system: buildSystemConfig() as SystemConfig,
+        mcps: { servers: { s1: { command: 'node' } } } as unknown as McpConfig,
+        groups: {} as GroupConfig,
+      });
+      vi.mocked(saveConfig).mockResolvedValue(undefined);
+      // 备份声明 groups 类型但 configs 中无 groups 内容
+      mockFs.readFile.mockResolvedValue(
+        JSON.stringify({
+          ...backupContent,
+          configTypes: ['system', 'groups'],
+          configs: { system: backupContent.configs.system },
+        }),
+      );
+
+      await expect(configService.restoreFromBackup(backupId)).resolves.toBeUndefined();
+      expect(vi.mocked(saveConfig)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(saveConfig)).toHaveBeenCalledWith(
+        'system.json',
+        backupContent.configs.system,
+      );
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('备份中不包含指定类型配置', {
+        configType: 'groups',
+      });
+    });
+
+    it('备份 configTypes 含未知类型时仅恢复已知类型', async () => {
+      const { getAllConfig, saveConfig } = await import('../utils/config.js');
+      vi.mocked(getAllConfig).mockResolvedValue({
+        system: buildSystemConfig() as SystemConfig,
+        mcps: { servers: {} } as McpConfig,
+        groups: {} as GroupConfig,
+      });
+      vi.mocked(saveConfig).mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(
+        JSON.stringify({
+          ...backupContent,
+          configTypes: ['system', 'bogus'],
+          configs: {
+            system: backupContent.configs.system,
+            bogus: { whatever: true },
+          },
+        }),
+      );
+
+      await configService.restoreFromBackup(backupId);
+      expect(vi.mocked(saveConfig)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(saveConfig)).toHaveBeenCalledWith(
+        'system.json',
+        backupContent.configs.system,
+      );
     });
 
     it('仅恢复指定类型；备份缺失的类型跳过', async () => {

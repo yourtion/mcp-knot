@@ -155,6 +155,19 @@ describe('ToolManager', () => {
       const tools = await toolManager.getToolsForGroup('default');
       expect(tools).toEqual(mockTools);
       expect(mockGroupManager.getGroupTools).toHaveBeenCalledWith('default');
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Getting tools for group', {
+        groupId: 'default',
+      });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Retrieved and cached tools for group', {
+        groupId: 'default',
+        mcpToolCount: 3,
+        apiToolCount: 0,
+        totalToolCount: 3,
+      });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Cached tools for group', {
+        groupId: 'default',
+        toolCount: 3,
+      });
     });
 
     it('should cache tools for subsequent requests', async () => {
@@ -165,6 +178,10 @@ describe('ToolManager', () => {
 
       // Should only call group manager once
       expect(mockGroupManager.getGroupTools).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Returning cached tools for group', {
+        groupId: 'default',
+        toolCount: 3,
+      });
     });
 
     it('should refresh cache after TTL expires', async () => {
@@ -181,6 +198,10 @@ describe('ToolManager', () => {
       await toolManager.getToolsForGroup('default');
 
       expect(mockGroupManager.getGroupTools).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool cache expired for group', {
+        groupId: 'default',
+        age: 31000,
+      });
     });
 
     it('should throw error for non-existent group', async () => {
@@ -195,12 +216,19 @@ describe('ToolManager', () => {
       );
 
       await expect(toolManager.getToolsForGroup('default')).rejects.toThrow('Group manager error');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to get tools for group',
+        expect.any(Error),
+        { groupId: 'default' },
+      );
     });
 
     it('cache 未命中且无 apiToolService 时不请求 API 工具', async () => {
       const tools = await toolManager.getToolsForGroup('default');
       expect(tools).toEqual(mockTools);
       expect(logger.debug).not.toHaveBeenCalledWith('Retrieved API tools', expect.anything());
+      // 无 apiToolService 时不应误入 API 工具降级分支
+      expect(logger.warn).not.toHaveBeenCalledWith('Failed to get API tools', expect.anything());
     });
   });
 
@@ -322,6 +350,23 @@ describe('ToolManager', () => {
       expect(mockServerManager.executeToolOnServer).toHaveBeenCalledWith('server1', 'tool1', {
         arg1: 'test',
       });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Routing tool execution', {
+        executionId: expect.any(String),
+        groupId: 'default',
+        toolName: 'tool1',
+      });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool routing successful (MCP tool)', {
+        executionId: expect.any(String),
+        toolName: 'tool1',
+        serverId: 'server1',
+        groupId: 'default',
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Tool execution completed successfully', {
+        executionId: expect.any(String),
+        groupId: 'default',
+        toolName: 'tool1',
+        serverId: 'server1',
+      });
     });
 
     it('should validate group access before execution', async () => {
@@ -330,6 +375,10 @@ describe('ToolManager', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
       expect(mockServerManager.executeToolOnServer).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Group validation failed',
+        expect.objectContaining({ groupId: 'non-existent', error: expect.any(String) }),
+      );
     });
 
     it('should validate tool access in group', async () => {
@@ -338,6 +387,11 @@ describe('ToolManager', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not accessible in group');
       expect(mockServerManager.executeToolOnServer).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Tool access denied', {
+        executionId: expect.any(String),
+        groupId: 'filtered',
+        toolName: 'tool2',
+      });
     });
 
     it('should validate tool arguments against schema', async () => {
@@ -346,6 +400,14 @@ describe('ToolManager', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Missing required argument: arg1');
       expect(mockServerManager.executeToolOnServer).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Tool argument validation failed',
+        expect.objectContaining({
+          groupId: 'default',
+          toolName: 'tool1',
+          error: expect.stringContaining('Missing required argument: arg1'),
+        }),
+      );
     });
 
     it('should handle tool execution failures', async () => {
@@ -359,6 +421,11 @@ describe('ToolManager', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Tool execution failed after 2 attempts');
+      // 首次尝试失败与最终失败日志
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Tool execution attempt failed',
+        expect.objectContaining({ attempt: 1, maxRetries: 2, error: 'Tool execution failed' }),
+      );
     });
 
     it('should retry on retryable errors', async () => {
@@ -449,6 +516,12 @@ describe('ToolManager', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe("Tool 'unknown-tool' not found in group 'default'");
       expect(mockServerManager.executeToolOnServer).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Tool routing failed', {
+        executionId: expect.any(String),
+        groupId: 'default',
+        toolName: 'unknown-tool',
+        error: "Tool 'unknown-tool' not found in group 'default'",
+      });
     });
 
     it('server 不在连接表中时返回 not available (status: not found)', async () => {
@@ -534,6 +607,11 @@ describe('ToolManager', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe('Routing failed: servers unavailable');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error during tool routing',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'default', toolName: 'tool1' }),
+      );
     });
 
     it('validateToolAccess 抛错时返回 Unexpected error 结果', async () => {
@@ -545,6 +623,11 @@ describe('ToolManager', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe('Unexpected error: access check exploded');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Unexpected error during tool execution',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'default', toolName: 'tool1', args: { arg1: 'x' } }),
+      );
     });
 
     it('retryable 错误连续失败时重试满 2 次并返回精确错误与日志', async () => {
@@ -580,6 +663,11 @@ describe('ToolManager', () => {
       const resultPromise = toolManager.executeTool('default', 'tool1', { arg1: 'x' });
       // 触发第一次执行并进入退避等待
       await vi.advanceTimersByTimeAsync(0);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Waiting before retry', {
+        executionId: expect.any(String),
+        attempt: 1,
+        delay: 1000,
+      });
 
       await vi.advanceTimersByTimeAsync(999);
       expect(mockServerManager.executeToolOnServer).toHaveBeenCalledTimes(1);
@@ -589,8 +677,76 @@ describe('ToolManager', () => {
 
       expect(result.isError).toBe(false);
       expect(mockServerManager.executeToolOnServer).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool execution attempt successful', {
+        executionId: expect.any(String),
+        serverId: 'server1',
+        toolName: 'tool1',
+        attempt: 2,
+      });
 
       vi.useRealTimers();
+    });
+
+    it('第二次退避精确为 2000ms（指数退避第 2 档，maxRetries=3）', async () => {
+      vi.useFakeTimers();
+      const retrying = toolManager as unknown as {
+        executeToolWithRetry: (
+          serverId: string,
+          toolName: string,
+          args: Record<string, unknown>,
+          executionId: string,
+          maxRetries: number,
+        ) => Promise<{ isError: boolean; content: Array<{ text: string }> }>;
+      };
+      vi.mocked(mockServerManager.executeToolOnServer)
+        .mockRejectedValueOnce(new Error('connection reset'))
+        .mockRejectedValueOnce(new Error('connection reset'))
+        .mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok' }] });
+
+      const promise = retrying.executeToolWithRetry('server1', 'tool1', { arg1: 'x' }, 'exec-x', 3);
+      await vi.advanceTimersByTimeAsync(0); // 第 1 次尝试失败，进入第 1 档退避
+      await vi.advanceTimersByTimeAsync(1000); // 第 2 次尝试失败，进入第 2 档退避
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Waiting before retry', {
+        executionId: 'exec-x',
+        attempt: 2,
+        delay: 2000,
+      });
+
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await promise;
+      expect(result.isError).toBe(false);
+      expect(mockServerManager.executeToolOnServer).toHaveBeenCalledTimes(3);
+
+      vi.useRealTimers();
+    });
+
+    it('maxRetries=0 时直接返回 Unknown error 结果（lastError 为空）', async () => {
+      const retrying = toolManager as unknown as {
+        executeToolWithRetry: (
+          serverId: string,
+          toolName: string,
+          args: Record<string, unknown>,
+          executionId: string,
+          maxRetries: number,
+        ) => Promise<{ isError: boolean; content: Array<{ text: string }> }>;
+      };
+
+      const result = await retrying.executeToolWithRetry('server1', 'tool1', {}, 'exec-0', 0);
+
+      expect(mockServerManager.executeToolOnServer).not.toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toBe('Tool execution failed after 0 attempts: Unknown error');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool execution failed after all retries',
+        expect.any(Error),
+        expect.objectContaining({
+          executionId: 'exec-0',
+          serverId: 'server1',
+          toolName: 'tool1',
+          maxRetries: 0,
+          finalError: undefined,
+        }),
+      );
     });
   });
 
@@ -598,16 +754,36 @@ describe('ToolManager', () => {
     it('should find server for existing tool', () => {
       const serverId = toolManager.findToolServer('tool1', 'default');
       expect(serverId).toBe('server1');
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Finding server for tool', {
+        toolName: 'tool1',
+        groupId: 'default',
+      });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Found tool on server', {
+        toolName: 'tool1',
+        serverId: 'server1',
+        groupId: 'default',
+      });
     });
 
     it('should return undefined for non-existent tool', () => {
       const serverId = toolManager.findToolServer('non-existent-tool', 'default');
       expect(serverId).toBeUndefined();
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool not found on any server in group',
+        {
+          toolName: 'non-existent-tool',
+          groupId: 'default',
+          searchedServers: ['server1', 'server2'],
+        },
+      );
     });
 
     it('should return undefined for non-existent group', () => {
       const serverId = toolManager.findToolServer('tool1', 'non-existent');
       expect(serverId).toBeUndefined();
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Group not found', {
+        groupId: 'non-existent',
+      });
     });
 
     it('should only search in group servers', () => {
@@ -645,6 +821,9 @@ describe('ToolManager', () => {
 
       const serverId = toolManager.findToolServer('tool1', 'default');
       expect(serverId).toBeUndefined();
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('No available servers in group', {
+        groupId: 'default',
+      });
     });
 
     it('getAllServers 抛错时跳过该 server 并返回 undefined', () => {
@@ -709,15 +888,34 @@ describe('ToolManager', () => {
         arg: 'value',
       });
       expect(isValid).toBe(true); // Should allow and let server handle validation
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool definition not found for validation',
+        { toolName: 'non-existent' },
+      );
     });
 
     it('schema 校验过程抛错时放行并返回 true', () => {
-      // args 为 null 时 schema 校验器抛 TypeError，validateToolArgs 捕获后放行
+      // args 为 null 时 schema 校验器内部捕获并放行（不传播到 ToolManager）
       const isValid = toolManager.validateToolArgs(
         'tool1',
         null as unknown as Record<string, unknown>,
       );
       expect(isValid).toBe(true);
+    });
+
+    it('工具定义检索抛错时放行并记录 Error validating tool arguments', () => {
+      // getAllServers 抛错 → findToolDefinition 抛出 → validateToolArgs 捕获放行
+      vi.mocked(mockServerManager.getAllServers).mockImplementation(() => {
+        throw new Error('definition lookup exploded');
+      });
+
+      const isValid = toolManager.validateToolArgs('tool1', { arg1: 'x' });
+      expect(isValid).toBe(true);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error validating tool arguments',
+        expect.any(Error),
+        expect.objectContaining({ toolName: 'tool1' }),
+      );
     });
 
     it('优先使用缓存中的工具定义进行校验', async () => {
@@ -745,6 +943,9 @@ describe('ToolManager', () => {
 
       // Clear cache for group
       toolManager.clearCacheForGroup('default');
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool cache cleared for group', {
+        groupId: 'default',
+      });
 
       // Next call should hit group manager again
       await toolManager.getToolsForGroup('default');
@@ -758,6 +959,7 @@ describe('ToolManager', () => {
 
       // Clear all cache
       toolManager.clearCache();
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Tool cache cleared');
 
       // Next calls should hit group manager again
       await toolManager.getToolsForGroup('default');
@@ -769,6 +971,12 @@ describe('ToolManager', () => {
     it('should refresh cache for specific group', async () => {
       await toolManager.refreshToolCache('default');
       expect(mockGroupManager.getGroupTools).toHaveBeenCalledWith('default');
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Refreshing tool cache for group', {
+        groupId: 'default',
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Tool cache refreshed for group', {
+        groupId: 'default',
+      });
     });
 
     it('should refresh cache for all groups', async () => {
@@ -776,6 +984,8 @@ describe('ToolManager', () => {
       // Should refresh cache for all known groups
       expect(mockGroupManager.getGroupTools).toHaveBeenCalledWith('default');
       expect(mockGroupManager.getGroupTools).toHaveBeenCalledWith('filtered');
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Refreshing all tool caches');
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('All tool caches refreshed');
     });
 
     it('cache 年龄恰好等于 TTL 时仍命中缓存（不含边界刷新）', async () => {
@@ -795,6 +1005,11 @@ describe('ToolManager', () => {
       vi.mocked(mockGroupManager.getGroupTools).mockRejectedValueOnce(new Error('refresh boom'));
 
       await expect(toolManager.refreshToolCache('default')).rejects.toThrow('refresh boom');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to refresh cache for group',
+        expect.any(Error),
+        { groupId: 'default' },
+      );
     });
 
     it('refreshToolCache 全组刷新时单组失败不影响整体', async () => {
@@ -883,6 +1098,11 @@ describe('ToolManager', () => {
       await expect(toolManager.getToolsByServer('non-existent')).rejects.toThrow(
         'Group non-existent not found',
       );
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to get tools by server for group',
+        expect.any(Error),
+        { groupId: 'non-existent' },
+      );
     });
 
     it('getToolsByServer 单个 server 获取失败时该 server 记为空数组', async () => {
@@ -903,20 +1123,40 @@ describe('ToolManager', () => {
     it('should get available tool names for group', async () => {
       const toolNames = await toolManager.getAvailableToolNames('default');
       expect(toolNames).toEqual(['tool1', 'tool2', 'tool3']);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Retrieved tool names for group', {
+        groupId: 'default',
+        toolCount: 3,
+        toolNames: ['tool1', 'tool2', 'tool3'],
+      });
     });
 
     it('getAvailableToolNames 获取工具失败时向上抛出', async () => {
       vi.mocked(mockGroupManager.getGroupTools).mockRejectedValueOnce(new Error('names boom'));
 
       await expect(toolManager.getAvailableToolNames('default')).rejects.toThrow('names boom');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to get tool names for group',
+        expect.any(Error),
+        { groupId: 'default' },
+      );
     });
 
     it('should check tool availability in group', async () => {
       const isAvailable = await toolManager.isToolAvailableInGroup('default', 'tool1');
       expect(isAvailable).toBe(true);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool availability check result', {
+        groupId: 'default',
+        toolName: 'tool1',
+        isAvailable: true,
+        serverId: 'server1',
+      });
 
       const isNotAvailable = await toolManager.isToolAvailableInGroup('filtered', 'tool2');
       expect(isNotAvailable).toBe(false);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool access denied by group policy',
+        expect.objectContaining({ groupId: 'filtered', toolName: 'tool2' }),
+      );
     });
 
     it('isToolAvailableInGroup 校验抛错时返回 false', async () => {
@@ -926,14 +1166,28 @@ describe('ToolManager', () => {
 
       const isAvailable = await toolManager.isToolAvailableInGroup('default', 'tool1');
       expect(isAvailable).toBe(false);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error checking tool availability',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'default', toolName: 'tool1' }),
+      );
     });
 
     it('should get tool details', async () => {
       const toolDetails = await toolManager.getToolDetails('default', 'tool1');
       expect(toolDetails).toEqual(mockTools[0]);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Found tool details', {
+        groupId: 'default',
+        toolName: 'tool1',
+        serverId: 'server1',
+      });
 
       const noDetails = await toolManager.getToolDetails('filtered', 'tool2');
       expect(noDetails).toBeNull();
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool not available in group', {
+        groupId: 'filtered',
+        toolName: 'tool2',
+      });
     });
 
     it('getToolDetails 获取工具列表失败时返回 null', async () => {
@@ -941,6 +1195,11 @@ describe('ToolManager', () => {
 
       const details = await toolManager.getToolDetails('default', 'tool1');
       expect(details).toBeNull();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error getting tool details',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'default', toolName: 'tool1' }),
+      );
     });
   });
 
@@ -986,6 +1245,11 @@ describe('ToolManager', () => {
         serverCount: 0,
         toolCount: 0,
       });
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error validating group access',
+        expect.any(Error),
+        { groupId: 'default' },
+      );
     });
   });
 
@@ -1026,6 +1290,18 @@ describe('ToolManager', () => {
           ['default', true],
           ['filtered', false],
         ]),
+      );
+    });
+
+    it('getAllGroups 抛错时 getExecutionHealth 记录错误并向上抛出', async () => {
+      vi.mocked(mockGroupManager.getAllGroups).mockImplementation(() => {
+        throw new Error('groups exploded');
+      });
+
+      await expect(toolManager.getExecutionHealth()).rejects.toThrow('groups exploded');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error getting execution health',
+        expect.any(Error),
       );
     });
   });

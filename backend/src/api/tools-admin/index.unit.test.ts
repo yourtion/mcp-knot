@@ -11,6 +11,15 @@ vi.mock('../../services/service-registry.js', () => ({
   getHubService: () => hubService,
 }));
 
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock('../../utils/logger.js', () => ({ logger: loggerMock }));
+
 import { addExecutionRecord, toolsAdminApi } from './index.js';
 
 import type { ToolExecutionRecord } from './index.js';
@@ -106,6 +115,61 @@ describe('Tools Admin API', () => {
       expect((await firstPage.json()).data.pagination.hasMore).toBe(true);
     });
 
+    it('offset+limit 恰好等于 total 时 hasMore 为 false', async () => {
+      addExecutionRecord(record({ toolName: 'hist-boundary' }));
+      addExecutionRecord(record({ toolName: 'hist-boundary' }));
+      addExecutionRecord(record({ toolName: 'hist-boundary' }));
+
+      const response = await app.request(
+        '/api/tools/history?toolName=hist-boundary&limit=2&offset=1',
+      );
+
+      expect((await response.json()).data.pagination).toEqual({
+        total: 3,
+        limit: 2,
+        offset: 1,
+        hasMore: false,
+      });
+    });
+
+    it('默认 limit=50、offset=0', async () => {
+      addExecutionRecord(record({ toolName: 'hist-default' }));
+
+      const response = await app.request('/api/tools/history?toolName=hist-default');
+
+      const body = await response.json();
+      expect(body.data.pagination.limit).toBe(50);
+      expect(body.data.pagination.offset).toBe(0);
+    });
+
+    it('groupId 过滤独立于 toolName/serverId 过滤', async () => {
+      addExecutionRecord(
+        record({ toolName: 'hist-group', serverId: 'hist-gsrv', groupId: 'hist-ga' }),
+      );
+      addExecutionRecord(
+        record({ toolName: 'hist-group', serverId: 'hist-gsrv', groupId: 'hist-gb' }),
+      );
+
+      const response = await app.request(
+        '/api/tools/history?toolName=hist-group&serverId=hist-gsrv&groupId=hist-ga',
+      );
+
+      const body = await response.json();
+      expect(body.data.pagination.total).toBe(1);
+      expect(body.data.history[0].groupId).toBe('hist-ga');
+    });
+
+    it('addExecutionRecord 记录调试日志', () => {
+      loggerMock.debug.mockClear();
+      addExecutionRecord(record({ id: 'hist-dbg-1', toolName: 'hist-dbg' }));
+
+      expect(loggerMock.debug).toHaveBeenCalledWith('添加工具执行记录', {
+        executionId: 'hist-dbg-1',
+        toolName: 'hist-dbg',
+        totalRecords: expect.any(Number),
+      });
+    });
+
     it('历史记录超过上限时截断到 1000 条', async () => {
       for (let i = 0; i < 1001; i++) {
         addExecutionRecord(record({ toolName: 'hist-overflow' }));
@@ -161,6 +225,93 @@ describe('Tools Admin API', () => {
       const response = await app.request('/api/tools/monitoring');
 
       expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        requestId: 'admin-request',
+        error: { message: '服务不可用' },
+      });
+    });
+
+    it('未指定 groupId 时回落 default，缺失健康信息的服务器为 unknown', async () => {
+      hubService.listTools.mockResolvedValue([{ name: 'mon-ghost', serverId: 'mon-ghost-srv' }]);
+      hubService.getServerHealth.mockReturnValue(new Map([['mon-other', 'connected']]));
+
+      const response = await app.request('/api/tools/monitoring');
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.groupId).toBe('default');
+      expect(body.data.toolsByServer['mon-ghost-srv']).toMatchObject({
+        serverId: 'mon-ghost-srv',
+        serverStatus: 'unknown',
+      });
+      expect(body.data.toolsByServer['mon-ghost-srv'].tools[0]).toMatchObject({
+        name: 'mon-ghost',
+        status: 'unavailable',
+      });
+      expect(body.data.overview).toEqual({
+        totalTools: 1,
+        availableTools: 0,
+        unavailableTools: 1,
+        totalServers: 1,
+        connectedServers: 0,
+        disconnectedServers: 1,
+        availabilityRate: 0,
+      });
+    });
+
+    it('工具列表为空时汇总全部为 0 且可用率不为 NaN', async () => {
+      hubService.listTools.mockResolvedValue([]);
+      hubService.getServerHealth.mockReturnValue(new Map());
+
+      const response = await app.request('/api/tools/monitoring');
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.overview).toEqual({
+        totalTools: 0,
+        availableTools: 0,
+        unavailableTools: 0,
+        totalServers: 0,
+        connectedServers: 0,
+        disconnectedServers: 0,
+        availabilityRate: 0,
+      });
+      expect(body.data.toolsByServer).toEqual({});
+    });
+
+    it('多服务器时 connected/disconnected 计数并输出监控日志', async () => {
+      hubService.listTools.mockResolvedValue([
+        { name: 'mon-t1', serverId: 'mon-a' },
+        { name: 'mon-t2', serverId: 'mon-b' },
+      ]);
+      hubService.getServerHealth.mockReturnValue(
+        new Map([
+          ['mon-a', 'connected'],
+          ['mon-b', 'connected'],
+        ]),
+      );
+
+      const response = await app.request('/api/tools/monitoring?groupId=mon-g');
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.overview).toEqual({
+        totalTools: 2,
+        availableTools: 2,
+        unavailableTools: 0,
+        totalServers: 2,
+        connectedServers: 2,
+        disconnectedServers: 0,
+        availabilityRate: 100,
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('获取工具状态监控信息', {
+        groupId: 'mon-g',
+        totalTools: 2,
+        availableTools: 2,
+        totalServers: 2,
+        connectedServers: 2,
+      });
     });
   });
 
@@ -225,6 +376,162 @@ describe('Tools Admin API', () => {
         serverStatus: 'unknown',
         isHealthy: false,
         issues: ['服务器 ghost 未连接'],
+      });
+    });
+
+    it('健康比例不足 80% 时整体不健康且 50% 错误率不触发告警', async () => {
+      hubService.listTools.mockResolvedValue([
+        { name: 'hl-ok', serverId: 'hl-up' },
+        { name: 'hl-bad', serverId: 'hl-down' },
+      ]);
+      hubService.getServiceDiagnostics.mockResolvedValue({
+        servers: {
+          details: [
+            { id: 'hl-up', status: 'connected' },
+            { id: 'hl-down', status: 'disconnected' },
+          ],
+        },
+      });
+      addExecutionRecord(
+        record({ id: 'hl-e1', toolName: 'hl-ok', serverId: 'hl-up', isError: true }),
+      );
+      addExecutionRecord(record({ id: 'hl-e2', toolName: 'hl-ok', serverId: 'hl-up' }));
+
+      const response = await app.request('/api/tools/health?groupId=hl-g');
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.overall).toEqual({
+        isHealthy: false,
+        totalTools: 2,
+        healthyTools: 1,
+        unhealthyTools: 1,
+        healthRate: 50,
+      });
+      const byName = new Map(body.data.tools.map((t: { toolName: string }) => [t.toolName, t]));
+      expect(byName.get('hl-ok')).toMatchObject({
+        serverStatus: 'connected',
+        isHealthy: true,
+        recentExecutions: 2,
+        recentErrors: 1,
+        errorRate: 50,
+        lastError: { executionId: 'hl-e1', error: {} },
+        issues: [],
+      });
+      expect(byName.get('hl-bad')).toMatchObject({
+        serverStatus: 'disconnected',
+        isHealthy: false,
+        issues: ['服务器 hl-down 未连接'],
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('获取工具健康检查信息', {
+        groupId: 'hl-g',
+        totalTools: 2,
+        healthyTools: 1,
+        overallHealthy: false,
+      });
+    });
+
+    it('健康比例恰好 80% 时整体健康', async () => {
+      hubService.listTools.mockResolvedValue([
+        { name: 'hp-1', serverId: 'hp-up' },
+        { name: 'hp-2', serverId: 'hp-up' },
+        { name: 'hp-3', serverId: 'hp-up' },
+        { name: 'hp-4', serverId: 'hp-up' },
+        { name: 'hp-5', serverId: 'hp-down' },
+      ]);
+      hubService.getServiceDiagnostics.mockResolvedValue({
+        servers: {
+          details: [
+            { id: 'hp-up', status: 'connected' },
+            { id: 'hp-down', status: 'disconnected' },
+          ],
+        },
+      });
+
+      const response = await app.request('/api/tools/health');
+
+      const overall = (await response.json()).data.overall;
+      expect(overall.isHealthy).toBe(true);
+      expect(overall.totalTools).toBe(5);
+      expect(overall.healthyTools).toBe(4);
+      expect(overall.unhealthyTools).toBe(1);
+      expect(overall.healthRate).toBeCloseTo(80, 10);
+    });
+
+    it('近期执行仅统计匹配工具且最多取 10 条', async () => {
+      for (let i = 0; i < 12; i++) {
+        addExecutionRecord(
+          record({
+            id: `cap-${i}`,
+            toolName: 'cap-tool',
+            serverId: 'cap-srv',
+            isError: i % 2 === 0,
+          }),
+        );
+      }
+      addExecutionRecord(record({ toolName: 'cap-other', serverId: 'cap-srv' }));
+      hubService.listTools.mockResolvedValue([{ name: 'cap-tool', serverId: 'cap-srv' }]);
+      hubService.getServiceDiagnostics.mockResolvedValue({
+        servers: { details: [{ id: 'cap-srv', status: 'connected' }] },
+      });
+
+      const response = await app.request('/api/tools/health');
+
+      const check = (await response.json()).data.tools[0];
+      expect(check.recentExecutions).toBe(10);
+      expect(check.recentErrors).toBe(5);
+      expect(check.errorRate).toBe(50);
+      // 最新记录在最前（unshift），最近一次错误是 cap-10
+      expect(check.lastError.executionId).toBe('cap-10');
+      expect(check.issues).toEqual([]);
+    });
+
+    it('无近期执行的工具有零错误率与空 lastError', async () => {
+      hubService.listTools.mockResolvedValue([{ name: 'nr-tool', serverId: 'nr-srv' }]);
+      hubService.getServiceDiagnostics.mockResolvedValue({
+        servers: { details: [{ id: 'nr-srv', status: 'connected' }] },
+      });
+
+      const response = await app.request('/api/tools/health');
+
+      const check = (await response.json()).data.tools[0];
+      expect(check).toMatchObject({
+        recentExecutions: 0,
+        recentErrors: 0,
+        errorRate: 0,
+        lastError: null,
+        issues: [],
+      });
+    });
+
+    it('诊断详情按服务器 ID 匹配而非取第一条', async () => {
+      hubService.listTools.mockResolvedValue([{ name: 'diag-match', serverId: 'diag-up' }]);
+      hubService.getServiceDiagnostics.mockResolvedValue({
+        servers: {
+          details: [
+            { id: 'diag-other', status: 'error' },
+            { id: 'diag-up', status: 'connected' },
+          ],
+        },
+      });
+
+      const response = await app.request('/api/tools/health');
+
+      const check = (await response.json()).data.tools[0];
+      expect(check).toMatchObject({ serverStatus: 'connected', isHealthy: true });
+    });
+
+    it('诊断服务抛错返回 500', async () => {
+      hubService.listTools.mockResolvedValue([]);
+      hubService.getServiceDiagnostics.mockRejectedValue(new Error('诊断失败'));
+
+      const response = await app.request('/api/tools/health');
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        requestId: 'admin-request',
+        error: { message: '诊断失败' },
       });
     });
   });
@@ -309,6 +616,217 @@ describe('Tools Admin API', () => {
 
       expect(response.status).toBe(200);
       expect((await response.json()).data.overview.totalExecutions).toBe(1);
+    });
+
+    it('各时间窗口按边界裁剪并回显 period 与默认 timeRange', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
+      try {
+        const now = Date.now();
+        const g = 'perf-win-g';
+        const hour = 60 * 60 * 1000;
+        // 恰好位于 1h 窗口起点（>= 边界包含）
+        addExecutionRecord(
+          record({ toolName: 'win-1h', groupId: g, timestamp: new Date(now - hour).toISOString() }),
+        );
+        // 恰好位于窗口终点（<= 边界包含）
+        addExecutionRecord(
+          record({ toolName: 'win-now', groupId: g, timestamp: new Date(now).toISOString() }),
+        );
+        // 2h 前仅落入 6h/24h/7d 窗口
+        addExecutionRecord(
+          record({
+            toolName: 'win-2h',
+            groupId: g,
+            timestamp: new Date(now - 2 * hour).toISOString(),
+          }),
+        );
+        // 12h 前仅落入 24h/7d 窗口
+        addExecutionRecord(
+          record({
+            toolName: 'win-12h',
+            groupId: g,
+            timestamp: new Date(now - 12 * hour).toISOString(),
+          }),
+        );
+
+        const fetchJson = async (query: string) =>
+          (await (await app.request(`/api/tools/performance?${query}`)).json()).data;
+
+        const h1 = await fetchJson(`timeRange=1h&groupId=${g}`);
+        expect(h1.timeRange).toBe('1h');
+        expect(h1.period).toEqual({
+          startTime: new Date(now - hour).toISOString(),
+          endTime: new Date(now).toISOString(),
+        });
+        expect(h1.overview.totalExecutions).toBe(2);
+
+        const h6 = await fetchJson(`timeRange=6h&groupId=${g}`);
+        expect(h6.timeRange).toBe('6h');
+        expect(h6.period.startTime).toBe(new Date(now - 6 * hour).toISOString());
+        expect(h6.overview.totalExecutions).toBe(3);
+
+        const h24 = await fetchJson(`timeRange=24h&groupId=${g}`);
+        expect(h24.timeRange).toBe('24h');
+        expect(h24.period.startTime).toBe(new Date(now - 24 * hour).toISOString());
+        expect(h24.overview.totalExecutions).toBe(4);
+
+        const d7 = await fetchJson(`timeRange=7d&groupId=${g}`);
+        expect(d7.timeRange).toBe('7d');
+        expect(d7.period.startTime).toBe(new Date(now - 7 * 24 * hour).toISOString());
+        expect(d7.overview.totalExecutions).toBe(4);
+
+        // 不传 timeRange 时回落 1h 并回显 '1h'
+        const def = await fetchJson(`groupId=${g}`);
+        expect(def.timeRange).toBe('1h');
+        expect(def.overview.totalExecutions).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('serverId 过滤生效且不带过滤条件时统计窗口内全部记录', async () => {
+      const g = 'perf-srv-g';
+      addExecutionRecord(record({ toolName: 'ps-a', groupId: g, serverId: 'ps-1' }));
+      addExecutionRecord(record({ toolName: 'ps-b', groupId: g, serverId: 'ps-2' }));
+
+      const filtered = await app.request(`/api/tools/performance?groupId=${g}&serverId=ps-1`);
+      const filteredBody = (await filtered.json()).data;
+      expect(filteredBody.overview.totalExecutions).toBe(1);
+      expect(filteredBody.filters).toEqual({ groupId: g, serverId: 'ps-1' });
+
+      // 无过滤条件时不应把 groupId===undefined 当作过滤值
+      const unfiltered = await app.request(`/api/tools/performance?serverId=ps-2`);
+      expect((await unfiltered.json()).data.overview.totalExecutions).toBe(1);
+    });
+
+    it('分工具统计平均耗时与成功率', async () => {
+      const g = 'perf-per-tool-g';
+      addExecutionRecord(
+        record({
+          toolName: 'pt-a',
+          groupId: g,
+          executionTime: 10,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      addExecutionRecord(
+        record({
+          toolName: 'pt-a',
+          groupId: g,
+          executionTime: 30,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      addExecutionRecord(
+        record({
+          toolName: 'pt-b',
+          groupId: g,
+          executionTime: 50,
+          isError: true,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      const response = await app.request(`/api/tools/performance?groupId=${g}`);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.toolPerformance['pt-a']).toStrictEqual({
+        executions: 2,
+        successes: 2,
+        failures: 0,
+        averageTime: 20,
+        minTime: 10,
+        maxTime: 30,
+        successRate: 100,
+      });
+      expect(body.data.toolPerformance['pt-b']).toStrictEqual({
+        executions: 1,
+        successes: 0,
+        failures: 1,
+        averageTime: 50,
+        minTime: 50,
+        maxTime: 50,
+        successRate: 0,
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('获取工具性能分析信息', {
+        timeRange: '1h',
+        totalExecutions: 3,
+        successfulExecutions: 2,
+        failedExecutions: 1,
+        toolCount: 2,
+        filters: { groupId: g, serverId: undefined },
+      });
+    });
+
+    it('按小时聚合时间序列并计算平均耗时与错误率', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-15T12:30:00.000Z'));
+      try {
+        const now = Date.now();
+        const g = 'perf-ts-g';
+        const hour = 60 * 60 * 1000;
+        const bucket = (t: number) => `${new Date(t).toISOString().slice(0, 13)}:00:00.000Z`;
+
+        // 上一小时（11:55，仍在 1h 窗口内）：1 次成功，耗时 100
+        addExecutionRecord(
+          record({
+            toolName: 'ts-x',
+            groupId: g,
+            executionTime: 100,
+            timestamp: new Date(now - 35 * 60 * 1000).toISOString(),
+          }),
+        );
+        // 当前小时：3 次执行（10/20/40），其中 1 次失败（40）
+        addExecutionRecord(
+          record({
+            toolName: 'ts-x',
+            groupId: g,
+            executionTime: 10,
+            timestamp: new Date(now - 5 * 60 * 1000).toISOString(),
+          }),
+        );
+        addExecutionRecord(
+          record({
+            toolName: 'ts-x',
+            groupId: g,
+            executionTime: 20,
+            timestamp: new Date(now - 4 * 60 * 1000).toISOString(),
+          }),
+        );
+        addExecutionRecord(
+          record({
+            toolName: 'ts-x',
+            groupId: g,
+            executionTime: 40,
+            isError: true,
+            timestamp: new Date(now - 3 * 60 * 1000).toISOString(),
+          }),
+        );
+
+        const response = await app.request(`/api/tools/performance?groupId=${g}`);
+
+        const body = await response.json();
+        expect(body.data.timeSeries).toStrictEqual([
+          {
+            timestamp: bucket(now - 35 * 60 * 1000),
+            executions: 1,
+            errors: 0,
+            averageTime: 100,
+            errorRate: 0,
+          },
+          {
+            timestamp: bucket(now - 5 * 60 * 1000),
+            executions: 3,
+            errors: 1,
+            averageTime: 23,
+            errorRate: (1 / 3) * 100,
+          },
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('无执行记录时各项指标为 0', async () => {
@@ -398,6 +916,165 @@ describe('Tools Admin API', () => {
       const summary = (await response.json()).data.errorSummary;
       expect(summary[0].errorMessage).toBe(`${'x'.repeat(100)}...`);
     });
+
+    it('serverId 与 groupId 过滤错误记录', async () => {
+      addExecutionRecord(
+        record({
+          toolName: 'err-f',
+          serverId: 'es1',
+          groupId: 'eg1',
+          isError: true,
+          result: [{ type: 'text', text: 'boom' }],
+        }),
+      );
+      addExecutionRecord(
+        record({
+          toolName: 'err-f',
+          serverId: 'es2',
+          groupId: 'eg1',
+          isError: true,
+          result: [{ type: 'text', text: 'boom' }],
+        }),
+      );
+      addExecutionRecord(
+        record({
+          toolName: 'err-f',
+          serverId: 'es2',
+          groupId: 'eg2',
+          isError: true,
+          result: [{ type: 'text', text: 'boom' }],
+        }),
+      );
+
+      const byBoth = await app.request('/api/tools/errors?toolName=err-f&serverId=es2&groupId=eg2');
+      expect((await byBoth.json()).data.pagination.total).toBe(1);
+
+      const byServer = await app.request('/api/tools/errors?toolName=err-f&serverId=es2');
+      expect((await byServer.json()).data.pagination.total).toBe(2);
+
+      const byGroup = await app.request('/api/tools/errors?toolName=err-f&groupId=eg1');
+      expect((await byGroup.json()).data.pagination.total).toBe(2);
+    });
+
+    it('不带过滤条件时返回错误记录，非错误记录被排除', async () => {
+      addExecutionRecord(
+        record({
+          toolName: 'err-all',
+          isError: true,
+          result: [{ type: 'text', text: 'boom' }],
+        }),
+      );
+      addExecutionRecord(
+        record({
+          toolName: 'err-all',
+          isError: true,
+          result: [{ type: 'text', text: 'boom' }],
+        }),
+      );
+      addExecutionRecord(record({ toolName: 'err-all' }));
+
+      const response = await app.request('/api/tools/errors');
+
+      const body = await response.json();
+      // 全量错误记录中只包含 isError 的条目（err-all 的成功记录不应出现）
+      const errAllErrors = body.data.errors.filter(
+        (e: { toolName: string }) => e.toolName === 'err-all',
+      );
+      expect(errAllErrors).toHaveLength(2);
+      expect(body.data.pagination.total).toBeGreaterThanOrEqual(2);
+    });
+
+    it('offset+limit 恰好等于 total 时 hasMore 为 false', async () => {
+      for (let i = 0; i < 3; i++) {
+        addExecutionRecord(
+          record({
+            toolName: 'err-hm',
+            isError: true,
+            result: [{ type: 'text', text: 'boom' }],
+          }),
+        );
+      }
+
+      const response = await app.request('/api/tools/errors?toolName=err-hm&limit=2&offset=1');
+
+      expect((await response.json()).data.pagination).toEqual({
+        total: 3,
+        limit: 2,
+        offset: 1,
+        hasMore: false,
+      });
+    });
+
+    it('回显 severity 过滤参数', async () => {
+      addExecutionRecord(
+        record({
+          toolName: 'err-sev',
+          isError: true,
+          result: [{ type: 'text', text: 'boom' }],
+        }),
+      );
+
+      const response = await app.request('/api/tools/errors?severity=high');
+
+      const body = await response.json();
+      expect(body.data.filters).toEqual({ severity: 'high' });
+    });
+
+    it('同一错误最多保留 3 个示例且 lastOccurrence 取最新', async () => {
+      for (let i = 1; i <= 4; i++) {
+        addExecutionRecord(
+          record({
+            id: `dup-${i}`,
+            toolName: 'err-dup',
+            isError: true,
+            result: [{ type: 'text', text: 'dup-err' }],
+            timestamp: `2026-01-0${i}T00:00:00.000Z`,
+          }),
+        );
+      }
+
+      const response = await app.request('/api/tools/errors?toolName=err-dup');
+
+      const summary = (await response.json()).data.errorSummary[0];
+      expect(summary.count).toBe(4);
+      expect(summary.examples).toHaveLength(3);
+      // 新记录在最前（unshift），示例按新到旧
+      expect(summary.examples.map((e: { executionId: string }) => e.executionId)).toEqual([
+        'dup-4',
+        'dup-3',
+        'dup-2',
+      ]);
+      expect(summary.lastOccurrence).toBe('2026-01-04T00:00:00.000Z');
+    });
+
+    it('错误摘要按出现次数降序排列', async () => {
+      addExecutionRecord(
+        record({
+          toolName: 'err-order',
+          isError: true,
+          result: [{ type: 'text', text: 'minor' }],
+          timestamp: '2026-01-01T00:00:00.000Z',
+        }),
+      );
+      for (let i = 2; i <= 4; i++) {
+        addExecutionRecord(
+          record({
+            toolName: 'err-order',
+            isError: true,
+            result: [{ type: 'text', text: 'major' }],
+            timestamp: `2026-01-0${i}T00:00:00.000Z`,
+          }),
+        );
+      }
+
+      const response = await app.request('/api/tools/errors?toolName=err-order');
+
+      const summary = (await response.json()).data.errorSummary;
+      expect(summary.map((s: { errorMessage: string }) => s.errorMessage)).toEqual([
+        'major',
+        'minor',
+      ]);
+    });
   });
 
   describe('GET /stats - 执行统计', () => {
@@ -440,6 +1117,67 @@ describe('Tools Admin API', () => {
       );
 
       const response = await app.request('/api/tools/stats?groupId=stats-srv-group&serverId=s-two');
+
+      expect((await response.json()).data.overview.totalExecutions).toBe(1);
+    });
+
+    it('topTools 按执行次数降序并包含成败计数', async () => {
+      const g = 'stats-top-g';
+      // 先插入执行次数少的工具，验证排序不是插入顺序
+      addExecutionRecord(record({ toolName: 'st-b', executionTime: 5, groupId: g }));
+      addExecutionRecord(record({ toolName: 'st-a', executionTime: 10, groupId: g }));
+      addExecutionRecord(
+        record({ toolName: 'st-a', executionTime: 30, isError: true, groupId: g }),
+      );
+
+      const response = await app.request(`/api/tools/stats?groupId=${g}`);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.topTools[0]).toStrictEqual({
+        toolName: 'st-a',
+        executions: 2,
+        successes: 1,
+        failures: 1,
+        totalTime: 40,
+        averageTime: 20,
+      });
+      expect(body.data.topTools[1].toolName).toBe('st-b');
+      expect(body.data.overview).toEqual({
+        totalExecutions: 3,
+        successfulExecutions: 2,
+        failedExecutions: 1,
+        successRate: expect.closeTo(66.66666666666667, 10),
+        averageExecutionTime: 15,
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('获取工具执行统计信息', {
+        totalExecutions: 3,
+        successfulExecutions: 2,
+        failedExecutions: 1,
+        topToolsCount: 2,
+        filters: { groupId: g, serverId: undefined },
+      });
+    });
+
+    it('无匹配记录时各项统计为 0', async () => {
+      const response = await app.request('/api/tools/stats?groupId=stats-empty-g');
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.overview).toEqual({
+        totalExecutions: 0,
+        successfulExecutions: 0,
+        failedExecutions: 0,
+        successRate: 0,
+        averageExecutionTime: 0,
+      });
+      expect(body.data.topTools).toEqual([]);
+    });
+
+    it('不带 groupId 时按 serverId 统计全部记录', async () => {
+      addExecutionRecord(record({ toolName: 'stats-nog', serverId: 'stats-uniq-srv' }));
+
+      const response = await app.request('/api/tools/stats?serverId=stats-uniq-srv');
 
       expect((await response.json()).data.overview.totalExecutions).toBe(1);
     });

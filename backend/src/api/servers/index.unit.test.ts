@@ -28,6 +28,15 @@ const configMock = vi.hoisted(() => ({
 
 vi.mock('../../utils/config.js', () => configMock);
 
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock('../../utils/logger.js', () => ({ logger: loggerMock }));
+
 import { serversApi } from './index.js';
 
 function makeConnection(overrides: Partial<ServerConnection> = {}): ServerConnection {
@@ -129,6 +138,10 @@ describe('Servers API', () => {
       expect(body.data.servers.find((s: { id: string }) => s.id === 'beta').lastError).toBe(
         '连接超时',
       );
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器列表获取成功', {
+        serverCount: 4,
+        connectedServers: 1,
+      });
     });
 
     it('读取服务器列表出错时返回 500', async () => {
@@ -142,7 +155,27 @@ describe('Servers API', () => {
       expect(await response.json()).toMatchObject({
         success: false,
         requestId: 'servers-request',
+        error: { message: '状态损坏' },
       });
+    });
+
+    it('管理器惰性初始化后被复用（不再重复读取配置）', async () => {
+      // POST 创建会重置并重新初始化管理器，确保后续请求命中缓存
+      await jsonRequest('', 'POST', {
+        id: 'cache-reset',
+        config: { type: 'stdio', command: 'node' },
+      });
+      configMock.getAllConfig.mockClear();
+      loggerMock.info.mockClear();
+      connections.set('alpha', makeConnection({ id: 'alpha' }));
+
+      const first = await app.request('/api/servers');
+      expect(first.status).toBe(200);
+      const second = await app.request('/api/servers');
+      expect(second.status).toBe(200);
+
+      expect(configMock.getAllConfig).not.toHaveBeenCalled();
+      expect(loggerMock.info).not.toHaveBeenCalledWith('初始化服务器管理器');
     });
   });
 
@@ -184,6 +217,34 @@ describe('Servers API', () => {
         requestId: 'servers-request',
       });
     });
+
+    it('无最近连接信息的服务器也能返回详情', async () => {
+      connections.set('bare', makeConnection({ id: 'bare' }));
+
+      const response = await app.request('/api/servers/bare');
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { id: 'bare' } });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器信息获取成功', {
+        serverId: 'bare',
+        status: 'connected',
+        toolCount: 1,
+      });
+    });
+
+    it('读取服务器详情出错时返回 500', async () => {
+      manager.getAllServers.mockImplementation(() => {
+        throw new Error('详情损坏');
+      });
+
+      const response = await app.request('/api/servers/alpha');
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        requestId: 'servers-request',
+      });
+    });
   });
 
   describe('POST / - 创建服务器', () => {
@@ -209,15 +270,28 @@ describe('Servers API', () => {
           fresh: { ...validBody.config, enabled: true },
         },
       });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器创建成功', {
+        serverId: 'fresh',
+        type: 'stdio',
+        enabled: true,
+      });
     });
 
     it('重新初始化服务器管理器失败时返回 500', async () => {
-      manager.initialize.mockRejectedValue(new Error('配置读取失败'));
+      manager.initialize.mockRejectedValueOnce(new Error('配置读取失败'));
 
       const response = await jsonRequest('', 'POST', validBody);
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toMatchObject({ success: false });
+      expect(await response.json()).toMatchObject({
+        success: false,
+        requestId: 'servers-request',
+      });
+      // 初始化失败后管理器被重置，下一次请求会重新初始化
+      connections.set('alpha', makeConnection({ id: 'alpha' }));
+      const retry = await app.request('/api/servers');
+      expect(retry.status).toBe(200);
+      expect(loggerMock.error).toHaveBeenCalledWith('服务器管理器初始化失败', expect.any(Error));
     });
 
     it('服务器 ID 已存在时返回 409 SERVER_EXISTS', async () => {
@@ -227,9 +301,10 @@ describe('Servers API', () => {
       });
 
       expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
         success: false,
         error: { code: 'SERVER_EXISTS', message: "服务器 'existing' 已存在" },
+        requestId: 'servers-request',
       });
       expect(configMock.saveConfig).not.toHaveBeenCalled();
     });
@@ -237,6 +312,7 @@ describe('Servers API', () => {
     it.each([
       ['缺少 id', { config: { type: 'stdio', command: 'node' } }],
       ['id 含非法字符', { id: 'bad id!', config: { type: 'stdio', command: 'node' } }],
+      ['id 以非法字符开头', { id: '中文-app', config: { type: 'stdio', command: 'node' } }],
       ['stdio 缺少 command', { id: 'fresh', config: { type: 'stdio' } }],
       ['http 类型 url 非法', { id: 'fresh', config: { type: 'sse', url: 'not-a-url' } }],
       ['type 不在枚举内', { id: 'fresh', config: { type: 'grpc', url: 'http://x' } }],
@@ -247,17 +323,41 @@ describe('Servers API', () => {
       expect(await response.json()).toMatchObject({
         success: false,
         error: { code: 'VALIDATION_ERROR' },
+        requestId: 'servers-request',
       });
       expect(configMock.saveConfig).not.toHaveBeenCalled();
     });
 
+    it('schema 错误消息映射具体原因', async () => {
+      const noCommand = await jsonRequest('', 'POST', {
+        id: 'fresh',
+        config: { type: 'stdio', command: '' },
+      });
+      expect(JSON.stringify(await noCommand.json())).toContain('命令不能为空');
+
+      const badUrl = await jsonRequest('', 'POST', {
+        id: 'fresh',
+        config: { type: 'sse', url: 'not-a-url' },
+      });
+      expect(JSON.stringify(await badUrl.json())).toContain('必须是有效的URL');
+
+      const emptyId = await jsonRequest('', 'POST', {
+        id: '',
+        config: { type: 'stdio', command: 'node' },
+      });
+      expect(JSON.stringify(await emptyId.json())).toContain('服务器ID不能为空');
+    });
+
     it('保存配置失败时返回 500', async () => {
-      configMock.saveConfig.mockRejectedValue(new Error('磁盘已满'));
+      configMock.saveConfig.mockRejectedValueOnce(new Error('磁盘已满'));
 
       const response = await jsonRequest('', 'POST', validBody);
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toMatchObject({ success: false });
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { message: '磁盘已满' },
+      });
     });
   });
 
@@ -280,6 +380,11 @@ describe('Servers API', () => {
           existing: { type: 'streaming', url: 'https://example.com/mcp', enabled: true },
         },
       });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器配置更新成功', {
+        serverId: 'existing',
+        type: 'streaming',
+        enabled: true,
+      });
     });
 
     it('服务器不存在时返回 404', async () => {
@@ -288,8 +393,10 @@ describe('Servers API', () => {
       });
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
+        success: false,
         error: { code: 'SERVER_NOT_FOUND', message: "服务器 'missing' 未找到" },
+        requestId: 'servers-request',
       });
       expect(configMock.saveConfig).not.toHaveBeenCalled();
     });
@@ -298,7 +405,25 @@ describe('Servers API', () => {
       const response = await jsonRequest('/existing', 'PUT', { config: { type: 'stdio' } });
 
       expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: '请求数据验证失败' },
+        requestId: 'servers-request',
+      });
+    });
+
+    it('读取配置出错时返回 500', async () => {
+      configMock.getAllConfig.mockRejectedValueOnce(new Error('配置损坏'));
+
+      const response = await jsonRequest('/existing', 'PUT', {
+        config: { type: 'stdio', command: 'node' },
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { message: '配置损坏' },
+      });
     });
   });
 
@@ -314,22 +439,34 @@ describe('Servers API', () => {
       expect(configMock.saveConfig).toHaveBeenCalledWith('mcp_server.json', {
         servers: {},
       });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器删除成功', {
+        serverId: 'existing',
+        type: 'stdio',
+      });
     });
 
     it('服务器不存在时返回 404 且不保存', async () => {
       const response = await app.request('/api/servers/missing', { method: 'DELETE' });
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ error: { code: 'SERVER_NOT_FOUND' } });
+      expect(await response.json()).toEqual({
+        success: false,
+        error: { code: 'SERVER_NOT_FOUND', message: "服务器 'missing' 未找到" },
+        requestId: 'servers-request',
+      });
       expect(configMock.saveConfig).not.toHaveBeenCalled();
     });
 
     it('保存配置失败时返回 500', async () => {
-      configMock.saveConfig.mockRejectedValue(new Error('只读文件系统'));
+      configMock.saveConfig.mockRejectedValueOnce(new Error('只读文件系统'));
 
       const response = await app.request('/api/servers/existing', { method: 'DELETE' });
 
       expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { message: '只读文件系统' },
+      });
     });
   });
 
@@ -382,7 +519,33 @@ describe('Servers API', () => {
       const response = await app.request('/api/servers/none/status');
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ error: { code: 'SERVER_NOT_FOUND' } });
+      expect(await response.json()).toEqual({
+        success: false,
+        error: { code: 'SERVER_NOT_FOUND', message: "服务器 'none' 未找到" },
+        requestId: 'servers-request',
+      });
+    });
+
+    it('记录状态查询调试日志', async () => {
+      connections.set('alpha', makeConnection({ id: 'alpha' }));
+
+      await app.request('/api/servers/alpha/status');
+
+      expect(loggerMock.debug).toHaveBeenCalledWith('服务器状态查询成功', {
+        serverId: 'alpha',
+        status: 'connected',
+      });
+    });
+
+    it('读取状态出错时返回 500', async () => {
+      manager.getAllServers.mockImplementation(() => {
+        throw new Error('状态损坏');
+      });
+
+      const response = await app.request('/api/servers/alpha/status');
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
     });
   });
 
@@ -399,6 +562,7 @@ describe('Servers API', () => {
       expect(await response.json()).toMatchObject({
         data: { id: 'alpha', status: 'connecting', message: "服务器 'alpha' 连接请求已发送" },
       });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器连接请求已处理', { serverId: 'alpha' });
     });
 
     it('已连接的服务器返回 409 SERVER_ALREADY_CONNECTED', async () => {
@@ -407,8 +571,10 @@ describe('Servers API', () => {
       const response = await app.request('/api/servers/alpha/connect', { method: 'POST' });
 
       expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({
-        error: { code: 'SERVER_ALREADY_CONNECTED' },
+      expect(await response.json()).toEqual({
+        success: false,
+        error: { code: 'SERVER_ALREADY_CONNECTED', message: "服务器 'alpha' 已经连接" },
+        requestId: 'servers-request',
       });
     });
 
@@ -418,13 +584,32 @@ describe('Servers API', () => {
       const response = await app.request('/api/servers/alpha/connect', { method: 'POST' });
 
       expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ error: { code: 'SERVER_CONNECTING' } });
+      expect(await response.json()).toEqual({
+        success: false,
+        error: { code: 'SERVER_CONNECTING', message: "服务器 'alpha' 正在连接中" },
+        requestId: 'servers-request',
+      });
     });
 
     it('服务器不存在时返回 404', async () => {
       const response = await app.request('/api/servers/none/connect', { method: 'POST' });
 
       expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { code: 'SERVER_NOT_FOUND', message: "服务器 'none' 未找到" },
+      });
+    });
+
+    it('读取连接信息出错时返回 500', async () => {
+      manager.getAllServers.mockImplementation(() => {
+        throw new Error('连接损坏');
+      });
+
+      const response = await app.request('/api/servers/alpha/connect', { method: 'POST' });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
     });
   });
 
@@ -442,6 +627,7 @@ describe('Servers API', () => {
       expect(connection.client.close).toHaveBeenCalledOnce();
       expect(connection.status).toBe(ServerStatus.DISCONNECTED);
       expect(connection.tools).toEqual([]);
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器断开连接成功', { serverId: 'alpha' });
     });
 
     it('client.close 抛错时仍标记为断开', async () => {
@@ -456,6 +642,11 @@ describe('Servers API', () => {
       expect(response.status).toBe(200);
       expect(connection.status).toBe(ServerStatus.DISCONNECTED);
       expect(connection.tools).toEqual([]);
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        '服务器断开连接时发生错误，但仍标记为已断开',
+        expect.any(Error),
+        { serverId: 'alpha' },
+      );
     });
 
     it('已断开的服务器返回 409 SERVER_ALREADY_DISCONNECTED', async () => {
@@ -467,8 +658,13 @@ describe('Servers API', () => {
       const response = await app.request('/api/servers/alpha/disconnect', { method: 'POST' });
 
       expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({
-        error: { code: 'SERVER_ALREADY_DISCONNECTED' },
+      expect(await response.json()).toEqual({
+        success: false,
+        error: {
+          code: 'SERVER_ALREADY_DISCONNECTED',
+          message: "服务器 'alpha' 已经断开连接",
+        },
+        requestId: 'servers-request',
       });
     });
 
@@ -476,6 +672,21 @@ describe('Servers API', () => {
       const response = await app.request('/api/servers/none/disconnect', { method: 'POST' });
 
       expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { code: 'SERVER_NOT_FOUND', message: "服务器 'none' 未找到" },
+      });
+    });
+
+    it('读取断开信息出错时返回 500', async () => {
+      manager.getAllServers.mockImplementation(() => {
+        throw new Error('断开损坏');
+      });
+
+      const response = await app.request('/api/servers/alpha/disconnect', { method: 'POST' });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
     });
   });
 
@@ -504,8 +715,34 @@ describe('Servers API', () => {
           tools: [{ name: 'echo', description: '回显' }],
         },
       });
-      expect(typeof body.data.executionTime).toBe('number');
+      // 耗时应为短时间差，而非时间戳相加
+      expect(body.data.executionTime).toBeGreaterThanOrEqual(0);
+      expect(body.data.executionTime).toBeLessThan(10_000);
       expect(manager.shutdown).toHaveBeenCalledOnce();
+      expect(manager.getServerStatus).toHaveBeenCalledWith('test');
+      expect(loggerMock.info).toHaveBeenCalledWith('开始测试服务器连接', {
+        type: 'stdio',
+        command: '/usr/bin/node',
+        url: undefined,
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器连接测试成功', {
+        type: 'stdio',
+        toolCount: 1,
+        executionTime: expect.any(Number),
+      });
+    });
+
+    it('http 类型配置记录 url 而非 command', async () => {
+      manager.getServerStatus.mockReturnValue(ServerStatus.CONNECTED);
+      connections.set('test', makeConnection({ id: 'test' }));
+
+      await jsonRequest('/test', 'POST', { type: 'sse', url: 'https://example.com/sse' });
+
+      expect(loggerMock.info).toHaveBeenCalledWith('开始测试服务器连接', {
+        type: 'sse',
+        command: undefined,
+        url: 'https://example.com/sse',
+      });
     });
 
     it('连接失败时返回 400 并携带 lastError', async () => {
@@ -538,6 +775,31 @@ describe('Servers API', () => {
           error: '握手失败',
         },
       });
+      // 失败分支不应再拉取工具列表
+      expect(manager.getServerTools).not.toHaveBeenCalled();
+      expect(manager.shutdown).toHaveBeenCalledOnce();
+    });
+
+    it('连接失败且无 lastError 时回退到默认错误文案', async () => {
+      manager.getServerStatus.mockReturnValue(ServerStatus.ERROR);
+      manager.getAllServers.mockReturnValue(
+        new Map([['test', makeConnection({ id: 'test', status: ServerStatus.ERROR, tools: [] })]]),
+      );
+
+      const response = await jsonRequest('/test', 'POST', {
+        type: 'stdio',
+        command: '/usr/bin/node',
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        data: {
+          success: false,
+          message: '服务器连接测试失败',
+          error: '连接失败',
+        },
+      });
     });
 
     it('初始化抛错时返回 400 异常结果并保证清理', async () => {
@@ -557,6 +819,10 @@ describe('Servers API', () => {
         },
       });
       expect(manager.shutdown).toHaveBeenCalledOnce();
+      expect(loggerMock.error).toHaveBeenCalledWith('服务器连接测试异常', expect.any(Error), {
+        type: 'stdio',
+        executionTime: expect.any(Number),
+      });
     });
 
     it('非法配置返回 400 VALIDATION_ERROR', async () => {
@@ -566,7 +832,19 @@ describe('Servers API', () => {
       expect(await response.json()).toMatchObject({
         success: false,
         error: { code: 'VALIDATION_ERROR', message: '服务器配置验证失败' },
+        requestId: 'servers-request',
       });
+    });
+
+    it('请求体非法 JSON 时返回 500', async () => {
+      const response = await app.request('/api/servers/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'not-json',
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
     });
   });
 
@@ -583,6 +861,23 @@ describe('Servers API', () => {
       expect(await response.json()).toMatchObject({
         data: { isValid: true, errors: [], warnings: [], suggestions: [] },
       });
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器配置验证完成', {
+        isValid: true,
+        errorCount: 0,
+        warningCount: 0,
+      });
+    });
+
+    it('常规环境变量名不产生警告', async () => {
+      const response = await jsonRequest('/validate', 'POST', {
+        type: 'stdio',
+        command: '/bin/node',
+        env: { GOOD_KEY: 'value' },
+      });
+
+      const data = (await response.json()).data;
+      expect(data.warnings).toEqual([]);
+      expect(data.isValid).toBe(true);
     });
 
     it('裸命令名给出 PATH 提示（enabled 由 schema 默认值补齐）', async () => {
@@ -630,33 +925,50 @@ describe('Servers API', () => {
       expect((await response.json()).data.errors).toEqual([]);
     });
 
-    it('http 非本地地址给出安全警告', async () => {
+    it('http 非本地地址给出安全警告但保持有效', async () => {
       const response = await jsonRequest('/validate', 'POST', {
         type: 'sse',
         url: 'http://example.com/sse',
       });
 
-      expect((await response.json()).data.warnings).toEqual([
+      const data = (await response.json()).data;
+      expect(data.warnings).toEqual([
         {
           field: 'url',
           message: '使用HTTP协议连接非本地服务器可能存在安全风险',
           code: 'HTTP_SECURITY_WARNING',
         },
       ]);
+      expect(data.errors).toEqual([]);
+      expect(data.isValid).toBe(true);
     });
 
-    it('http 本机地址与 https 不产生安全警告', async () => {
+    it('http 本机地址与 https 不产生安全警告或协议错误', async () => {
       const local = await jsonRequest('/validate', 'POST', {
         type: 'sse',
         url: 'http://localhost:3000/sse',
       });
-      expect((await local.json()).data.warnings).toEqual([]);
+      const localData = (await local.json()).data;
+      expect(localData.warnings).toEqual([]);
+      expect(localData.errors).toEqual([]);
 
       const https = await jsonRequest('/validate', 'POST', {
         type: 'streaming',
         url: 'https://example.com/mcp',
       });
-      expect((await https.json()).data.warnings).toEqual([]);
+      const httpsData = (await https.json()).data;
+      expect(httpsData.warnings).toEqual([]);
+      expect(httpsData.errors).toEqual([]);
+      expect(httpsData.isValid).toBe(true);
+    });
+
+    it('127.0.0.1 的 http 地址不产生安全警告', async () => {
+      const response = await jsonRequest('/validate', 'POST', {
+        type: 'sse',
+        url: 'http://127.0.0.1:3000/sse',
+      });
+
+      expect((await response.json()).data.warnings).toEqual([]);
     });
 
     it('非 http/https 协议产生 INVALID_PROTOCOL 错误', async () => {
@@ -698,23 +1010,58 @@ describe('Servers API', () => {
         code: 'invalid_union',
       });
     });
+
+    it('请求体非法 JSON 时返回 500', async () => {
+      const response = await app.request('/api/servers/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'not-json',
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
+    });
   });
 
   describe('shutdownServersApi', () => {
-    it('关闭已初始化的管理器', async () => {
-      const { shutdownServersApi } = await import('./index.js');
-      await expect(shutdownServersApi()).resolves.toBeUndefined();
-      // 前面用例可能已触发初始化或已关闭，两种情况下都不应抛错
-    });
-
-    it('关闭出错时抛出原始异常', async () => {
-      manager.shutdown.mockRejectedValueOnce(new Error('shutdown 失败'));
-      // 触发一次管理器初始化（GET / 会惰性初始化）
+    it('关闭已初始化的管理器并记录日志', async () => {
+      // 确保管理器已初始化
       await app.request('/api/servers');
       manager.shutdown.mockClear();
+      loggerMock.info.mockClear();
+
+      const { shutdownServersApi } = await import('./index.js');
+      await expect(shutdownServersApi()).resolves.toBeUndefined();
+      expect(manager.shutdown).toHaveBeenCalledOnce();
+      expect(loggerMock.info).toHaveBeenCalledWith('关闭服务器管理API');
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器管理API关闭完成');
+    });
+
+    it('管理器为空时仍正常完成且不重复关闭', async () => {
+      const { shutdownServersApi } = await import('./index.js');
+      // 先关闭，确保 serverManager 为 null
+      await shutdownServersApi();
+      manager.shutdown.mockClear();
+      loggerMock.info.mockClear();
+
+      await expect(shutdownServersApi()).resolves.toBeUndefined();
+      expect(manager.shutdown).not.toHaveBeenCalled();
+      expect(loggerMock.info).not.toHaveBeenCalledWith('关闭服务器管理API');
+      expect(loggerMock.info).toHaveBeenCalledWith('服务器管理API关闭完成');
+    });
+
+    it('关闭出错时记录日志并抛出原始异常', async () => {
+      // 触发一次管理器初始化（GET / 会惰性初始化）
+      await app.request('/api/servers');
+      manager.shutdown.mockRejectedValueOnce(new Error('shutdown 失败'));
+      loggerMock.error.mockClear();
 
       const { shutdownServersApi } = await import('./index.js');
       await expect(shutdownServersApi()).rejects.toThrow('shutdown 失败');
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        '服务器管理API关闭时发生错误',
+        expect.any(Error),
+      );
     });
   });
 });
