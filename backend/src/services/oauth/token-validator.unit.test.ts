@@ -277,7 +277,7 @@ describe('token-validator', () => {
       getKey: ReturnType<typeof vi.fn>;
     } {
       const getKey = vi.fn(
-        (kid: string | undefined, jwksUri: string): Promise<CryptoKey | Uint8Array> =>
+        (_kid: string | undefined, _jwksUri: string): Promise<CryptoKey | Uint8Array> =>
           Promise.resolve(key),
       );
       return { cache: { getKey, clear: vi.fn() }, getKey };
@@ -492,7 +492,7 @@ describe('token-validator', () => {
       resetCryptoKeys();
       await loadOrCreateSigningKey();
       const getKeyFn = vi.fn(
-        (kid: string | undefined, jwksUri: string): Promise<CryptoKey | Uint8Array> =>
+        (_kid: string | undefined, _jwksUri: string): Promise<CryptoKey | Uint8Array> =>
           Promise.resolve(keypair.publicKey),
       );
       getKey = getKeyFn;
