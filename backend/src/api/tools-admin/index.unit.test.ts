@@ -766,7 +766,7 @@ describe('Tools Admin API', () => {
       try {
         const now = Date.now();
         const g = 'perf-ts-g';
-        const hour = 60 * 60 * 1000;
+        const _hour = 60 * 60 * 1000;
         const bucket = (t: number) => `${new Date(t).toISOString().slice(0, 13)}:00:00.000Z`;
 
         // 上一小时（11:55，仍在 1h 窗口内）：1 次成功，耗时 100
