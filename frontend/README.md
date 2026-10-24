@@ -29,7 +29,8 @@ Vue.js 前端界面，为 MCP Knot 提供完整的 Web 管理功能。
 组件 API：`:schema`、`v-model`、`:disabled`；`change` 事件清理旧结果；
 通过 ref 的 `getArguments()` 返回已校验的独立参数对象，失败时返回 null 并显示错误。
 
-编辑器使用 [vendor/README.md](vendor/README.md) 中固定的 PR 构建包，安装和 CI 不依赖外部工作区。
+编辑器固定使用 npm 正式版本 `vue-json-ui-editor@3.2.1`，由 `pnpm-lock.yaml` 锁定完整性；
+安装和 CI 无需本地源码或 vendored 试用包。
 
 ```bash
 # 仓库根目录

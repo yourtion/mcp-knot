@@ -24,7 +24,7 @@ pnpm mutation
 pnpm mutation:full
 ```
 
-`mutation` 显式启用增量模式，没有兼容的基线时自动全量执行；`mutation:full` 使用 `--force`
+`mutation` 先通过 guard 校验语义输入，没有兼容的基线时自动全量执行；`mutation:full` 使用 `--force`
 忽略已有结果并重建基线。两种模式都会先运行原始测试，收集测试和覆盖关系。
 
 默认处理全部六个包，也可单独选择一个包：
@@ -88,25 +88,30 @@ node .github/scripts/baseline-inputs.mjs .github/mutation-cache-inputs.json --li
 node .github/scripts/baseline-inputs.mjs .github/mutation-cache-inputs.json
 ```
 
-初次接入采用保守策略：`trackedByStryker: []`，哈希所有 Git 跟踪文件。
-源码、测试、setup/helper、fixture、快照、跨包依赖、配置、锁文件乃至文档变化都会使共享缓存失效。
-策略和缓存键脚本本身也始终参与摘要；新目录中的文件加入 Git 后自动纳入。
-这会减少跨提交复用，但避免把未由当前包跟踪的输入误当作可安全复用的输入。
-后续只有核对每个包的 mutate 范围和 runner 跟踪能力后，才应增加排除策略。
+本地和 CI 使用同一语义 guard：源码、测试、setup/helper、fixture、快照、跨包依赖、
+配置、锁文件、安装依赖和运行时均进入摘要。任何语义变化都保守全量运行当前包；
+Stryker 原生差异检测不能保证任意源码变更后的旧结果都安全，跨函数变化尤其可能被遗漏。
+仅策略中逐项审核的精确维护文档路径可排除。CLI 和后端会读取包版本，所以本仓不忽略 package.json 的 version。
 
-本地 Stryker 增量命令本身不执行 CI 输入摘要检查。修改依赖、配置、辅助文件、静态初始化逻辑或运行环境后，
-请运行 `mutation:full`；未跟踪或忽略的生成文件、外部服务状态和环境变量不在 Git 摘要中。
-CI 使用浮动 Node 24，若运行时变化影响行为，应手动 full 或更换缓存版本标识。
+缓存采用 `v3` 命名空间，报告与 `<报告路径>.inputs.json` 元数据成对保存和恢复。
+旧缓存、缺少元数据、报告被修改、上次运行失败或中断时，均不授权复用。
+只有语义输入兼容且报告完整时才允许 Stryker 复用，成功后才写入新元数据。
+环境摘要包含精确 Node 版本和声明的非秘密环境变量；外部服务等未捕获状态变化后仍应手动 full。
+新增环境变量若影响测试行为，应补入策略的 `environment` 列表。
 
 ## 验证范围
 
-可以用已有测试覆盖的小文件执行三次冒烟，使用独立临时基线，避免将局部结果当作完整基线：
+常规 `pnpm mutation` 命令仅接受 `--force`，避免通过临时 CLI 范围污染共享基线。
+小范围实验应使用单独的 Stryker 配置与仓库内被 Git 忽略的报告路径，然后显式调用 guard：
 
 ```bash
-MUTATION_PROJECT=protocol pnpm mutation --mutate packages/protocol/src/inbound/adapter.ts --incrementalFile /tmp/mcp-knot-mutation-smoke.json
-MUTATION_PROJECT=protocol pnpm mutation --mutate packages/protocol/src/inbound/adapter.ts --incrementalFile /tmp/mcp-knot-mutation-smoke.json
-MUTATION_PROJECT=protocol pnpm mutation:full --mutate packages/protocol/src/inbound/adapter.ts --incrementalFile /tmp/mcp-knot-mutation-smoke.json
+# smoke 配置自身必须纳入语义输入，并将 incrementalFile 指向下列同一报告路径。
+MUTATION_PROJECT=protocol node .github/scripts/run-mutation.mjs \
+  .github/mutation-cache-inputs.json reports/mutation/smoke/stryker-incremental.json \
+  -- node node_modules/@stryker-mutator/core/bin/stryker.js run stryker.smoke.config.mjs
 ```
+
+对同一配置依次执行首次运行、无变化重跑、附加 `--force` 的强制运行。
 
 第二次必须确认日志记录 `result(s) are reused`，第三次确认不复用。单文件冒烟只能验证接入和增量行为，
 不能作为全项目变异测试通过的证据，也不会建立 CI 的完整共享基线。

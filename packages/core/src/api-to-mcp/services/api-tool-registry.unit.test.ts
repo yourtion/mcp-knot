@@ -4,6 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '../../utils/logger.js';
 import { ApiToolRegistry } from './api-tool-registry.js';
 
 import type { ApiToolConfig } from '../types/api-config.js';
@@ -114,6 +115,87 @@ describe('ApiToolRegistry', () => {
       expect(result.errors).toEqual([]);
       expect(registry.hasTool('test-tool')).toBe(true);
       expect(registry.getToolCount()).toBe(1);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('注册API工具', {
+        context: { toolId: 'test-tool' },
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('工具注册成功', {
+        context: { toolId: 'test-tool', description: '测试工具' },
+      });
+    });
+
+    it('应该接受包含下划线和连字符的名称', () => {
+      const tool = { ...mockTool, name: 'valid_tool-1' };
+      const result = registry.registerTool(tool, mockConfig);
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('应该拒绝纯空白名称的工具', () => {
+      const result = registry.registerTool({ ...mockTool, name: '   ' }, mockConfig);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'INVALID_TOOL_NAME')).toBe(true);
+      expect(registry.getToolCount()).toBe(0);
+    });
+
+    it('应该拒绝非字符串名称的工具', () => {
+      const result = registry.registerTool(
+        { ...mockTool, name: 123 as unknown as string },
+        mockConfig,
+      );
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'INVALID_TOOL_NAME')).toBe(true);
+    });
+
+    it('应该拒绝以特殊字符开头的名称', () => {
+      const result = registry.registerTool({ ...mockTool, name: '!bad' }, mockConfig);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'INVALID_TOOL_NAME_FORMAT')).toBe(true);
+    });
+
+    it('应该拒绝非字符串描述的工具', () => {
+      const result = registry.registerTool(
+        { ...mockTool, description: 123 as unknown as string },
+        mockConfig,
+      );
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'INVALID_TOOL_DESCRIPTION')).toBe(true);
+    });
+
+    it('应该拒绝非对象 inputSchema 的工具', () => {
+      const result = registry.registerTool(
+        { ...mockTool, inputSchema: 123 as unknown as McpTool['inputSchema'] },
+        mockConfig,
+      );
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'INVALID_INPUT_SCHEMA')).toBe(true);
+    });
+
+    it('无效工具应同时报告所有验证错误', () => {
+      const result = registry.registerTool(
+        {
+          name: '',
+          description: '',
+          inputSchema: undefined as unknown as McpTool['inputSchema'],
+        },
+        mockConfig,
+      );
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(3);
+      expect(result.errors.map((e) => e.code)).toEqual([
+        'INVALID_TOOL_NAME',
+        'INVALID_TOOL_DESCRIPTION',
+        'INVALID_INPUT_SCHEMA',
+      ]);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('工具注册失败：验证不通过', {
+        context: { toolId: '', errors: result.errors },
+      });
     });
 
     it('应该拒绝空名称的工具并返回 INVALID_TOOL_NAME 错误码', () => {
@@ -231,6 +313,25 @@ describe('ApiToolRegistry', () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.code === 'MAX_TOOLS_EXCEEDED')).toBe(true);
+      expect(result.errors[0].message).toBe('已达到最大工具数量限制 (1000)');
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('工具注册失败：已达到最大工具数量限制', {
+        context: { toolId: 'overflow-tool', currentSize: 1000, maxSize: 1000 },
+      });
+    });
+
+    it('注册数量超过90%限制时应该输出接近上限警告', () => {
+      for (let i = 0; i < 901; i++) {
+        const t: McpTool = {
+          name: `tool-${i}`,
+          description: `Tool ${i}`,
+          inputSchema: { type: 'object', properties: {} },
+        };
+        registry.registerTool(t, { ...mockConfig, id: `tool-${i}`, name: `tool-${i}` });
+      }
+
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('API工具注册表接近大小限制', {
+        context: { currentSize: 901, maxSize: 1000, usagePercent: '90.1%' },
+      });
     });
 
     it('应该在满载时允许更新已有工具', () => {
@@ -313,6 +414,12 @@ describe('ApiToolRegistry', () => {
       expect(result.failed).toBe(0);
       expect(result.errors).toEqual([]);
       expect(registry.getToolCount()).toBe(2);
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('批量注册API工具', {
+        context: { count: 2 },
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('批量注册完成', {
+        context: { successful: 2, failed: 0, total: 2 },
+      });
     });
 
     it('应该处理混合有效和无效工具的批量注册', () => {
@@ -383,6 +490,17 @@ describe('ApiToolRegistry', () => {
 
       expect(result).toBe(false);
       expect(registry.getToolCount()).toBe(1);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('工具注销失败：工具不存在', {
+        context: { toolId: 'non-existent-tool' },
+      });
+    });
+
+    it('注销成功应记录日志', () => {
+      registry.unregisterTool('test-tool');
+
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('工具注销成功', {
+        context: { toolId: 'test-tool' },
+      });
     });
 
     it('应该触发 removed 事件', () => {
@@ -682,6 +800,11 @@ describe('ApiToolRegistry', () => {
       expect(registry.getToolCount()).toBe(0);
       expect(registry.getAllTools()).toEqual([]);
       expect(registry.getAllToolIds()).toEqual([]);
+      expect(registry.getToolConfig('test-tool')).toBeUndefined();
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('清空工具注册表', {
+        context: { toolCount: 2 },
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('工具注册表已清空');
     });
 
     it('应该触发 cleared 事件', () => {
@@ -782,6 +905,29 @@ describe('ApiToolRegistry', () => {
       expect(stats.totalTools).toBe(1);
       expect(stats.toolsBySource['unknown']).toBe(1);
     });
+
+    it('注册与注销操作应更新 lastUpdated 而 createdAt 保持不变', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const freshRegistry = new ApiToolRegistry();
+      const createdAt = freshRegistry.getStats().createdAt;
+
+      vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+      freshRegistry.registerTool(mockTool, mockConfig);
+      expect(freshRegistry.getStats().lastUpdated).toEqual(new Date('2026-01-01T01:00:00Z'));
+
+      vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+      freshRegistry.unregisterTool('test-tool');
+      expect(freshRegistry.getStats().lastUpdated).toEqual(new Date('2026-01-01T02:00:00Z'));
+
+      vi.setSystemTime(new Date('2026-01-01T03:00:00Z'));
+      freshRegistry.clear();
+      expect(freshRegistry.getStats().lastUpdated).toEqual(new Date('2026-01-01T03:00:00Z'));
+
+      expect(freshRegistry.getStats().createdAt).toBe(createdAt);
+      expect(freshRegistry.getStats().createdAt).toEqual(new Date('2026-01-01T00:00:00Z'));
+      vi.useRealTimers();
+    });
   });
 
   // ---------------------------------------------------------------
@@ -857,6 +1003,11 @@ describe('ApiToolRegistry', () => {
 
       expect(errorListener).toHaveBeenCalled();
       expect(normalListener).toHaveBeenCalled();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        '工具注册表事件监听器执行失败',
+        expect.any(Error),
+        { context: { eventType: 'added', toolId: 'test-tool' } },
+      );
     });
 
     it('不应该添加重复的监听器', () => {

@@ -28,63 +28,100 @@ describe('DefaultConfigGenerator', () => {
   });
 
   describe('getAvailableServerPresets', () => {
-    it('应该返回所有可用的服务器预设', () => {
+    it('应该返回全部 8 个预设，ID 列表与定义一致', () => {
       const presets = generator.getAvailableServerPresets();
 
-      expect(Array.isArray(presets)).toBe(true);
-      expect(presets.length).toBeGreaterThan(0);
-
-      // 验证默认预设存在
-      const presetIds = presets.map((p) => p.id);
-      expect(presetIds).toContain('fetch');
-      expect(presetIds).toContain('time');
-      expect(presetIds).toContain('sequential-thinking');
-      expect(presetIds).toContain('filesystem');
-      expect(presetIds).toContain('memory');
-      expect(presetIds).toContain('brave-search');
-      expect(presetIds).toContain('github');
-      expect(presetIds).toContain('context7');
+      expect(presets.map((p) => p.id)).toEqual([
+        'fetch',
+        'time',
+        'sequential-thinking',
+        'context7',
+        'filesystem',
+        'memory',
+        'brave-search',
+        'github',
+      ]);
     });
 
-    it('每个预设应该包含必需的字段', () => {
-      const presets = generator.getAvailableServerPresets();
-
-      for (const preset of presets) {
-        expect(preset).toHaveProperty('id');
-        expect(preset).toHaveProperty('name');
-        expect(preset).toHaveProperty('description');
-        expect(preset).toHaveProperty('config');
-        expect(typeof preset.id).toBe('string');
-        expect(typeof preset.name).toBe('string');
-        expect(typeof preset.description).toBe('string');
-        expect(typeof preset.config).toBe('object');
-      }
-    });
-
-    it('服务器配置应该包含 command 或 url 字段', () => {
-      const presets = generator.getAvailableServerPresets();
-
-      for (const preset of presets) {
-        const cfg = preset.config as Record<string, unknown>;
-        const hasCommand = 'command' in cfg;
-        const hasUrl = 'url' in cfg;
-        expect(hasCommand || hasUrl).toBe(true);
-      }
-    });
-
-    it('需要额外配置的预设应该包含相应标记', () => {
-      const presets = generator.getAvailableServerPresets();
-
-      const filesystemPreset = presets.find((p) => p.id === 'filesystem');
-      expect(filesystemPreset?.requiresAdditionalConfig).toBe(true);
-      expect(filesystemPreset?.additionalConfigNote).toBeDefined();
-
-      const bravePreset = presets.find((p) => p.id === 'brave-search');
-      expect(bravePreset?.requiresAdditionalConfig).toBe(true);
-      expect(bravePreset?.additionalConfigNote).toBeDefined();
-
-      const fetchPreset = presets.find((p) => p.id === 'fetch');
-      expect(fetchPreset?.requiresAdditionalConfig).toBeUndefined();
+    it('每个预设的字段与内容精确匹配', () => {
+      expect(generator.getAvailableServerPresets()).toEqual([
+        {
+          id: 'fetch',
+          name: 'Fetch',
+          description: 'Web fetching and HTTP requests',
+          config: { command: 'uvx', args: ['mcp-server-fetch'], disabled: false },
+        },
+        {
+          id: 'time',
+          name: 'Time',
+          description: 'Time and date functionality',
+          config: { command: 'uvx', args: ['mcp-server-time'], disabled: false },
+        },
+        {
+          id: 'sequential-thinking',
+          name: 'Sequential Thinking',
+          description: 'Sequential thinking capabilities',
+          config: {
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
+            disabled: false,
+          },
+        },
+        {
+          id: 'context7',
+          name: 'Context7',
+          description: 'Up-to-date documentation and code examples for any library',
+          config: { type: 'streaming', url: 'https://mcp.context7.com/mcp' },
+        },
+        {
+          id: 'filesystem',
+          name: 'Filesystem',
+          description: 'File system operations',
+          config: {
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-filesystem', '/path/to/allowed/directory'],
+            disabled: false,
+          },
+          requiresAdditionalConfig: true,
+          additionalConfigNote: '请将 /path/to/allowed/directory 替换为实际的文件系统路径',
+        },
+        {
+          id: 'memory',
+          name: 'Memory',
+          description: 'Persistent memory storage',
+          config: {
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-memory'],
+            disabled: false,
+          },
+        },
+        {
+          id: 'brave-search',
+          name: 'Brave Search',
+          description: 'Brave search engine integration',
+          config: {
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-brave-search'],
+            env: { BRAVE_API_KEY: 'your-api-key-here' },
+            disabled: false,
+          },
+          requiresAdditionalConfig: true,
+          additionalConfigNote: '请设置 BRAVE_API_KEY 环境变量',
+        },
+        {
+          id: 'github',
+          name: 'GitHub',
+          description: 'GitHub repository management',
+          config: {
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-github'],
+            env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'your-token-here' },
+            disabled: false,
+          },
+          requiresAdditionalConfig: true,
+          additionalConfigNote: '请设置 GITHUB_PERSONAL_ACCESS_TOKEN 环境变量',
+        },
+      ]);
     });
   });
 
@@ -101,30 +138,37 @@ describe('DefaultConfigGenerator', () => {
       expect(existsSync(serviceConfigPath)).toBe(true);
     });
 
-    it('应该创建包含默认服务器的配置', async () => {
+    it('应该创建包含精确默认内容的服务器配置', async () => {
       await generator.initConfigFiles();
 
       const serviceConfigPath = join(testDir, 'mcp_server.json');
       const content = await readFile(serviceConfigPath, 'utf-8');
       const config = JSON.parse(content);
 
-      expect(config).toHaveProperty('servers');
-      expect(config.servers).toHaveProperty('fetch');
-      expect(config.servers).toHaveProperty('time');
-      expect(config.servers).toHaveProperty('sequential-thinking');
-    });
-
-    it('应该包含全局设置', async () => {
-      await generator.initConfigFiles();
-
-      const serviceConfigPath = join(testDir, 'mcp_server.json');
-      const content = await readFile(serviceConfigPath, 'utf-8');
-      const config = JSON.parse(content);
-
-      expect(config).toHaveProperty('settings');
-      expect(config.settings).toHaveProperty('logLevel');
-      expect(config.settings).toHaveProperty('connectionTimeout');
-      expect(config.settings).toHaveProperty('maxConcurrentConnections');
+      expect(config).toEqual({
+        servers: {
+          fetch: { command: 'uvx', args: ['mcp-server-fetch'], disabled: false },
+          time: { command: 'uvx', args: ['mcp-server-time'], disabled: false },
+          'sequential-thinking': {
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
+            disabled: false,
+          },
+          context7: { type: 'streaming', url: 'https://mcp.context7.com/mcp' },
+        },
+        settings: {
+          logLevel: 'info',
+          connectionTimeout: 30000,
+          maxConcurrentConnections: 10,
+        },
+      });
+      // 服务器写入顺序与默认预设顺序一致
+      expect(Object.keys(config.servers)).toEqual([
+        'fetch',
+        'time',
+        'sequential-thinking',
+        'context7',
+      ]);
     });
 
     it('当 includeGroups=true 时应该创建 group.json', async () => {
@@ -143,7 +187,7 @@ describe('DefaultConfigGenerator', () => {
       expect(existsSync(groupConfigPath)).toBe(true);
     });
 
-    it('group.json 应该包含默认组和 web-tools 组', async () => {
+    it('group.json 应该包含精确的默认组和 web-tools 组', async () => {
       generator = new DefaultConfigGenerator({
         configDir: testDir,
         includeGroups: true,
@@ -155,10 +199,23 @@ describe('DefaultConfigGenerator', () => {
       const content = await readFile(groupConfigPath, 'utf-8');
       const config = JSON.parse(content);
 
-      expect(config).toHaveProperty('default');
-      expect(config).toHaveProperty('web-tools');
-      expect(config.default.name).toBe('默认组');
-      expect(config['web-tools'].name).toBe('Web工具组');
+      expect(config).toEqual({
+        default: {
+          id: 'default',
+          name: '默认组',
+          description: '包含所有默认服务器',
+          servers: ['fetch', 'time', 'sequential-thinking', 'context7'],
+          tools: [],
+        },
+        'web-tools': {
+          id: 'web-tools',
+          name: 'Web工具组',
+          description: '仅包含Web相关工具',
+          servers: ['fetch'],
+          tools: [],
+          toolFilter: { include: ['fetch'] },
+        },
+      });
     });
 
     it('当文件已存在且 overwrite=false 时应该跳过', async () => {
@@ -212,31 +269,32 @@ describe('DefaultConfigGenerator', () => {
       expect(content).toContain('  ');
     });
 
-    it('应该正确处理服务器配置', async () => {
-      await generator.initConfigFiles();
+    it('mcp_server.json 已存在且不覆盖时，includeGroups 只创建 group.json', async () => {
+      await generator.initConfigFiles(); // 先创建 mcp_server.json
 
-      const serviceConfigPath = join(testDir, 'mcp_server.json');
-      const content = await readFile(serviceConfigPath, 'utf-8');
-      const config = JSON.parse(content);
-
-      // 验证 fetch 服务器配置
-      expect((config.servers.fetch as Record<string, unknown>).command).toBe('uvx');
-      expect((config.servers.fetch as Record<string, unknown>).args).toContain('mcp-server-fetch');
-      expect((config.servers.fetch as Record<string, unknown>).disabled).toBe(false);
-    });
-
-    it('环境变量应该正确配置', async () => {
       generator = new DefaultConfigGenerator({
         configDir: testDir,
         includeGroups: true,
+        overwrite: false,
       });
+      const result = await generator.initConfigFiles();
 
-      // 手动创建包含需要环境变量的服务器的配置
-      const presets = generator.getAvailableServerPresets();
-      const bravePreset = presets.find((p) => p.id === 'brave-search');
+      expect(result.createdFiles).toEqual([join(testDir, 'group.json')]);
+      expect(result.skippedFiles).toEqual([join(testDir, 'mcp_server.json')]);
+      expect(result.errors).toHaveLength(0);
+    });
 
-      expect(bravePreset?.config.env).toBeDefined();
-      expect(bravePreset?.config.env?.BRAVE_API_KEY).toBeDefined();
+    it('写入失败时返回包含目标路径的错误信息', async () => {
+      // 将 .tmp 临时文件路径占位为目录，导致 writeFile 失败
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(join(testDir, 'mcp_server.json.tmp'));
+
+      const result = await generator.initConfigFiles();
+
+      expect(result.createdFiles).toHaveLength(0);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('无法写入配置文件');
+      expect(result.errors[0]).toContain(join(testDir, 'mcp_server.json'));
     });
   });
 
@@ -251,22 +309,6 @@ describe('DefaultConfigGenerator', () => {
       await generator.initConfigFiles();
 
       expect(existsSync(join(customDir, 'mcp_server.json'))).toBe(true);
-    });
-
-    it('应该支持覆盖选项', async () => {
-      // 创建初始配置
-      await generator.initConfigFiles();
-
-      // 使用 overwrite 选项重新创建
-      generator = new DefaultConfigGenerator({
-        configDir: testDir,
-        overwrite: true,
-      });
-
-      const result = await generator.initConfigFiles();
-
-      expect(result.createdFiles).toHaveLength(1);
-      expect(result.skippedFiles).toHaveLength(0);
     });
 
     it('应该支持 includeGroups 选项', async () => {
@@ -290,13 +332,6 @@ describe('DefaultConfigGenerator', () => {
   });
 
   describe('错误处理', () => {
-    it('应该拒绝无效的预设 ID', () => {
-      const presets = generator.getAvailableServerPresets();
-      const invalidId = 'non-existent-preset';
-
-      expect(presets.some((p) => p.id === invalidId)).toBe(false);
-    });
-
     it('应该处理文件系统错误', async () => {
       // 使用无效路径（在某些系统上可能无法创建）
       const invalidDir = '/invalid/path/that/cannot/be/created/1234567890';
@@ -309,88 +344,8 @@ describe('DefaultConfigGenerator', () => {
 
       // 应该返回错误而不是抛出异常
       expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.errors[0]).toContain('配置目录无法创建');
       expect(result.createdFiles).toHaveLength(0);
-    });
-  });
-
-  describe('服务器预设详细信息', () => {
-    it('fetch 预设应该有正确的配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const fetch = presets.find((p) => p.id === 'fetch');
-
-      expect(fetch).toBeDefined();
-      expect(fetch?.name).toBe('Fetch');
-      expect(fetch?.description).toBe('Web fetching and HTTP requests');
-      const fetchConfig = fetch?.config as Record<string, unknown>;
-      expect(fetchConfig.command).toBe('uvx');
-      expect(fetchConfig.args).toContain('mcp-server-fetch');
-    });
-
-    it('time 预设应该有正确的配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const time = presets.find((p) => p.id === 'time');
-
-      expect(time).toBeDefined();
-      expect(time?.name).toBe('Time');
-      expect(time?.description).toBe('Time and date functionality');
-      const timeConfig = time?.config as Record<string, unknown>;
-      expect(timeConfig.command).toBe('uvx');
-      expect(timeConfig.args).toContain('mcp-server-time');
-    });
-
-    it('sequential-thinking 预设应该有正确的配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const st = presets.find((p) => p.id === 'sequential-thinking');
-
-      expect(st).toBeDefined();
-      expect(st?.name).toBe('Sequential Thinking');
-      expect(st?.description).toBe('Sequential thinking capabilities');
-      if (st && 'command' in st.config) {
-        expect((st.config as Record<string, unknown>).command).toBe('npx');
-        expect((st.config as Record<string, unknown>).args).toContain(
-          '@modelcontextprotocol/server-sequential-thinking',
-        );
-      }
-    });
-
-    it('context7 预设应该有正确的配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const ctx = presets.find((p) => p.id === 'context7');
-
-      expect(ctx).toBeDefined();
-      expect(ctx?.name).toBe('Context7');
-      expect(ctx?.description).toContain('documentation');
-      if (ctx && 'url' in ctx.config) {
-        expect((ctx.config as Record<string, unknown>).url).toBe('https://mcp.context7.com/mcp');
-        expect((ctx.config as Record<string, unknown>).type).toBe('streaming');
-      }
-      expect(ctx?.requiresAdditionalConfig).toBeUndefined();
-    });
-
-    it('filesystem 预设应该标记需要额外配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const fs = presets.find((p) => p.id === 'filesystem');
-
-      expect(fs?.requiresAdditionalConfig).toBe(true);
-      expect(fs?.additionalConfigNote).toContain('/path/to/allowed/directory');
-    });
-
-    it('brave-search 预设应该包含 API 密钥配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const brave = presets.find((p) => p.id === 'brave-search');
-
-      expect(brave?.requiresAdditionalConfig).toBe(true);
-      expect(brave?.config.env?.BRAVE_API_KEY).toBeDefined();
-      expect(brave?.additionalConfigNote).toContain('BRAVE_API_KEY');
-    });
-
-    it('github 预设应该包含访问令牌配置', () => {
-      const presets = generator.getAvailableServerPresets();
-      const github = presets.find((p) => p.id === 'github');
-
-      expect(github?.requiresAdditionalConfig).toBe(true);
-      expect(github?.config.env?.GITHUB_PERSONAL_ACCESS_TOKEN).toBeDefined();
-      expect(github?.additionalConfigNote).toContain('GITHUB_PERSONAL_ACCESS_TOKEN');
     });
   });
 });

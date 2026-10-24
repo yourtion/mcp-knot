@@ -4,12 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  type HttpError,
-  McpError,
-  McpErrorCode,
-  ResponseProcessorImpl,
-} from './response-processor.js';
+import { HttpError, McpError, McpErrorCode, ResponseProcessorImpl } from './response-processor.js';
 
 import type { HttpResponse } from '../types/http-client.js';
 
@@ -111,6 +106,12 @@ describe('ResponseProcessorImpl', () => {
       await expect(processor.processWithJsonata(data, 'invalid[')).rejects.toThrow();
     });
 
+    it('无效表达式应抛出包含验证详情的错误', async () => {
+      await expect(processor.processWithJsonata({}, 'invalid[')).rejects.toThrow(
+        /JSONata表达式无效: .+/,
+      );
+    });
+
     it('应该使用安全模式处理JSONata执行错误', async () => {
       const data = { name: 'John' };
       const result = await processor.processWithJsonataSafe(data, 'invalid[');
@@ -195,6 +196,87 @@ describe('ResponseProcessorImpl', () => {
 
       // 应该回退到从常见字段提取错误信息
       expect(error.message).toBe('错误信息');
+    });
+
+    it('错误路径中间段不存在时应回退到常见字段提取', () => {
+      const response = createMockResponse(400, 'Bad Request', {
+        error: '回退信息',
+      });
+      const error = processor.processErrorResponse(response, 'missing.path.segment');
+
+      expect(error.message).toBe('回退信息');
+      expect((error as HttpError).mcpData).toHaveProperty('extractedData', '回退信息');
+    });
+
+    it('错误路径解析结果非字符串时应回退到常见字段提取消息', () => {
+      const response = createMockResponse(400, 'Bad Request', {
+        error: { code: 42, message: '来自message' },
+      });
+      const error = processor.processErrorResponse(response, 'error.code');
+
+      // 路径提取到数字 42：不能作为消息，回退到常见字段并覆盖提取值
+      expect(error.message).toBe('来自message');
+      expect((error as HttpError).mcpData).toHaveProperty('extractedData', '来自message');
+    });
+
+    it('单段错误路径应直接提取顶级字段', () => {
+      const response = createMockResponse(400, 'Bad Request', {
+        message: '顶级消息',
+      });
+      const error = processor.processErrorResponse(response, 'message');
+
+      expect(error.message).toBe('顶级消息');
+    });
+
+    it('嵌套对象子字段应按优先级顺序提取', () => {
+      // msg 优先于 description
+      const first = createMockResponse(400, 'Bad Request', {
+        error: { msg: '来自msg', description: '来自description' },
+      });
+      expect(processor.processErrorResponse(first).message).toBe('来自msg');
+
+      // description 优先于 detail
+      const second = createMockResponse(400, 'Bad Request', {
+        error: { description: '来自description', detail: '来自detail' },
+      });
+      expect(processor.processErrorResponse(second).message).toBe('来自description');
+    });
+
+    it('常见字段应按 error/message/msg/detail/description 优先级提取', () => {
+      const response = createMockResponse(400, 'Bad Request', {
+        error: '错误字段',
+        message: '消息字段',
+      });
+      const error = processor.processErrorResponse(response);
+
+      expect(error.message).toBe('错误字段');
+    });
+
+    it('未提取到字符串错误时应将整个数据对象作为 extractedData', () => {
+      const response = createMockResponse(400, 'Bad Request', {
+        error: 12345,
+      });
+      const error = processor.processErrorResponse(response);
+
+      expect(error.message).toBe('API调用失败: 400 Bad Request');
+      expect((error as HttpError).mcpData).toHaveProperty('extractedData', { error: 12345 });
+    });
+
+    it('HttpError 应携带状态、MCP错误码与原始响应', () => {
+      const response = createMockResponse(404, 'Not Found', { error: '不存在' });
+      const error = processor.processErrorResponse(response) as HttpError;
+
+      expect(error.name).toBe('HttpError');
+      expect(error.status).toBe(404);
+      expect(error.statusText).toBe('Not Found');
+      expect(error.mcpCode).toBe(McpErrorCode.API_NOT_FOUND);
+      expect(error.response).toBe(response);
+      expect(error.mcpData).toEqual({
+        httpStatus: 404,
+        httpStatusText: 'Not Found',
+        originalData: { error: '不存在' },
+        extractedData: '不存在',
+      });
     });
   });
 
@@ -312,6 +394,61 @@ describe('ResponseProcessorImpl', () => {
       expect(result._type).toBe('text');
       expect(result.content).toBe('Hello World');
     });
+
+    it('应该处理 Buffer 响应数据', async () => {
+      const response = createMockResponse(200, Buffer.from('{"name":"BufferGuy"}'));
+      const result = await processor.processResponse(response);
+
+      expect(result).toEqual({ name: 'BufferGuy' });
+    });
+
+    it('应该处理 ArrayBuffer 响应数据', async () => {
+      const buffer = new TextEncoder().encode('{"name":"ArrayBufferGuy"}');
+      const response = createMockResponse(200, buffer.buffer);
+      const result = await processor.processResponse(response);
+
+      expect(result).toEqual({ name: 'ArrayBufferGuy' });
+    });
+
+    it('单行带逗号文本不应识别为CSV', async () => {
+      const response = createMockResponse(200, 'name,age');
+      const result = (await processor.processResponse(response)) as TextResponseResult;
+
+      expect(result._type).toBe('text');
+    });
+
+    it('逗号数量不一致的多行文本不应识别为CSV', async () => {
+      const response = createMockResponse(200, 'a,b,c\n1,2');
+      const result = (await processor.processResponse(response)) as TextResponseResult;
+
+      expect(result._type).toBe('text');
+      expect(result.content).toBe('a,b,c\n1,2');
+    });
+
+    it('分隔符行占比恰好为一半时不应识别为键值对', async () => {
+      // 2 行中只有 1 行含 '='，比例 0.5 不大于 0.5
+      const response = createMockResponse(200, 'key=value\n普通文本行');
+      const result = (await processor.processResponse(response)) as TextResponseResult;
+
+      expect(result._type).toBe('text');
+    });
+
+    it('键值对中包含分隔符的值应完整保留', async () => {
+      const response = createMockResponse(200, 'url=http://example.com?a=1');
+      const result = (await processor.processResponse(response)) as KeyValueResponseResult;
+
+      expect(result._type).toBe('key-value');
+      expect(result.parsed).toEqual({ url: 'http://example.com?a=1' });
+    });
+
+    it('无分隔符的行应在键值对解析中被忽略', async () => {
+      const response = createMockResponse(200, 'a=1\n无分隔符行\nb:2');
+      const result = (await processor.processResponse(response)) as KeyValueResponseResult;
+
+      expect(result._type).toBe('key-value');
+      expect(result.parsed).toEqual({ a: '1', b: '2' });
+      expect(result.content).toBe('a=1\n无分隔符行\nb:2');
+    });
   });
 
   describe('processWithFallback', () => {
@@ -368,6 +505,26 @@ describe('ResponseProcessorImpl', () => {
       expect(result._fallback).toBe(true);
       expect(result._data).toEqual({ name: 'John', age: 30 });
     });
+
+    it('没有主要表达式时应直接处理响应', async () => {
+      const response = createMockResponse(200, { name: 'John', age: 30 });
+      const result = await processor.processWithFallback(response);
+
+      expect(result).toEqual({ name: 'John', age: 30 });
+    });
+
+    it('主要表达式与降级表达式都因HTTP错误失败时应返回降级数据', async () => {
+      const response = createMockResponse(500, { error: '服务器错误' });
+      const result = (await processor.processWithFallback(
+        response,
+        'name',
+        'age',
+      )) as FallbackResponseResult;
+
+      expect(result._fallback).toBe(true);
+      expect(result._data).toEqual({ error: '服务器错误' });
+      expect(result._originalError).toContain('服务器错误');
+    });
   });
 
   describe('McpError', () => {
@@ -419,6 +576,24 @@ describe('ResponseProcessorImpl', () => {
       const error = McpError.fromHttpStatus(404);
       expect(error.code).toBe(McpErrorCode.API_NOT_FOUND);
       expect(error.message).toBe('API端点未找到');
+    });
+
+    it('非4xx/5xx状态应使用通用请求失败错误', () => {
+      const redirected = McpError.fromHttpStatus(302);
+      expect(redirected.code).toBe(McpErrorCode.API_REQUEST_FAILED);
+      expect(redirected.message).toBe('API请求失败');
+
+      const serverError = McpError.fromHttpStatus(502);
+      expect(serverError.code).toBe(McpErrorCode.API_SERVER_ERROR);
+      expect(serverError.message).toBe('API服务器错误');
+    });
+
+    it('fromHttpStatus 应透传附加数据', () => {
+      const data = { requestId: 'req-1' };
+      const error = McpError.fromHttpStatus(400, undefined, data);
+
+      expect(error.message).toBe('请求参数无效');
+      expect(error.data).toEqual({ requestId: 'req-1' });
     });
   });
 

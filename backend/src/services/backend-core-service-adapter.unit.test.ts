@@ -111,6 +111,41 @@ describe('BackendCoreServiceAdapter', () => {
     expect(status.connectedServers).toBe(1);
   });
 
+  it('getServiceStatus 只统计 connected（2 连接 + 1 断开 + 1 其他状态）', () => {
+    const sm = makeMockServerManager({
+      getAllServers: vi.fn().mockReturnValue(
+        new Map([
+          ['s1', { id: 's1', status: 'connected' as ServerStatus } as ServerConnection],
+          ['s2', { id: 's2', status: 'connected' as ServerStatus } as ServerConnection],
+          ['s3', { id: 's3', status: 'disconnected' as ServerStatus } as ServerConnection],
+          ['s4', { id: 's4', status: 'connecting' as ServerStatus } as ServerConnection],
+        ]),
+      ),
+    });
+    const adapter = new BackendCoreServiceAdapter(sm);
+    const status = adapter.getServiceStatus();
+    expect(status.serverCount).toBe(4);
+    expect(status.connectedServers).toBe(2);
+    expect(status.activeConnections).toBe(2);
+    expect(status.initialized).toBe(true);
+  });
+
+  it('getServiceStatus 全部断开时 initialized 为 false', () => {
+    const sm = makeMockServerManager({
+      getAllServers: vi
+        .fn()
+        .mockReturnValue(
+          new Map([
+            ['s1', { id: 's1', status: 'disconnected' as ServerStatus } as ServerConnection],
+          ]),
+        ),
+    });
+    const adapter = new BackendCoreServiceAdapter(sm);
+    const status = adapter.getServiceStatus();
+    expect(status.initialized).toBe(false);
+    expect(status.activeConnections).toBe(0);
+  });
+
   it('isToolAvailable 检查 server 的 tools 是否含该工具', async () => {
     const sm = makeMockServerManager({
       getServerTools: vi
@@ -120,6 +155,18 @@ describe('BackendCoreServiceAdapter', () => {
     const adapter = new BackendCoreServiceAdapter(sm);
     expect(await adapter.isToolAvailable('find-me', 's')).toBe(true);
     expect(await adapter.isToolAvailable('missing', 's')).toBe(false);
+  });
+
+  it('isToolAvailable 目标工具与其他工具混存时仍命中（some 语义）', async () => {
+    const sm = makeMockServerManager({
+      getServerTools: vi.fn().mockResolvedValue([
+        { name: 'other-tool', inputSchema: {}, serverId: 's' },
+        { name: 'find-me', inputSchema: {}, serverId: 's' },
+      ]),
+    });
+    const adapter = new BackendCoreServiceAdapter(sm);
+    // 多工具中只要存在即可用（every 语义会错判为 false）
+    expect(await adapter.isToolAvailable('find-me', 's')).toBe(true);
   });
 
   it('initializeFromConfig / registerServer 委托 ServerManager；shutdown 为 no-op（不关闭借用的 ServerManager）', async () => {

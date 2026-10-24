@@ -32,7 +32,7 @@ describe('HttpRequestBuilderImpl', () => {
       const result = builder.buildRequest(config, context);
 
       expect(result.success).toBe(true);
-      expect(result.request).toEqual({
+      expect(result.request).toStrictEqual({
         url: 'https://api.example.com/users/123',
         method: 'GET',
         headers: {
@@ -42,8 +42,22 @@ describe('HttpRequestBuilderImpl', () => {
         timeout: 5000,
         retries: undefined,
       });
+      // 无 body 时 request 不应包含 data 键
+      expect('data' in (result.request as object)).toBe(false);
       expect(result.usedVariables).toContain('data.userId');
       expect(result.usedVariables).toContain('env.API_TOKEN');
+    });
+
+    it('无模板变量时 usedVariables 应为空数组', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/static',
+        method: 'GET',
+      };
+
+      const result = builder.buildRequest(config, { data: {}, env: {} });
+
+      expect(result.success).toBe(true);
+      expect(result.usedVariables).toEqual([]);
     });
 
     it('应该构建带查询参数的GET请求', () => {
@@ -228,6 +242,107 @@ describe('HttpRequestBuilderImpl', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('URL模板渲染失败');
     });
+
+    it('查询参数模板渲染失败应报错并指明参数名', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/search',
+        method: 'GET',
+        queryParams: { q: '{{data.missing}}' },
+      };
+
+      const result = builder.buildRequest(config, { data: {}, env: {} });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("查询参数 'q' 模板渲染失败");
+    });
+
+    it('请求头模板渲染失败应报错并指明请求头名', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/search',
+        method: 'GET',
+        headers: { 'X-Token': '{{env.MISSING_TOKEN}}' },
+      };
+
+      const result = builder.buildRequest(config, { data: {}, env: {} });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("请求头 'X-Token' 模板渲染失败");
+    });
+
+    it('字符串请求体模板渲染失败应报错', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/webhook',
+        method: 'POST',
+        body: 'User {{data.missing}}',
+      };
+
+      const result = builder.buildRequest(config, { data: {}, env: {} });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('请求体模板渲染失败');
+    });
+
+    it('对象属性模板渲染失败应报错并指明属性名', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/users',
+        method: 'POST',
+        body: { name: '{{data.missing}}' },
+      };
+
+      const result = builder.buildRequest(config, { data: {}, env: {} });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("对象属性 'name' 模板渲染失败");
+    });
+
+    it('数组元素模板渲染失败应报错', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/batch',
+        method: 'POST',
+        body: { items: ['{{data.missing}}'] },
+      };
+
+      const result = builder.buildRequest(config, { data: {}, env: {} });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('数组元素模板渲染失败');
+    });
+
+    it('请求体数组应渲染模板字符串并保留原始标量元素', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/batch',
+        method: 'POST',
+        body: {
+          items: ['{{data.first}}', 'static', 42, null],
+        },
+      };
+
+      const result = builder.buildRequest(config, { data: { first: 'A' }, env: {} });
+
+      expect(result.success).toBe(true);
+      expect(result.request?.data).toEqual({ items: ['A', 'static', 42, null] });
+    });
+
+    it('嵌套数组应递归渲染模板', () => {
+      const config: ApiEndpointConfig = {
+        url: 'https://api.example.com/batch',
+        method: 'POST',
+        body: {
+          matrix: [['{{data.a}}', 'keep'], [7]],
+        },
+      };
+
+      const result = builder.buildRequest(config, { data: { a: 'A1' }, env: {} });
+
+      expect(result.success).toBe(true);
+      expect(result.request?.data).toEqual({ matrix: [['A1', 'keep'], [7]] });
+    });
+
+    it('纯标量数组保持数组结构不变', () => {
+      const result = builder.buildBody({ ids: [1, 2] }, { data: {}, env: {} });
+
+      expect(result.body).toEqual({ ids: [1, 2] });
+    });
   });
 
   describe('buildUrl', () => {
@@ -239,6 +354,26 @@ describe('HttpRequestBuilderImpl', () => {
 
       expect(result.url).toBe('https://api.example.com/users/123');
       expect(result.usedVariables).toContain('data.id');
+    });
+
+    it('无变量无查询参数时 usedVariables 应为空数组', () => {
+      const result = builder.buildUrl('https://api.example.com/static', undefined, {
+        data: {},
+        env: {},
+      });
+
+      expect(result.url).toBe('https://api.example.com/static');
+      expect(result.usedVariables).toEqual([]);
+    });
+
+    it('查询参数全部为空值时 URL 不应带问号', () => {
+      const result = builder.buildUrl(
+        'https://api.example.com/search',
+        { empty: '', blank: '' },
+        { data: {}, env: {} },
+      );
+
+      expect(result.url).toBe('https://api.example.com/search');
     });
 
     it('应该构建带查询参数的URL', () => {
@@ -343,8 +478,41 @@ describe('HttpRequestBuilderImpl', () => {
     it('应该处理undefined请求体', () => {
       const result = builder.buildBody(undefined, { data: {}, env: {} });
 
+      expect(result).toStrictEqual({ usedVariables: [] });
       expect(result.body).toBeUndefined();
+    });
+
+    it('number 请求体应原样返回', () => {
+      const result = builder.buildBody(42 as unknown as Record<string, unknown>, {
+        data: {},
+        env: {},
+      });
+
+      expect(result.body).toBe(42);
       expect(result.usedVariables).toEqual([]);
+    });
+
+    it('null 请求体应原样返回', () => {
+      const result = builder.buildBody(null as unknown as Record<string, unknown>, {
+        data: {},
+        env: {},
+      });
+
+      expect(result.body).toBe(null);
+      expect(result.usedVariables).toEqual([]);
+    });
+
+    it('数组元素模板变量应记录到 usedVariables', () => {
+      const result = builder.buildBody(
+        { items: ['{{data.first}}'] },
+        {
+          data: { first: 'A' },
+          env: {},
+        },
+      );
+
+      expect(result.body).toEqual({ items: ['A'] });
+      expect(result.usedVariables).toEqual(['data.first']);
     });
 
     it('应该处理复杂嵌套结构', () => {

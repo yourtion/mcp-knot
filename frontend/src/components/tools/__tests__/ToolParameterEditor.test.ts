@@ -13,7 +13,7 @@ const schema: JsonSchema = {
   required: ['query', 'limit', 'active'],
   additionalProperties: false,
   properties: {
-    query: { type: 'string', minLength: 1 },
+    query: { type: 'string', minLength: 1, description: 'Search query' },
     limit: { type: 'integer', minimum: 0, maximum: 10 },
     active: { type: 'boolean' },
     optional: { type: 'string' },
@@ -25,6 +25,8 @@ describe('ToolParameterEditor', () => {
     const input = { query: 'before', limit: 0, active: false };
     const beforeSchema = JSON.stringify(schema);
     const wrapper = mount(ToolParameterEditor, { props: { schema, modelValue: input } });
+    expect(wrapper.text()).toContain('Search query');
+    expect(wrapper.find('[data-required-field="true"]').text()).toContain('query');
     wrapper.findComponent(Input).vm.$emit('update:modelValue', 'updated');
     wrapper.findComponent(InputNumber).vm.$emit('update:modelValue', 4);
     wrapper.findComponent(Switch).vm.$emit('update:modelValue', true);

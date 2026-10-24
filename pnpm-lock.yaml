@@ -135,8 +135,8 @@ importers:
         specifier: ^3.5.17
         version: 3.5.17(typescript@5.8.3)
       vue-json-ui-editor:
-        specifier: file:vendor/vue-json-ui-editor-3.1.0-pr99.tgz
-        version: file:frontend/vendor/vue-json-ui-editor-3.1.0-pr99.tgz(vue@3.5.17(typescript@5.8.3))
+        specifier: 3.2.1
+        version: 3.2.1(vue@3.5.17(typescript@5.8.3))
       vue-router:
         specifier: ^4.5.1
         version: 4.5.1(vue@3.5.17(typescript@5.8.3))
@@ -3102,9 +3102,8 @@ packages:
   vue-component-type-helpers@2.2.12:
     resolution: {integrity: sha512-YbGqHZ5/eW4SnkPNR44mKVc6ZKQoRs/Rux1sxC6rdwXb4qpbOSYfDr9DsTHolOTGmIKgM9j141mZbBeg05R1pw==}
 
-  vue-json-ui-editor@file:frontend/vendor/vue-json-ui-editor-3.1.0-pr99.tgz:
-    resolution: {integrity: sha512-bVl2wYC3fYo1hgL9+qGBI0QMO6bVxUmlxpETXnOpLsv+tnwyyu2KyXvx/vEbNCeKQ7mNgn6nc+fmeb8PJwYTrw==, tarball: file:frontend/vendor/vue-json-ui-editor-3.1.0-pr99.tgz}
-    version: 3.1.0
+  vue-json-ui-editor@3.2.1:
+    resolution: {integrity: sha512-kCnL6S88jX0NTuB5RQGH3m8V2Cq33cipPKcRZbTDAHyy5FbtYTurCG55H3v5Tjs9rAE6oRdarEOj257dUk1Oqg==}
     peerDependencies:
       vue: ^3
 
@@ -5848,7 +5847,7 @@ snapshots:
 
   vue-component-type-helpers@2.2.12: {}
 
-  vue-json-ui-editor@file:frontend/vendor/vue-json-ui-editor-3.1.0-pr99.tgz(vue@3.5.17(typescript@5.8.3)):
+  vue-json-ui-editor@3.2.1(vue@3.5.17(typescript@5.8.3)):
     dependencies:
       '@element-plus/icons-vue': 2.3.2(vue@3.5.17(typescript@5.8.3))
       vue: 3.5.17(typescript@5.8.3)

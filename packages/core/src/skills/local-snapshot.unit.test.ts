@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { TestContext, useTestContext } from '../../../../test/context/test-context.js';
-import { loadLocalSkillSnapshot } from './local-snapshot.js';
+import { loadLocalSkillSnapshot, skillMimeType, snapshotFromFiles } from './local-snapshot.js';
 import { MAX_SKILL_BYTES, MAX_SKILL_FILES } from './schemas.js';
 
 const skillText = `---
@@ -235,5 +235,226 @@ describe('local skill snapshots', () => {
     ).toBe(MAX_SKILL_BYTES);
     await writeFile(join(root, 'extra.txt'), 'x');
     await expect(loadLocalSkillSnapshot(root)).rejects.toThrow('exceeds 16 MiB');
+  });
+
+  it('rejects a regular file used as the skill root', async () => {
+    const file = join(temp, 'plain.txt');
+    await writeFile(file, 'not a directory');
+    await expect(loadLocalSkillSnapshot(file)).rejects.toThrow(
+      'Skill root must be a directory, not a symbolic link',
+    );
+  });
+
+  it('rejects hard-linked skill files', async () => {
+    const original = join(temp, 'original.md');
+    await writeFile(original, 'linked content');
+    await link(original, join(root, 'hard-linked.md'));
+    await expect(loadLocalSkillSnapshot(root)).rejects.toThrow(
+      'Skill files must be regular, unlinked files',
+    );
+  });
+});
+
+describe('skill MIME type mapping', () => {
+  it.each([
+    ['.md', 'text/markdown'],
+    ['.txt', 'text/plain'],
+    ['.json', 'application/json'],
+    ['.yaml', 'application/yaml'],
+    ['.yml', 'application/yaml'],
+    ['.csv', 'text/csv'],
+    ['.sh', 'text/x-shellscript'],
+    ['.py', 'text/x-python'],
+    ['.js', 'text/javascript'],
+    ['.ts', 'text/plain'],
+    ['.svg', 'image/svg+xml'],
+    ['.png', 'image/png'],
+    ['.jpg', 'image/jpeg'],
+    ['.pdf', 'application/pdf'],
+    ['.MD', 'text/markdown'],
+    ['.Png', 'image/png'],
+    ['.bin', 'application/octet-stream'],
+    ['README', 'application/octet-stream'],
+    ['archive.tar.gz', 'application/octet-stream'],
+  ])('maps %s to %s', (extension, mimeType) => {
+    expect(skillMimeType(`dir/file${extension}`)).toBe(mimeType);
+  });
+});
+
+describe('skill frontmatter boundaries', () => {
+  let temp: string;
+  let root: string;
+
+  beforeEach(async () => {
+    temp = await mkdtemp(join(tmpdir(), 'mcp-knot-frontmatter-'));
+    const directory = temp;
+    useTestContext().register('temporary-directory', () =>
+      rm(directory, { recursive: true, force: true }),
+    );
+    root = join(temp, 'review-code');
+    await mkdir(root, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await TestContext.resetCurrent();
+  });
+
+  it('rejects frontmatter that does not start the file', async () => {
+    await writeFile(
+      join(root, 'SKILL.md'),
+      'Intro before frontmatter.\n---\nname: review-code\ndescription: x.\n---\n',
+    );
+    await expect(loadLocalSkillSnapshot(root)).rejects.toThrow(
+      'SKILL.md must begin with YAML frontmatter',
+    );
+  });
+
+  it('accepts a document that ends exactly at the closing delimiter', async () => {
+    const bytes = Buffer.from('---\nname: review-code\ndescription: x.\n---');
+    await writeFile(join(root, 'SKILL.md'), bytes);
+    const snapshot = await loadLocalSkillSnapshot(root);
+    expect(snapshot.read(snapshot.entry.uri)).toMatchObject({ text: bytes.toString('utf8') });
+  });
+
+  it.each(['Team', 'team!', '-team', '/team', 'team/', 'a/BAD'])(
+    'rejects the unsafe namespace %s',
+    async (namespace) => {
+      await writeFile(join(root, 'SKILL.md'), skillText);
+      await expect(loadLocalSkillSnapshot(root, namespace)).rejects.toThrow(
+        'Skill namespace must contain URI-safe lowercase path segments',
+      );
+    },
+  );
+
+  it('accepts nested lowercase namespaces', async () => {
+    await writeFile(join(root, 'SKILL.md'), skillText);
+    const snapshot = await loadLocalSkillSnapshot(root, 'team-a/group_b.c');
+    expect(snapshot.entry.uri.startsWith('skill://team-a/group_b.c/')).toBe(true);
+  });
+});
+
+describe('snapshot reconstruction from persisted files', () => {
+  const markdown = (name: string) =>
+    Buffer.from(`---\nname: ${name}\ndescription: Fixture skill.\n---\nBody.\n`);
+  const input = (files: Array<[string, Buffer | string]>) =>
+    files.map(([path, bytes]) => ({
+      path,
+      bytes: Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes),
+    }));
+
+  it.each(['', 'a\\b', 'a\0b', '/leading', 'trailing/', 'a//b', '.', '..', 'a/.', 'a/..', 'a/.'])(
+    'rejects the invalid stored path %j',
+    (path) => {
+      expect(() =>
+        snapshotFromFiles(
+          [
+            { path: 'SKILL.md', bytes: markdown('demo-skill') },
+            { path, bytes: Buffer.from('x') },
+          ],
+          'team',
+          'demo-skill',
+        ),
+      ).toThrow('Invalid snapshot file path');
+    },
+  );
+
+  it('rejects duplicate stored paths', () => {
+    expect(() =>
+      snapshotFromFiles(
+        input([
+          ['SKILL.md', markdown('demo-skill')],
+          ['notes.txt', 'one'],
+          ['notes.txt', 'two'],
+        ]),
+        'team',
+        'demo-skill',
+      ),
+    ).toThrow('Duplicate snapshot file path');
+  });
+
+  it('rejects snapshots above the file or byte limits', () => {
+    const files = input([['SKILL.md', markdown('demo-skill')]]);
+    for (let index = 0; index < MAX_SKILL_FILES; index += 1)
+      files.push({ path: `f${index}.txt`, bytes: Buffer.alloc(0) });
+    expect(() => snapshotFromFiles(files, 'team', 'demo-skill')).toThrow(
+      'Snapshot exceeds skill limits',
+    );
+    expect(() =>
+      snapshotFromFiles(
+        input([
+          ['SKILL.md', markdown('demo-skill')],
+          ['asset.bin', Buffer.alloc(MAX_SKILL_BYTES + 1)],
+        ]),
+        'team',
+        'demo-skill',
+      ),
+    ).toThrow('Snapshot exceeds skill limits');
+  });
+
+  it('requires SKILL.md and a matching directory name', () => {
+    expect(() =>
+      snapshotFromFiles(input([['README.md', 'no skill here']]), 'team', 'demo-skill'),
+    ).toThrow('Skill directory must contain SKILL.md');
+    expect(() =>
+      snapshotFromFiles(input([['SKILL.md', markdown('demo-skill')]]), 'team', 'other-skill'),
+    ).toThrow('Skill directory name must match frontmatter.name');
+    expect(() =>
+      snapshotFromFiles(input([['SKILL.md', markdown('demo-skill')]]), 'team', 'demo-skiil'),
+    ).toThrow('Skill directory name must match frontmatter.name');
+  });
+
+  it('matches directory names using NFKC normalization', () => {
+    const snapshot = snapshotFromFiles(
+      input([['SKILL.md', markdown('ｄｅｍｏ-ｓｋｉｌｌ')]]),
+      'team',
+      'demo-skill',
+    );
+    expect(snapshot.entry.frontmatter.name).toBe('ｄｅｍｏ-ｓｋｉｌｌ');
+  });
+
+  it('rejects unsafe namespaces before touching any file bytes', () => {
+    expect(() =>
+      snapshotFromFiles(input([['SKILL.md', markdown('demo-skill')]]), 'Team', 'demo-skill'),
+    ).toThrow('Invalid snapshot namespace');
+  });
+
+  it('serves resources in sorted path order regardless of input order', () => {
+    const snapshot = snapshotFromFiles(
+      input([
+        ['z-last.md', 'z'],
+        ['SKILL.md', markdown('demo-skill')],
+        ['a-first.md', 'a'],
+      ]),
+      'team',
+      'demo-skill',
+    );
+    expect(snapshot.entry.resources.map((file) => file.uri.split('/').at(-1))).toEqual([
+      'SKILL.md',
+      'a-first.md',
+      'z-last.md',
+    ]);
+  });
+
+  it('keeps binary and image MIME types byte-exact even when the bytes are UTF-8', () => {
+    const snapshot = snapshotFromFiles(
+      input([
+        ['SKILL.md', markdown('demo-skill')],
+        ['logo.png', 'PNG-not-really'],
+        ['data.bin', 'hello'],
+      ]),
+      'team',
+      'demo-skill',
+    );
+    const read = (suffix: string) =>
+      snapshot.read(snapshot.entry.resources.find((file) => file.uri.endsWith(suffix))!.uri);
+    expect(read('logo.png')).toMatchObject({
+      mimeType: 'image/png',
+      blob: Buffer.from('PNG-not-really').toString('base64'),
+    });
+    expect(read('data.bin')).toMatchObject({
+      mimeType: 'application/octet-stream',
+      blob: Buffer.from('hello').toString('base64'),
+    });
+    expect(read('SKILL.md')).toMatchObject({ mimeType: 'text/markdown', text: expect.any(String) });
   });
 });

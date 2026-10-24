@@ -25,7 +25,7 @@
     "tdesign-icons-vue-next": "^0.3.7",
     "tdesign-vue-next": "^1.16.1",
     "vue": "^3.5.17",
-    "vue-json-ui-editor": "file:vendor/vue-json-ui-editor-3.1.0-pr99.tgz",
+    "vue-json-ui-editor": "3.2.1",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {

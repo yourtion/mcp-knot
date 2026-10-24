@@ -2,14 +2,15 @@
  * CLI配置管理器单元测试
  */
 
+import { UnifiedLogger } from '@mcp-core/mcp-knot-share';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { join, resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CliConfigManager } from './cli-config-manager';
 
-import type { CliConfig } from '../types/index';
+import type { CliConfig, CliError } from '../types/index';
 
 describe('CliConfigManager', () => {
   let configManager: CliConfigManager;
@@ -282,6 +283,199 @@ describe('CliConfigManager', () => {
       expect(mergedConfig.servers.server2).toEqual(overrideConfig.servers?.server2);
       expect(mergedConfig.logging.level).toBe('debug');
       expect(mergedConfig.transport.type).toBe('stdio');
+    });
+  });
+
+  describe('loadConfig 错误结构', () => {
+    it('文件不存在时应抛出带绝对路径详情的 CONFIG_FILE_NOT_FOUND', async () => {
+      const missingPath = join(tempDir, 'missing.json');
+
+      const error = await configManager.loadConfig(missingPath).catch((e: CliError) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe('CONFIG_FILE_NOT_FOUND');
+      expect(error.message).toBe(`配置文件不存在: ${resolve(missingPath)}`);
+      expect(error.details).toEqual({ filePath: resolve(missingPath) });
+    });
+
+    it('JSON 解析失败时应抛出 INVALID_CONFIG_FORMAT 并带解析错误详情', async () => {
+      await writeFile(tempConfigPath, '{ invalid');
+
+      const error = await configManager.loadConfig(tempConfigPath).catch((e: CliError) => e);
+
+      expect(error.code).toBe('INVALID_CONFIG_FORMAT');
+      expect(error.message).toContain('配置文件JSON格式无效');
+      expect(error.details).toMatchObject({
+        configPath: resolve(tempConfigPath),
+        parseError: expect.any(String),
+      });
+    });
+
+    it('结构校验失败时应抛出带字段路径与错误列表的 INVALID_CONFIG_FORMAT', async () => {
+      // 两个非法字段：command 为空 + timeout 为负数，错误消息应以 "; " 连接
+      const invalidConfig = {
+        servers: {
+          bad_a: { command: '' },
+          bad_b: { command: 'node', timeout: -1 },
+        },
+      };
+      await writeFile(tempConfigPath, JSON.stringify(invalidConfig));
+
+      const error = await configManager.loadConfig(tempConfigPath).catch((e: CliError) => e);
+
+      expect(error.code).toBe('INVALID_CONFIG_FORMAT');
+      expect(error.message).toContain('配置文件格式无效: ');
+      expect(error.message).toContain('servers.bad_a.command');
+      expect(error.message).toContain('servers.bad_b.timeout');
+      expect(error.message).toContain('; ');
+      expect(error.details).toMatchObject({
+        configPath: resolve(tempConfigPath),
+        validationErrors: expect.anything(),
+        errorMessages: expect.stringContaining('; '),
+      });
+    });
+  });
+
+  describe('日志输出', () => {
+    function spyOnLogger() {
+      return {
+        debug: vi.spyOn(UnifiedLogger.prototype, 'debug').mockImplementation(() => {}),
+        error: vi.spyOn(UnifiedLogger.prototype, 'error').mockImplementation(() => {}),
+      };
+    }
+
+    it('加载配置应记录加载、成功日志及上下文', async () => {
+      const spies = spyOnLogger();
+      await writeFile(
+        tempConfigPath,
+        JSON.stringify({ servers: { test_server: { command: 'node' } } }),
+      );
+
+      await configManager.loadConfig(tempConfigPath);
+
+      expect(spies.debug).toHaveBeenCalledWith('加载配置文件', {
+        context: { configPath: tempConfigPath },
+      });
+      expect(spies.debug).toHaveBeenCalledWith('配置文件加载成功', {
+        context: {
+          configPath: resolve(tempConfigPath),
+          serverCount: 1,
+          loggingLevel: 'info',
+        },
+      });
+    });
+
+    it('命中缓存时应记录缓存日志', async () => {
+      const spies = spyOnLogger();
+      await writeFile(
+        tempConfigPath,
+        JSON.stringify({ servers: { test_server: { command: 'node' } } }),
+      );
+
+      await configManager.loadConfig(tempConfigPath);
+      spies.debug.mockClear();
+      await configManager.loadConfig(tempConfigPath);
+
+      expect(spies.debug).toHaveBeenCalledWith('使用缓存的配置');
+      expect(spies.debug).not.toHaveBeenCalledWith('配置文件加载成功', expect.anything());
+    });
+
+    it('加载失败时应记录错误日志', async () => {
+      const spies = spyOnLogger();
+
+      await configManager.loadConfig(join(tempDir, 'missing.json')).catch(() => {});
+
+      expect(spies.error).toHaveBeenCalledWith('加载配置文件失败:', expect.any(Error), {
+        context: { configPath: join(tempDir, 'missing.json') },
+      });
+    });
+
+    it('clearCache 应记录清缓存日志', () => {
+      const spies = spyOnLogger();
+
+      configManager.clearCache();
+
+      expect(spies.debug).toHaveBeenCalledWith('配置缓存已清除');
+    });
+
+    it('validateConfig 校验失败时应记录错误日志', () => {
+      const spies = spyOnLogger();
+
+      configManager.validateConfig({ servers: { s: { command: '' } } } as CliConfig);
+
+      expect(spies.error).toHaveBeenCalledWith('配置验证失败:', expect.any(Error));
+    });
+
+    it('validateServerConfig 校验失败时应记录错误日志', () => {
+      const spies = spyOnLogger();
+
+      configManager.validateServerConfig({ command: '' });
+
+      expect(spies.error).toHaveBeenCalledWith('服务器配置验证失败:', expect.any(Error));
+    });
+  });
+
+  describe('模板与验证委托', () => {
+    it('getConfigTemplate 默认返回 basic 模板', () => {
+      const template = configManager.getConfigTemplate();
+
+      expect(template).toContain('example_server');
+      expect(template).not.toContain('file_server');
+    });
+
+    it('getConfigTemplateWithComments 默认返回 basic 注释模板', () => {
+      const template = configManager.getConfigTemplateWithComments();
+
+      expect(template).toContain('// MCP Knot CLI 配置文件');
+      expect(template).toContain('// 基础配置模板');
+    });
+
+    it('generateConfigTemplate 应按类型生成模板', () => {
+      const advanced = configManager.generateConfigTemplate('advanced');
+
+      expect(Object.keys(advanced.servers)).toContain('file_server');
+    });
+
+    it('validateConfigDetailed 应委托详细验证', () => {
+      const result = configManager.validateConfigDetailed(null);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe('CONFIG_NULL');
+    });
+
+    it('formatValidationResult 应委托格式化输出', () => {
+      const formatted = configManager.formatValidationResult({
+        valid: true,
+        errors: [],
+        warnings: [],
+      });
+
+      expect(formatted).toBe('✅ 配置验证通过');
+    });
+
+    it('getAvailableTemplates 应返回全部模板类型', () => {
+      const templates = configManager.getAvailableTemplates();
+
+      expect(templates.map((t) => t.type)).toEqual([
+        'basic',
+        'advanced',
+        'development',
+        'production',
+      ]);
+    });
+  });
+
+  describe('getCacheStatus 路径解析', () => {
+    it('缓存键应为解析后的绝对路径', async () => {
+      await writeFile(
+        tempConfigPath,
+        JSON.stringify({ servers: { test_server: { command: 'node' } } }),
+      );
+
+      await configManager.loadConfig(tempConfigPath);
+
+      const status = configManager.getCacheStatus();
+      expect(status.cachedPaths).toEqual([resolve(tempConfigPath)]);
     });
   });
 });

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '../utils/logger.js';
 import {
   validateAllConfigs,
   validateConfigCrossReferences,
@@ -10,7 +11,15 @@ import {
 
 import type { GroupConfig, McpConfig } from '@mcp-core/mcp-knot-share';
 
+vi.mock('../utils/logger.js', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
 describe('配置验证工具', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   describe('validateMcpConfig', () => {
     it('应该验证有效的stdio服务器配置', () => {
       const config = {
@@ -168,6 +177,68 @@ describe('配置验证工具', () => {
       if (!result.success) {
         expect(result.errors.some((err) => err.includes('组名称不能为空'))).toBe(true);
       }
+    });
+
+    it('未提供可用服务器列表时不校验服务器引用（默认空列表）', () => {
+      const config = {
+        default: {
+          id: 'default-group',
+          name: 'Default',
+          servers: ['server-any'],
+          tools: [],
+        },
+      };
+
+      // 不传 availableServers：跳过引用存在性校验，应校验通过
+      const result = validateGroupConfig(config);
+      expect(result.success).toBe(true);
+    });
+
+    it('提供空数组 availableServers 时也不校验服务器引用', () => {
+      const config = {
+        default: {
+          id: 'default-group',
+          name: 'Default',
+          servers: ['server-any'],
+          tools: [],
+        },
+      };
+
+      const result = validateGroupConfig(config, []);
+      expect(result.success).toBe(true);
+    });
+
+    it('组 ID 包含组名时不输出不匹配告警', () => {
+      const config = {
+        default: {
+          id: 'default-group',
+          name: 'Default',
+          servers: ['server1'],
+          tools: [],
+        },
+      };
+
+      const result = validateGroupConfig(config, ['server1']);
+      expect(result.success).toBe(true);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('组 ID 不包含组名时输出告警日志但不影响校验结果', () => {
+      const config = {
+        mygroup: {
+          id: 'totally-different-id',
+          name: 'My Group',
+          servers: ['server1'],
+          tools: [],
+        },
+      };
+
+      const result = validateGroupConfig(config, ['server1']);
+      expect(result.success).toBe(true);
+      expect(logger.warn).toHaveBeenCalledWith('组 ID 可能与组名不匹配', {
+        groupName: 'mygroup',
+        groupId: 'totally-different-id',
+      });
     });
   });
 
@@ -409,7 +480,72 @@ describe('配置验证工具', () => {
       const result = validateAllConfigs(mcpConfig, groupConfig);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors.some((err) => err.includes('MCP配置错误'))).toBe(true);
+        // 错误列表不夹带无关内容，且首条为 MCP 配置错误
+        expect(result.errors).toHaveLength(
+          result.errors.filter((err) => err.startsWith('MCP配置错误')).length,
+        );
+        expect(result.errors[0]).toMatch(/^MCP配置错误/);
+        expect(result.errors.some((err) => err.includes('至少需要配置一个MCP服务器'))).toBe(true);
+      }
+    });
+
+    it('组配置无效时返回组配置错误', () => {
+      const mcpConfig = {
+        servers: {
+          server1: { type: 'stdio', command: 'node', args: ['server1.js'] },
+        },
+      };
+      const invalidGroupConfig = {
+        default: {
+          id: 'default',
+          name: 'Default',
+          servers: ['nonexistent-server'],
+          tools: [],
+        },
+      };
+
+      const result = validateAllConfigs(mcpConfig, invalidGroupConfig);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0]).toMatch(/^组配置错误/);
+        expect(result.errors.some((err) => err.includes('引用了不存在的服务器'))).toBe(true);
+      }
+    });
+
+    it('系统配置无效时返回系统配置错误', () => {
+      const mcpConfig = {
+        servers: {
+          server1: { type: 'stdio', command: 'node', args: ['server1.js'] },
+        },
+      };
+      const groupConfig = {
+        default: { id: 'default', name: 'Default', servers: ['server1'], tools: [] },
+      };
+      const invalidSystemConfig = { users: {} };
+
+      const result = validateAllConfigs(mcpConfig, groupConfig, invalidSystemConfig);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0]).toMatch(/^系统配置错误/);
+      }
+    });
+
+    it('未提供系统配置时校验通过且 systemConfig 为 undefined', () => {
+      const mcpConfig = {
+        servers: {
+          server1: { type: 'stdio', command: 'node', args: ['server1.js'] },
+        },
+      };
+      const groupConfig = {
+        default: { id: 'default', name: 'Default', servers: ['server1'], tools: [] },
+      };
+
+      const result = validateAllConfigs(mcpConfig, groupConfig);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.mcpConfig.servers['server1']!.type).toBe('stdio');
+        expect(result.data.groupConfig.default!.name).toBe('Default');
+        expect(result.data.systemConfig).toBeUndefined();
       }
     });
   });

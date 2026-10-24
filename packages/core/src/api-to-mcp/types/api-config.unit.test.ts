@@ -1,6 +1,88 @@
 import { describe, expect, it } from 'vitest';
 
-import { AuthConfigSchema } from './api-config.js';
+import {
+  AuthConfigSchema,
+  CacheConfigSchema,
+  HttpMethodSchema,
+  JsonSchemaSchema,
+  RateLimitConfigSchema,
+  SecurityConfigSchema,
+} from './api-config.js';
+
+describe('HttpMethodSchema', () => {
+  it.each(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'])('%s 应为合法方法', (m) => {
+    expect(HttpMethodSchema.safeParse(m).success).toBe(true);
+  });
+
+  it('小写与非标准方法应被拒绝', () => {
+    expect(HttpMethodSchema.safeParse('get').success).toBe(false);
+    expect(HttpMethodSchema.safeParse('TRACE').success).toBe(false);
+    expect(HttpMethodSchema.safeParse('').success).toBe(false);
+  });
+});
+
+describe('OAuthAuthConfigSchema grantType', () => {
+  it('refresh_token 应为合法 grantType', () => {
+    const result = AuthConfigSchema.safeParse({
+      type: 'oauth',
+      grantType: 'refresh_token',
+      clientId: 'cid',
+      clientSecret: 'secret',
+      tokenUrl: 'https://as.example.com/token',
+      refreshToken: 'rt',
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('RateLimitConfigSchema', () => {
+  it('空对象应被拒绝（字段必填）', () => {
+    expect(RateLimitConfigSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('合法限流配置应通过', () => {
+    expect(
+      RateLimitConfigSchema.safeParse({ windowSeconds: 60, maxRequests: 10, enabled: true })
+        .success,
+    ).toBe(true);
+  });
+});
+
+describe('SecurityConfigSchema', () => {
+  it('非法 authentication 配置应被拒绝', () => {
+    expect(SecurityConfigSchema.safeParse({ authentication: { type: 'unknown' } }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('CacheConfigSchema', () => {
+  it('空对象应被拒绝（enabled/ttl 必填）', () => {
+    expect(CacheConfigSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('合法缓存配置应通过', () => {
+    expect(CacheConfigSchema.safeParse({ enabled: true, ttl: 300 }).success).toBe(true);
+  });
+});
+
+describe('JsonSchemaSchema 属性类型枚举', () => {
+  it.each(['boolean', 'object', 'array', 'null'] as const)('属性 type %s 应为合法类型', (t) => {
+    const result = JsonSchemaSchema.safeParse({
+      type: 'object',
+      properties: { p: { type: t } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('非法属性 type 应被拒绝', () => {
+    const result = JsonSchemaSchema.safeParse({
+      type: 'object',
+      properties: { p: { type: 'integer' } },
+    });
+    expect(result.success).toBe(false);
+  });
+});
 
 describe('AuthConfigSchema（discriminated union）', () => {
   it('接受有效的 bearer 配置', () => {

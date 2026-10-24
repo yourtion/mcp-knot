@@ -51,6 +51,7 @@ describe('jwks-cache', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('缓存命中时不重复拉取', async () => {
@@ -126,5 +127,56 @@ describe('jwks-cache', () => {
 
     expect(countA).toBe(1);
     expect(countB).toBe(1);
+  });
+
+  describe('TTL 语义（fake timers）', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('自定义 ttlMs 到期（含等于阈值的边界）后重建并记录 debug 日志', async () => {
+      const { jwk, kid } = await makeTestKey();
+      const jwksUri = 'https://idp.example.com/jwks';
+      const fetchMock = stubFetchReturning(jwk);
+      vi.stubGlobal('fetch', fetchMock);
+
+      const cache = createJwksCache({ ttlMs: 100 });
+      await cache.getKey(kid, jwksUri);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // TTL 未到期：命中缓存
+      await vi.advanceTimersByTimeAsync(99);
+      await cache.getKey(kid, jwksUri);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // 正好到达 ttlMs（now - fetchedAt === 100）：判定过期并重建
+      loggerMock.debug.mockClear();
+      await vi.advanceTimersByTimeAsync(1);
+      await cache.getKey(kid, jwksUri);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(loggerMock.debug).toHaveBeenCalledWith('JWKS 缓存未命中或已过期，重建 remote JWKSet', {
+        jwksUri,
+      });
+    });
+
+    it('未传 ttlMs 时使用默认 1 小时（短时间不重建，满 1h 重建）', async () => {
+      const { jwk, kid } = await makeTestKey();
+      const jwksUri = 'https://idp.example.com/jwks';
+      const fetchMock = stubFetchReturning(jwk);
+      vi.stubGlobal('fetch', fetchMock);
+
+      const cache = createJwksCache();
+      await cache.getKey(kid, jwksUri);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // 2s：远小于 1h，应命中缓存（防止 TTL 被错误地配置为秒级以下）
+      await vi.advanceTimersByTimeAsync(2_000);
+      await cache.getKey(kid, jwksUri);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // 满 1h：过期重建
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+      await cache.getKey(kid, jwksUri);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 });

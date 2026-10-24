@@ -28,7 +28,18 @@ const mockBuildRequest = vi.fn().mockImplementation((apiConfig, _context) => ({
 
 const mockValidateParameters = vi.fn().mockReturnValue({ valid: true, errors: [] });
 
+const loggerMocks = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
+
 // Mock依赖
+vi.mock('../../utils/logger.js', () => ({
+  logger: loggerMocks,
+  createLogger: vi.fn(() => loggerMocks),
+}));
 vi.mock('./http-client.js');
 vi.mock('./authentication.js');
 vi.mock('../utils/http-request-builder.js', () => ({
@@ -52,6 +63,8 @@ describe('ApiExecutorImpl', () => {
   let mockAuthManager: AuthenticationManager;
 
   beforeEach(() => {
+    vi.clearAllMocks();
+
     // 创建mock实例
     mockHttpClient = {
       request: vi.fn(),
@@ -144,6 +157,56 @@ describe('ApiExecutorImpl', () => {
 
       expect(request.timeout).toBe(30000); // 默认超时
       expect(request.retries).toBe(3); // 默认重试次数
+    });
+
+    it('构建结果缺少请求对象时应抛出错误', () => {
+      const originalImpl = mockBuildRequest.getMockImplementation();
+      mockBuildRequest.mockReturnValue({
+        success: true,
+        request: undefined,
+        usedVariables: [],
+      });
+
+      expect(() =>
+        apiExecutor.buildHttpRequest(
+          {
+            id: 'test-api',
+            name: '测试API',
+            description: '测试用API',
+            api: { url: 'https://api.example.com/test', method: 'GET' },
+            parameters: { type: 'object', properties: {} },
+            response: {},
+          },
+          {},
+        ),
+      ).toThrow('构建HTTP请求失败: 请求对象为空');
+
+      mockBuildRequest.mockImplementation(originalImpl);
+    });
+
+    it('构建失败时应抛出包含原因的错误', () => {
+      const originalImpl = mockBuildRequest.getMockImplementation();
+      mockBuildRequest.mockReturnValue({
+        success: false,
+        error: '无效的 URL 模板',
+        usedVariables: [],
+      });
+
+      expect(() =>
+        apiExecutor.buildHttpRequest(
+          {
+            id: 'test-api',
+            name: '测试API',
+            description: '测试用API',
+            api: { url: 'https://api.example.com/test', method: 'GET' },
+            parameters: { type: 'object', properties: {} },
+            response: {},
+          },
+          {},
+        ),
+      ).toThrow('构建HTTP请求失败: 无效的 URL 模板');
+
+      mockBuildRequest.mockImplementation(originalImpl);
     });
   });
 
@@ -280,24 +343,31 @@ describe('ApiExecutorImpl', () => {
   });
 
   describe('executeApiCall', () => {
-    it('应该成功执行完整的API调用流程', async () => {
-      const apiConfig: ApiToolConfig = {
-        id: 'test-api',
-        name: '测试API',
-        description: '测试用API',
-        api: {
-          url: 'https://api.example.com/test',
-          method: 'GET',
-        },
-        parameters: {
-          type: 'object',
-          properties: {
-            param1: { type: 'string' },
-          },
-        },
-        response: {},
-      };
+    const simpleConfig: ApiToolConfig = {
+      id: 'test-api',
+      name: '测试API',
+      description: '测试用API',
+      api: {
+        url: 'https://api.example.com/test',
+        method: 'GET',
+      },
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+      response: {},
+    };
 
+    const buildResponse = (status: number, data: unknown, statusText = ''): HttpResponse => ({
+      status,
+      statusText,
+      headers: new Headers(),
+      data,
+      raw: {} as Response,
+      config: {} as HttpRequestConfig,
+    });
+
+    it('应该成功执行完整的API调用流程', async () => {
       const parameters = { param1: 'value1' };
 
       const mockResponse: HttpResponse = {
@@ -311,12 +381,180 @@ describe('ApiExecutorImpl', () => {
 
       vi.mocked(mockHttpClient.request).mockResolvedValue(mockResponse);
 
-      const result = await apiExecutor.executeApiCall(apiConfig, parameters);
+      const result = await apiExecutor.executeApiCall(
+        {
+          ...simpleConfig,
+          parameters: { type: 'object', properties: { param1: { type: 'string' } } },
+        },
+        parameters,
+      );
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual({ result: 'success' });
       expect(result.error).toBeUndefined();
       expect(result.raw).toEqual(mockResponse);
+      expect(loggerMocks.info).toHaveBeenCalledWith('开始执行API调用: test-api');
+      expect(loggerMocks.debug).toHaveBeenCalledWith(
+        'HTTP请求详情: test-api GET https://api.example.com/test',
+      );
+      // {"result":"success"} JSON 长度为 20
+      expect(loggerMocks.debug).toHaveBeenCalledWith('HTTP响应详情: test-api 200 OK (20 bytes)');
+      expect(loggerMocks.info).toHaveBeenCalledWith(
+        expect.stringMatching(/^API调用完成: test-api, 状态: 200, 耗时: \d+ms$/),
+      );
+    });
+
+    it('关闭请求/响应日志时不应输出详情日志', async () => {
+      const quietExecutor = new ApiExecutorImpl(mockHttpClient, mockAuthManager, {
+        enableRequestLogging: false,
+        enableResponseLogging: false,
+      });
+      vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(200, { ok: true }, 'OK'));
+
+      await quietExecutor.executeApiCall(simpleConfig, {});
+
+      expect(loggerMocks.debug).not.toHaveBeenCalledWith(
+        'HTTP请求详情: test-api GET https://api.example.com/test',
+      );
+      expect(loggerMocks.debug).not.toHaveBeenCalledWith(expect.stringContaining('HTTP响应详情'));
+    });
+
+    describe('状态码边界', () => {
+      it.each([
+        { status: 200, success: true },
+        { status: 299, success: true },
+        { status: 300, success: false },
+      ])('状态 $status 的 success 应为 $success', async ({ status, success }) => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(status, {}, 'Moved'));
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.success).toBe(success);
+      });
+
+      it('3xx/4xx 以下状态不应提取错误信息', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(305, { error: 'ignored' }, 'Use Proxy'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBeUndefined();
+      });
+
+      it('429 状态应提取错误信息', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(429, { error: 'Too Many Requests' }, 'Too Many Requests'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Too Many Requests');
+      });
+    });
+
+    describe('错误信息提取', () => {
+      it.each([
+        { field: 'error', expected: '来自error' },
+        { field: 'message', expected: '来自message' },
+        { field: 'error_description', expected: '来自error_description' },
+        { field: 'detail', expected: '来自detail' },
+        { field: 'msg', expected: '来自msg' },
+      ])('应从 $field 字段提取错误信息', async ({ field, expected }) => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(500, { [field]: expected }, 'Internal Server Error'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.error).toBe(expected);
+      });
+
+      it('错误字段优先级应为 error > message', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(500, { error: '一级', message: '二级' }, 'Internal Server Error'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.error).toBe('一级');
+      });
+
+      it('非字符串错误字段应被跳过', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(500, { error: { message: '嵌套' } }, 'Internal Server Error'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.error).toBe('Internal Server Error');
+      });
+
+      it('无匹配字段时应回退到状态文本', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(502, { unexpected: 'shape' }, 'Bad Gateway'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.error).toBe('Bad Gateway');
+      });
+
+      it('无状态文本时应回退到 HTTP 状态码', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(503, {}, ''));
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.error).toBe('HTTP 503');
+      });
+
+      it('非对象响应数据应回退到状态文本', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(
+          buildResponse(500, 'plain', 'Server Error'),
+        );
+
+        const result = await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(result.error).toBe('Server Error');
+      });
+    });
+
+    describe('响应大小计算', () => {
+      it('字符串数据的字节数应为字符串长度', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(200, '0123456789', 'OK'));
+
+        await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(loggerMocks.debug).toHaveBeenCalledWith('HTTP响应详情: test-api 200 OK (10 bytes)');
+      });
+
+      it('null 数据的大小应为 0', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(200, null, 'OK'));
+
+        await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(loggerMocks.debug).toHaveBeenCalledWith('HTTP响应详情: test-api 200 OK (0 bytes)');
+      });
+
+      it('循环引用对象的大小应为 0', async () => {
+        const circular: Record<string, unknown> = {};
+        circular.self = circular;
+        vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(200, circular, 'OK'));
+
+        await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(loggerMocks.debug).toHaveBeenCalledWith('HTTP响应详情: test-api 200 OK (0 bytes)');
+      });
+
+      it('数值数据的字节数应为字符串化长度', async () => {
+        vi.mocked(mockHttpClient.request).mockResolvedValue(buildResponse(200, 12345, 'OK'));
+
+        await apiExecutor.executeApiCall(simpleConfig, {});
+
+        expect(loggerMocks.debug).toHaveBeenCalledWith('HTTP响应详情: test-api 200 OK (5 bytes)');
+      });
     });
 
     it('应该处理参数验证失败', async () => {

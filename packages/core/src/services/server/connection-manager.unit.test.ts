@@ -76,9 +76,12 @@ describe('ServerConnectionManager', () => {
     });
 
     it('应该在未初始化时抛出错误', async () => {
-      await expect(
-        connectionManager.createConnection('test-server', mockServerConfig),
-      ).rejects.toThrow(ConnectionManagerError);
+      const error = await connectionManager
+        .createConnection('test-server', mockServerConfig)
+        .catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(ConnectionManagerError);
+      expect((error as ConnectionManagerError).message).toBe('连接管理器必须在使用前初始化');
+      expect((error as ConnectionManagerError).code).toBe('NOT_INITIALIZED');
     });
   });
 
@@ -440,9 +443,278 @@ describe('ServerConnectionManager', () => {
         connection.reconnectAttempts = 3; // MAX_RECONNECT_ATTEMPTS
       }
 
-      await expect(connectionManager.reconnectServer('test-server')).rejects.toThrow(
-        ConnectionManagerError,
+      const error = await connectionManager
+        .reconnectServer('test-server')
+        .catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(ConnectionManagerError);
+      expect((error as ConnectionManagerError).message).toBe(
+        "服务器 'test-server' 重连次数已达上限",
       );
+      expect((error as ConnectionManagerError).code).toBe('MAX_RECONNECT_ATTEMPTS_EXCEEDED');
+      expect((error as ConnectionManagerError).context).toEqual({ maxAttempts: 3 });
+    });
+
+    it('重连失败时进入 ERROR 状态并记录失败原因', async () => {
+      // 先用真实定时器建立连接（simulateConnection 含 100ms 真实延迟），
+      // 再启用 fake timers 处理重连退避；否则 await 会因定时器冻结而挂起，
+      // 超时后 finally 不会执行，fake timers 泄漏拖垮后续所有测试
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      vi.useFakeTimers();
+      try {
+        const internal = connectionManager as unknown as { performConnection: unknown };
+        const original = internal.performConnection;
+        internal.performConnection = vi.fn().mockRejectedValue(new Error('重连失败'));
+        const connection = connectionManager.getConnectionInfo('test-server')!;
+        connection.state = ConnectionState.ERROR;
+
+        const reconnecting = connectionManager.reconnectServer('test-server');
+        // 先挂 rejection 断言再推进时钟：reject 发生在 advanceTimersByTimeAsync 期间，
+        // 事后挂处理器会跨宏任务边界成为 unhandled rejection（会挂掉 Stryker 干跑）
+        const expectation = expect(reconnecting).rejects.toThrow(
+          "连接 'test-server' 失败: 重连失败",
+        );
+        await vi.advanceTimersByTimeAsync(1_100);
+        await expectation;
+
+        expect(connection.state).toBe(ConnectionState.ERROR);
+        expect(connection.lastError?.message).toBe('重连失败');
+        expect(connection.reconnectAttempts).toBe(1);
+        internal.performConnection = original;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('重连前关闭旧客户端并按指数退避等待', async () => {
+      // 同上：先真实定时器建连，再启用 fake timers 验证退避
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      vi.useFakeTimers();
+      try {
+        const connection = connectionManager.getConnectionInfo('test-server')!;
+        const close = vi.fn();
+        connection.client = { close };
+        connection.state = ConnectionState.ERROR;
+
+        let resolved = false;
+        const reconnecting = connectionManager.reconnectServer('test-server').then(() => {
+          resolved = true;
+        });
+        // 关闭与状态清理在 reconnectServer 内部的首个 await 之后完成，先刷新微任务
+        await vi.advanceTimersByTimeAsync(0);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(connection.client).toBeUndefined();
+        expect(connection.state).toBe(ConnectionState.RECONNECTING);
+
+        await vi.advanceTimersByTimeAsync(999);
+        expect(resolved).toBe(false);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(resolved).toBe(true);
+        await reconnecting;
+
+        expect(connection.state).toBe(ConnectionState.CONNECTED);
+        expect(connection.lastError).toBeUndefined();
+        expect(connection.lastConnected).toBeInstanceOf(Date);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('客户端生命周期', () => {
+    beforeEach(async () => {
+      await connectionManager.initialize();
+    });
+
+    it('首次创建连接不应误报关闭不存在的连接', async () => {
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      expect(mockLogger.warn).not.toHaveBeenCalledWith('尝试关闭不存在的连接', expect.anything());
+    });
+
+    it('创建连接后提供模拟客户端并发现以服务器命名的工具', async () => {
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      const info = connectionManager.getConnectionInfo('test-server');
+      expect(info?.client).toMatchObject({ id: 'test-server', connected: true });
+      expect(typeof (info!.client as { close: () => void }).close).toBe('function');
+      expect(info?.tools.map((tool) => tool.name)).toEqual([
+        'test-server_tool_1',
+        'test-server_tool_2',
+      ]);
+    });
+
+    it('连接失败后工具列表为空且计入失败统计', async () => {
+      const internal = connectionManager as unknown as { performConnection: unknown };
+      const original = internal.performConnection;
+      internal.performConnection = vi.fn().mockRejectedValue(new Error('连接失败'));
+      await expect(
+        connectionManager.createConnection('broken', mockServerConfig),
+      ).rejects.toThrow();
+      internal.performConnection = original;
+
+      expect(await connectionManager.getServerTools('broken')).toEqual([]);
+      expect(connectionManager.getPoolStats()).toMatchObject({
+        totalConnections: 1,
+        activeConnections: 0,
+        failedConnections: 1,
+      });
+    });
+
+    it('关闭连接时调用客户端 close 并清理状态', async () => {
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      const info = connectionManager.getConnectionInfo('test-server')!;
+      const close = vi.fn();
+      info.client = { close };
+
+      await connectionManager.closeConnection('test-server');
+
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(info.client).toBeUndefined();
+      expect(info.state).toBe(ConnectionState.DISCONNECTED);
+      expect(info.lastError).toBeUndefined();
+      expect(connectionManager.getAllConnections().has('test-server')).toBe(false);
+    });
+
+    it('客户端缺少 close 方法时不阻塞关闭且不记录错误', async () => {
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      const info = connectionManager.getConnectionInfo('test-server')!;
+      info.client = {};
+
+      await connectionManager.closeConnection('test-server');
+
+      expect(info.lastError).toBeUndefined();
+      expect(connectionManager.getConnectionInfo('test-server')).toBeUndefined();
+    });
+
+    it('客户端 close 失败时记录错误但仍移除连接', async () => {
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      const info = connectionManager.getConnectionInfo('test-server')!;
+      info.client = { close: vi.fn().mockRejectedValue(new Error('关闭失败')) };
+
+      await connectionManager.closeConnection('test-server');
+
+      expect(info.lastError?.message).toBe('关闭失败');
+      expect(connectionManager.getConnectionInfo('test-server')).toBeUndefined();
+    });
+  });
+
+  describe('健康检查边界', () => {
+    beforeEach(async () => {
+      await connectionManager.initialize();
+    });
+
+    it('对非 CONNECTED 状态或缺少客户端的连接返回不健康', async () => {
+      await connectionManager.createConnection('test-server', mockServerConfig);
+      const info = connectionManager.getConnectionInfo('test-server')!;
+
+      info.state = ConnectionState.CONNECTING;
+      info.client = { close: vi.fn() };
+      expect(await connectionManager.healthCheck('test-server')).toBe(false);
+
+      info.state = ConnectionState.CONNECTED;
+      info.client = undefined;
+      expect(await connectionManager.healthCheck('test-server')).toBe(false);
+
+      // 即使检查失败也应记录健康检查次数
+      expect(info.healthCheckCount).toBe(2);
+      expect(info.lastHealthCheck).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('工具执行边界', () => {
+    beforeEach(async () => {
+      await connectionManager.initialize();
+    });
+
+    function injectConnection(state: ConnectionState, client?: unknown) {
+      const connection: ServerConnectionInfo = {
+        id: 'test-server',
+        config: mockServerConfig,
+        state,
+        client,
+        tools: [],
+        reconnectAttempts: 0,
+        healthCheckCount: 0,
+      };
+      (
+        connectionManager as unknown as {
+          connections: Map<string, ServerConnectionInfo>;
+        }
+      ).connections.set('test-server', connection);
+      return connection;
+    }
+
+    it('未连接时抛出携带当前状态的错误', async () => {
+      injectConnection(ConnectionState.DISCONNECTED);
+      const error = await connectionManager
+        .executeToolOnServer('test-server', 'tool', {})
+        .catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(ConnectionManagerError);
+      expect((error as ConnectionManagerError).message).toBe(
+        "服务器 'test-server' 未连接 (状态: disconnected)",
+      );
+      expect((error as ConnectionManagerError).code).toBe('SERVER_NOT_CONNECTED');
+      expect((error as ConnectionManagerError).context).toEqual({ state: 'disconnected' });
+    });
+
+    it('已连接但客户端不可用时抛出专用错误', async () => {
+      injectConnection(ConnectionState.CONNECTED);
+      await expect(
+        connectionManager.executeToolOnServer('test-server', 'tool', {}),
+      ).rejects.toThrow("服务器 'test-server' 客户端不可用");
+      const error = await connectionManager
+        .executeToolOnServer('test-server', 'tool', {})
+        .catch((cause: unknown) => cause);
+      expect((error as ConnectionManagerError).code).toBe('CLIENT_NOT_AVAILABLE');
+    });
+  });
+
+  describe('连接池统计边界', () => {
+    beforeEach(async () => {
+      await connectionManager.initialize();
+    });
+
+    it('按状态分别统计并计算平均重连次数', async () => {
+      const connections = (
+        connectionManager as unknown as {
+          connections: Map<string, ServerConnectionInfo>;
+        }
+      ).connections;
+      const base = {
+        config: mockServerConfig,
+        tools: [],
+        healthCheckCount: 0,
+      };
+      connections.set('active', {
+        ...base,
+        id: 'active',
+        state: ConnectionState.CONNECTED,
+        client: { close: vi.fn() },
+        reconnectAttempts: 0,
+        healthCheckCount: 2,
+      });
+      connections.set('failed', {
+        ...base,
+        id: 'failed',
+        state: ConnectionState.ERROR,
+        reconnectAttempts: 3,
+        healthCheckCount: 1,
+      });
+      connections.set('reconnecting', {
+        ...base,
+        id: 'reconnecting',
+        state: ConnectionState.RECONNECTING,
+        reconnectAttempts: 1,
+        healthCheckCount: 0,
+      });
+
+      expect(connectionManager.getPoolStats()).toEqual({
+        totalConnections: 3,
+        activeConnections: 1,
+        failedConnections: 1,
+        reconnectingConnections: 1,
+        averageReconnectAttempts: 4 / 3,
+        totalHealthChecks: 3,
+      });
+      expect(connectionManager.getActiveConnections()).toEqual(['active']);
     });
   });
 
@@ -478,6 +750,13 @@ describe('ServerConnectionManager', () => {
           duration: expect.any(Number),
         }),
       );
+      const completion = mockLogger.info.mock.calls.find(
+        (call) => call[0] === '服务器连接管理器关闭完成',
+      );
+      expect((completion![1] as { duration: number }).duration).toBeGreaterThanOrEqual(0);
+
+      // 单次关闭不应触发重复关闭告警
+      expect(mockLogger.warn).not.toHaveBeenCalledWith('关闭已在进行中，等待完成');
 
       const stats = connectionManager.getPoolStats();
       expect(stats.totalConnections).toBe(0);
