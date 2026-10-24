@@ -17,6 +17,15 @@ vi.mock('../tools-admin/index.js', () => ({
   addExecutionRecord,
 }));
 
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock('../../utils/logger.js', () => ({ logger: loggerMock }));
+
 import { toolsApi } from './index.js';
 
 import type { GroupToolInfo } from '../mcp/group-service.js';
@@ -86,6 +95,46 @@ describe('Tools API', () => {
       );
       expect(body.data.toolsByServer.primary).toHaveLength(1);
       expect(hubService.listTools).toHaveBeenCalledWith('default');
+      expect(loggerMock.info).toHaveBeenCalledWith('获取所有工具列表', {
+        groupId: 'default',
+        toolCount: 3,
+      });
+    });
+
+    it('同一服务器的多个工具完整分组且分组内保留可用状态', async () => {
+      hubService.listTools.mockResolvedValue([
+        tool(),
+        tool({ name: 'search', description: '搜索' }),
+        tool({ name: 'internal', serverId: 'hidden' }),
+      ]);
+      hubService.getServerHealth.mockReturnValue(new Map([['primary', 'connected']]));
+
+      const response = await app.request('/api/tools?groupId=grp-x');
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.toolsByServer.primary).toEqual([
+        {
+          name: 'echo',
+          description: '回显工具',
+          status: 'available',
+          inputSchema: tool().inputSchema,
+        },
+        {
+          name: 'search',
+          description: '搜索',
+          status: 'available',
+          inputSchema: tool().inputSchema,
+        },
+      ]);
+      expect(body.data.toolsByServer.hidden[0]).toMatchObject({
+        name: 'internal',
+        status: 'unavailable',
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('获取所有工具列表', {
+        groupId: 'grp-x',
+        toolCount: 3,
+      });
     });
 
     it('serverId 查询参数按服务器过滤工具并透传 groupId', async () => {
@@ -103,6 +152,11 @@ describe('Tools API', () => {
       expect(body.data.tools).toEqual([expect.objectContaining({ name: 'echo' })]);
       expect(body.data.serverId).toBe('primary');
       expect(hubService.listTools).toHaveBeenCalledWith('team');
+      expect(loggerMock.info).toHaveBeenCalledWith('按服务器过滤工具列表', {
+        serverId: 'primary',
+        groupId: 'team',
+        toolCount: 1,
+      });
     });
 
     it('服务异常时返回 500', async () => {
@@ -144,8 +198,35 @@ describe('Tools API', () => {
       const response = await app.request('/api/tools/server/ghost');
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
+        success: false,
         error: { code: 'SERVER_NOT_FOUND', message: "服务器 'ghost' 未找到" },
+        requestId: 'tools-request',
+      });
+    });
+
+    it('未指定 groupId 时回落 default', async () => {
+      hubService.listTools.mockResolvedValue([tool()]);
+      hubService.getServerHealth.mockReturnValue(new Map([['primary', 'connected']]));
+
+      const response = await app.request('/api/tools/server/primary');
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: { groupId: 'default', serverStatus: 'connected' },
+      });
+      expect(hubService.listTools).toHaveBeenCalledWith('default');
+    });
+
+    it('listTools 抛错时返回 500', async () => {
+      hubService.listTools.mockRejectedValue(new Error('服务器工具失败'));
+
+      const response = await app.request('/api/tools/server/primary');
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        requestId: 'tools-request',
       });
     });
   });
@@ -194,6 +275,57 @@ describe('Tools API', () => {
       });
     });
 
+    it('工具不在健康列表的服务器上时 serverStatus 为 unknown', async () => {
+      hubService.listTools.mockResolvedValue([tool()]);
+      hubService.getServerHealth.mockReturnValue(new Map());
+
+      const response = await app.request('/api/tools/echo');
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: {
+          serverStatus: 'unknown',
+          status: 'unavailable',
+          isAvailable: false,
+        },
+      });
+    });
+
+    it('在多工具列表中按名称精确匹配目标工具', async () => {
+      hubService.listTools.mockResolvedValue([
+        tool({ name: 'other-tool', serverId: 'secondary' }),
+        tool(),
+      ]);
+      hubService.getServerHealth.mockReturnValue(
+        new Map([
+          ['primary', 'connected'],
+          ['secondary', 'connected'],
+        ]),
+      );
+
+      const response = await app.request('/api/tools/echo');
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: { name: 'echo', serverId: 'primary' },
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('获取工具详细信息', {
+        toolName: 'echo',
+        serverId: 'primary',
+        groupId: 'default',
+        serverStatus: 'connected',
+      });
+    });
+
+    it('listTools 抛错时返回 500', async () => {
+      hubService.listTools.mockRejectedValue(new Error('详情失败'));
+
+      const response = await app.request('/api/tools/echo');
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
+    });
+
     it('工具不存在时返回 404 TOOL_NOT_FOUND', async () => {
       hubService.listTools.mockResolvedValue([]);
       hubService.getServerHealth.mockReturnValue(new Map());
@@ -201,11 +333,13 @@ describe('Tools API', () => {
       const response = await app.request('/api/tools/ghost');
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
+        success: false,
         error: {
           code: 'TOOL_NOT_FOUND',
           message: "工具 'ghost' 在组 'default' 中未找到",
         },
+        requestId: 'tools-request',
       });
     });
   });
@@ -231,10 +365,21 @@ describe('Tools API', () => {
         result: [{ type: 'text', text: 'ok' }],
       });
       expect(body.data.executionId).toContain('team-echo-');
-      expect(typeof body.data.executionTime).toBe('number');
+      // 耗时应为短时间差，而非时间戳相加
+      expect(body.data.executionTime).toBeGreaterThanOrEqual(0);
+      expect(body.data.executionTime).toBeLessThan(10_000);
       expect(hubService.callTool).toHaveBeenCalledWith('echo', { query: 'hello' }, 'team');
       expect(addExecutionRecord).toHaveBeenCalledWith(
         expect.objectContaining({ toolName: 'echo', groupId: 'team', isError: false }),
+      );
+      expect(loggerMock.info).toHaveBeenCalledWith(
+        '工具执行完成',
+        expect.objectContaining({
+          toolName: 'echo',
+          serverId: 'primary',
+          groupId: 'team',
+          status: 'completed',
+        }),
       );
     });
 
@@ -254,15 +399,70 @@ describe('Tools API', () => {
       expect(body.data.isError).toBe(true);
       expect(body.data.result[0].text).toBe('业务错误');
       expect(addExecutionRecord).toHaveBeenCalledWith(expect.objectContaining({ isError: true }));
+      expect(loggerMock.info).toHaveBeenCalledWith(
+        '工具执行完成',
+        expect.objectContaining({ toolName: 'echo', status: 'failed' }),
+      );
+    });
+
+    it('groupId 优先级：body > 查询参数 > default', async () => {
+      hubService.listTools.mockResolvedValue([tool()]);
+      hubService.getServerHealth.mockReturnValue(new Map([['primary', 'connected']]));
+      hubService.callTool.mockResolvedValue({ content: [] });
+
+      await app.request('/api/tools/echo/execute?groupId=from-query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId: 'from-body' }),
+      });
+      expect(hubService.listTools).toHaveBeenLastCalledWith('from-body');
+
+      await app.request('/api/tools/echo/execute?groupId=from-query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(hubService.listTools).toHaveBeenLastCalledWith('from-query');
+
+      await post('/echo/execute', {});
+      expect(hubService.listTools).toHaveBeenLastCalledWith('default');
+    });
+
+    it('在多工具列表中按名称精确匹配并执行目标工具', async () => {
+      hubService.listTools.mockResolvedValue([
+        tool({ name: 'other-tool', serverId: 'secondary' }),
+        tool(),
+      ]);
+      hubService.getServerHealth.mockReturnValue(
+        new Map([
+          ['primary', 'connected'],
+          ['secondary', 'connected'],
+        ]),
+      );
+      hubService.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+      const response = await post('/echo/execute', {});
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.serverId).toBe('primary');
+      expect(hubService.callTool).toHaveBeenCalledWith('echo', {}, 'default');
     });
 
     it('工具不存在时返回 404', async () => {
       hubService.listTools.mockResolvedValue([]);
 
-      const response = await post('/ghost/execute', {});
+      const response = await post('/ghost/execute', { groupId: 'team' });
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ error: { code: 'TOOL_NOT_FOUND' } });
+      expect(await response.json()).toEqual({
+        success: false,
+        error: {
+          code: 'TOOL_NOT_FOUND',
+          message: "工具 'ghost' 在组 'team' 中未找到",
+        },
+        requestId: 'tools-request',
+      });
     });
 
     it('指定的 serverId 与工具所在服务器不一致时返回 400', async () => {
@@ -271,11 +471,13 @@ describe('Tools API', () => {
       const response = await post('/echo/execute', { serverId: 'other' });
 
       expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
+        success: false,
         error: {
           code: 'TOOL_SERVER_MISMATCH',
           message: "工具 'echo' 不在服务器 'other' 上，实际在服务器 'primary' 上",
         },
+        requestId: 'tools-request',
       });
     });
 
@@ -286,10 +488,27 @@ describe('Tools API', () => {
       const response = await post('/echo/execute', {});
 
       expect(response.status).toBe(503);
-      expect(await response.json()).toMatchObject({
+      expect(await response.json()).toEqual({
+        success: false,
         error: {
           code: 'SERVER_UNAVAILABLE',
           message: "服务器 'primary' 不可用，状态: disconnected",
+        },
+        requestId: 'tools-request',
+      });
+    });
+
+    it('服务器不在健康列表时状态回退 unknown', async () => {
+      hubService.listTools.mockResolvedValue([tool()]);
+      hubService.getServerHealth.mockReturnValue(new Map());
+
+      const response = await post('/echo/execute', {});
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'SERVER_UNAVAILABLE',
+          message: "服务器 'primary' 不可用，状态: unknown",
         },
       });
     });
@@ -305,7 +524,7 @@ describe('Tools API', () => {
       expect(hubService.callTool).toHaveBeenCalledOnce();
     });
 
-    it('callTool 抛错时返回 500', async () => {
+    it('callTool 抛错时返回 500 并记录失败日志', async () => {
       hubService.listTools.mockResolvedValue([tool()]);
       hubService.getServerHealth.mockReturnValue(new Map([['primary', 'connected']]));
       hubService.callTool.mockRejectedValue(new Error('执行崩溃'));
@@ -314,6 +533,9 @@ describe('Tools API', () => {
 
       expect(response.status).toBe(500);
       expect(await response.json()).toMatchObject({ success: false });
+      expect(loggerMock.error).toHaveBeenCalledWith('工具执行失败', expect.any(Error), {
+        toolName: 'echo',
+      });
     });
   });
 
@@ -340,6 +562,54 @@ describe('Tools API', () => {
             warnings: [],
           },
         },
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith(
+        '工具测试请求',
+        expect.objectContaining({
+          toolName: 'echo',
+          groupId: 'default',
+          serverStatus: 'connected',
+        }),
+      );
+      expect(loggerMock.info).toHaveBeenCalledWith(
+        '工具测试完成',
+        expect.objectContaining({ toolName: 'echo', isValid: false, canExecute: false }),
+      );
+    });
+
+    it('groupId 优先级：body > 查询参数 > default', async () => {
+      setup();
+
+      await app.request('/api/tools/echo/test?groupId=tq', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId: 'tb' }),
+      });
+      expect(hubService.listTools).toHaveBeenLastCalledWith('tb');
+
+      await app.request('/api/tools/echo/test?groupId=tq', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(hubService.listTools).toHaveBeenLastCalledWith('tq');
+
+      await post('/echo/test', {});
+      expect(hubService.listTools).toHaveBeenLastCalledWith('default');
+    });
+
+    it('在多工具列表中按名称精确匹配目标工具', async () => {
+      hubService.listTools.mockResolvedValue([
+        tool({ name: 'other-tool', serverId: 'secondary' }),
+        tool(),
+      ]);
+      hubService.getServerHealth.mockReturnValue(new Map([['primary', 'connected']]));
+
+      const response = await post('/echo/test', { arguments: { query: 'x' } });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: { toolName: 'echo', serverId: 'primary' },
       });
     });
 
@@ -408,6 +678,60 @@ describe('Tools API', () => {
         errors: [],
         warnings: [],
       });
+      expect(loggerMock.debug).toHaveBeenCalledWith('未知的参数类型，允许通过', {
+        argName: 'exotic',
+        expectedType: 'mystery',
+      });
+    });
+
+    it('各类型合法取值不产生错误', async () => {
+      setup({
+        inputSchema: {
+          type: 'object',
+          properties: {
+            q: { type: 'string' },
+            n: { type: 'number' },
+            i: { type: 'integer' },
+            b: { type: 'boolean' },
+            a: { type: 'array' },
+            o: { type: 'object' },
+            plain: {},
+          },
+        },
+      });
+
+      const response = await post('/echo/test', {
+        arguments: {
+          q: 'text',
+          n: 1.5,
+          i: 3,
+          b: false,
+          a: [1],
+          o: { z: 1 },
+          plain: null,
+        },
+      });
+
+      expect((await response.json()).data.validation).toEqual({
+        isValid: true,
+        errors: [],
+        warnings: [],
+      });
+    });
+
+    it('null 不是合法的对象参数', async () => {
+      setup({
+        inputSchema: {
+          type: 'object',
+          properties: { o: { type: 'object' } },
+        },
+      });
+
+      const response = await post('/echo/test', { arguments: { o: null } });
+
+      expect((await response.json()).data.validation.errors).toEqual([
+        "参数 'o' 必须是对象，实际类型: object",
+      ]);
     });
 
     it('additionalProperties=false 时额外参数给出警告', async () => {
@@ -427,6 +751,74 @@ describe('Tools API', () => {
         isValid: true,
         errors: [],
         warnings: ['提供了额外的参数: extra, another'],
+      });
+    });
+
+    it('additionalProperties 未声明时额外参数不告警', async () => {
+      setup({
+        inputSchema: {
+          type: 'object',
+          properties: { q: { type: 'string' } },
+        },
+      });
+
+      const response = await post('/echo/test', {
+        arguments: { q: 'ok', undeclared: 1 },
+      });
+
+      expect((await response.json()).data.validation).toEqual({
+        isValid: true,
+        errors: [],
+        warnings: [],
+      });
+    });
+
+    it('additionalProperties=false 且无额外参数时不告警', async () => {
+      setup({
+        inputSchema: {
+          type: 'object',
+          properties: { q: { type: 'string' } },
+          additionalProperties: false,
+        },
+      });
+
+      const response = await post('/echo/test', { arguments: { q: 'ok' } });
+
+      expect((await response.json()).data.validation).toEqual({
+        isValid: true,
+        errors: [],
+        warnings: [],
+      });
+    });
+
+    it('参数校验抛错时降级为警告且保持可执行', async () => {
+      const throwingProperties = new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('属性读取失败');
+          },
+        },
+      ) as unknown as Record<string, unknown>;
+      setup({
+        inputSchema: {
+          type: 'object',
+          properties: throwingProperties,
+        },
+      });
+
+      const response = await post('/echo/test', { arguments: { q: 'x' } });
+
+      const data = (await response.json()).data;
+      expect(data.validation).toEqual({
+        isValid: true,
+        errors: [],
+        warnings: ['参数验证时出错: 属性读取失败'],
+      });
+      expect(data.canExecute).toBe(true);
+      expect(loggerMock.error).toHaveBeenCalledWith('参数验证时出错', expect.any(Error), {
+        toolName: 'echo',
+        args: { q: 'x' },
       });
     });
 
@@ -464,18 +856,29 @@ describe('Tools API', () => {
     it('工具不存在时返回 404', async () => {
       hubService.listTools.mockResolvedValue([]);
 
-      const response = await post('/ghost/test', {});
+      const response = await post('/ghost/test', { groupId: 'team' });
 
       expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ error: { code: 'TOOL_NOT_FOUND' } });
+      expect(await response.json()).toEqual({
+        success: false,
+        error: {
+          code: 'TOOL_NOT_FOUND',
+          message: "工具 'ghost' 在组 'team' 中未找到",
+        },
+        requestId: 'tools-request',
+      });
     });
 
-    it('listTools 抛错时返回 500', async () => {
+    it('listTools 抛错时返回 500 并记录失败日志', async () => {
       hubService.listTools.mockRejectedValue(new Error('列出工具失败'));
 
       const response = await post('/echo/test', {});
 
       expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ success: false });
+      expect(loggerMock.error).toHaveBeenCalledWith('工具测试失败', expect.any(Error), {
+        toolName: 'echo',
+      });
     });
   });
 });

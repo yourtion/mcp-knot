@@ -311,4 +311,136 @@ describe('ResourceMonitor', () => {
   it('导出全局单例', () => {
     expect(resourceMonitor).toBeInstanceOf(ResourceMonitor);
   });
+
+  describe('阈值边界（补强：严格大于比较）', () => {
+    function collectedAlerts(handles: HandleLike[]): ResourceAlert[] {
+      stubActiveHandles(handles);
+      const alerts: ResourceAlert[] = [];
+      monitor.onAlert((alert) => alerts.push(alert));
+
+      monitor.start(1000);
+      vi.advanceTimersByTime(1000);
+      return alerts;
+    }
+
+    it('活动定时器恰好 50：触发 warning 而非 critical', () => {
+      expect(collectedAlerts(Array.from({ length: 50 }, timerHandle))).toStrictEqual([
+        {
+          level: 'warning',
+          resource: 'timers',
+          message: '活动定时器数量较多: 50',
+          currentValue: 50,
+          threshold: 30,
+        },
+      ]);
+    });
+
+    it('活动句柄恰好 200：触发 warning 而非 critical', () => {
+      expect(collectedAlerts(Array.from({ length: 200 }, () => ({ socket: true })))).toStrictEqual([
+        {
+          level: 'warning',
+          resource: 'handles',
+          message: '活动句柄数量较多: 200',
+          currentValue: 200,
+          threshold: 100,
+        },
+      ]);
+    });
+
+    it('活动句柄恰好 100：不触发 warning 告警', () => {
+      expect(collectedAlerts(Array.from({ length: 100 }, () => ({ socket: true })))).toStrictEqual(
+        [],
+      );
+    });
+  });
+
+  describe('文件描述符告警（白盒注入 fd 计数与系统上限）', () => {
+    function stubFd(count: number): void {
+      (monitor as unknown as { systemFdLimit?: number }).systemFdLimit = 1000;
+      (monitor as unknown as { getFileDescriptorCount?: () => number }).getFileDescriptorCount =
+        () => count;
+    }
+
+    function alertsForFd(count: number): ResourceAlert[] {
+      stubFd(count);
+      const alerts: ResourceAlert[] = [];
+      monitor.onAlert((alert) => alerts.push(alert));
+
+      monitor.start(1000);
+      vi.advanceTimersByTime(1000);
+      return alerts;
+    }
+
+    it('使用率 10%：不告警', () => {
+      expect(alertsForFd(100)).toStrictEqual([]);
+    });
+
+    it('恰好 70%：不告警（严格大于）', () => {
+      expect(alertsForFd(700)).toStrictEqual([]);
+    });
+
+    it('75%：warning，消息与阈值精确', () => {
+      expect(alertsForFd(750)).toStrictEqual([
+        {
+          level: 'warning',
+          resource: 'file-descriptors',
+          message: `文件描述符使用率较高: ${((750 / 1000) * 100).toFixed(1)}% (750/1000)`,
+          currentValue: 750,
+          threshold: 1000 * 0.7,
+        },
+      ]);
+    });
+
+    it('恰好 85%：warning 而非 critical（严格大于）', () => {
+      const alerts = alertsForFd(850);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0].level).toBe('warning');
+      expect(alerts[0].message).toContain('85.0% (850/1000)');
+    });
+
+    it('90%：critical，消息与阈值精确', () => {
+      expect(alertsForFd(900)).toStrictEqual([
+        {
+          level: 'critical',
+          resource: 'file-descriptors',
+          message: `文件描述符使用率过高: ${((900 / 1000) * 100).toFixed(1)}% (900/1000)`,
+          currentValue: 900,
+          threshold: 1000 * 0.85,
+        },
+      ]);
+    });
+
+    it('takeSnapshot 记录文件描述符计数', () => {
+      stubFd(5);
+      const snapshot = monitor.takeSnapshot();
+      expect(snapshot.fileDescriptors).toBe(5);
+    });
+  });
+
+  describe('日志（补强）', () => {
+    it('start 记录间隔参数与启动完成', () => {
+      monitor.start(1000);
+      expect(logger.info).toHaveBeenCalledWith('启动资源监控', { intervalMs: 1000 });
+      expect(logger.info).toHaveBeenCalledWith('资源监控已启动');
+    });
+
+    it('start 默认间隔 5000ms', () => {
+      monitor.start();
+      expect(logger.info).toHaveBeenCalledWith('启动资源监控', { intervalMs: 5000 });
+    });
+
+    it('stop 后可再次 start（不再提示已在运行）', () => {
+      monitor.start(1000);
+      monitor.stop();
+      expect(logger.info).toHaveBeenCalledWith('资源监控已停止');
+
+      monitor.start(2000);
+      expect(logger.warn).not.toHaveBeenCalledWith('资源监控已在运行');
+    });
+
+    it('clear 记录 debug 日志', () => {
+      monitor.clear();
+      expect(logger.debug).toHaveBeenCalledWith('资源快照已清空');
+    });
+  });
 });

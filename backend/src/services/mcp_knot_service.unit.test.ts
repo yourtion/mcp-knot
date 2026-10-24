@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ServerStatus } from '../types/mcp-knot.js';
+import { logger } from '../utils/logger.js';
 import { McpKnotService } from './mcp_knot_service.js';
 
 import type {
@@ -281,6 +282,32 @@ describe('McpKnotService', () => {
       });
       await svc.shutdown();
     });
+
+    it('subscriptions 参数显式配置时透传给 detector/fanout（不落回默认值）', async () => {
+      await createInitializedService({
+        subscriptions: { pollIntervalMs: 30_000, pollBackoffMs: 60_000, fanoutDebounceMs: 100 },
+      } as unknown as DeepReadonly<SystemConfig>);
+
+      expect(registry.detectorOpts[0]).toMatchObject({
+        pollIntervalMs: 30_000,
+        pollBackoffMs: 60_000,
+      });
+      expect(registry.fanoutOpts[0]).toMatchObject({ debounceMs: 100 });
+    });
+
+    it('健康检查回调清理工具缓存并记录 debug 日志', async () => {
+      const { HealthMonitorService } = await import('./health-monitor-service.js');
+      await createInitializedService();
+
+      const healthCallback = vi.mocked(HealthMonitorService).mock
+        .calls[0][2] as () => Promise<void>;
+      await healthCallback();
+
+      expect(registry.toolManager.clearCache).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool cache cleared due to server disconnections',
+      );
+    });
   });
 
   describe('initialize', () => {
@@ -309,6 +336,125 @@ describe('McpKnotService', () => {
       expect(status.serverCount).toBe(1);
       expect(status.connectedServers).toBe(1);
       expect(status.groupCount).toBe(1);
+
+      // 生命周期日志：各阶段消息与上下文精确匹配
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Starting MCP Knot Service initialization',
+        {
+          serverCount: 1,
+          groupCount: 1,
+          timestamp: expect.any(String),
+        },
+      );
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Server manager initialized', {
+        totalServers: 1,
+        connectedServers: 1,
+        failedServers: 0,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('上游工具集变更轮询已启动（P5）', {
+        pollIntervalMs: 60_000,
+        serverCount: 1,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Group manager initialized', {
+        totalGroups: 1,
+        loadedGroups: 1,
+        failedGroups: 0,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'API tool integration service initialized',
+        { apiToolsEnabled: false, totalApiTools: 0 },
+      );
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'MCP Knot Service initialization completed successfully',
+        expect.objectContaining({
+          connectedServers: 1,
+          loadedGroups: 1,
+          initializationTimeMs: expect.any(Number),
+        }),
+      );
+      // 健康验证通过分支（warnings 为空）
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Validating service health after initialization',
+      );
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Service health validation passed', {
+        connectedServers: 1,
+        totalServers: 1,
+        loadedGroups: 1,
+        totalGroups: 1,
+      });
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+        'Service health validation completed with warnings',
+        expect.anything(),
+      );
+      await svc.shutdown();
+    });
+
+    it('初始化成功日志在冻结时钟下记录 initializationTimeMs=0', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(5000));
+      try {
+        const svc = await createInitializedService();
+        expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+          'MCP Knot Service initialization completed successfully',
+          {
+            connectedServers: 1,
+            loadedGroups: 1,
+            initializationTimeMs: 0,
+            timestamp: expect.any(String),
+          },
+        );
+        await svc.shutdown();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('部分服务器/组加载不全时产生 warning 但初始化仍成功', async () => {
+      const configs = {
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+        s2: { type: 'stdio', command: 'node', args: [], enabled: true },
+      } as Record<string, ServerConfig>;
+      const groups = {
+        default: { id: 'default', name: 'Default', servers: ['s1'], tools: [] },
+        extra: { id: 'extra', name: 'Extra', servers: ['s2'], tools: [] },
+      } as unknown as GroupConfig;
+      const svc = new McpKnotService(configs, groups);
+      registry.serverManager.getAllServers.mockReturnValue(
+        new Map([
+          ['s1', { id: 's1', status: ServerStatus.CONNECTED, tools: [] }],
+          ['s2', { id: 's2', status: ServerStatus.ERROR, tools: [] }],
+        ]),
+      );
+      registry.groupManager.getAllGroups.mockReturnValue(
+        new Map([['default', { id: 'default', name: 'Default', servers: ['s1'], tools: [] }]]),
+      );
+
+      await expect(svc.initialize()).resolves.toBeUndefined();
+
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Server manager initialized', {
+        totalServers: 2,
+        connectedServers: 1,
+        failedServers: 1,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Group manager initialized', {
+        totalGroups: 2,
+        loadedGroups: 1,
+        failedGroups: 1,
+      });
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Service health validation completed with warnings',
+        expect.objectContaining({
+          warnings: expect.arrayContaining([
+            'Only 1 of 2 servers are connected',
+            'Only 1 of 2 groups are loaded',
+          ]),
+          connectedServers: 1,
+          totalServers: 2,
+          loadedGroups: 1,
+          totalGroups: 2,
+        }),
+      );
+      expect(vi.mocked(logger.info)).not.toHaveBeenCalledWith('Service health validation passed');
       await svc.shutdown();
     });
 
@@ -324,6 +470,9 @@ describe('McpKnotService', () => {
       const svc = await createInitializedService();
       await svc.initialize();
       expect(registry.serverManager.initialize).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'McpKnotService already initialized, skipping re-initialization',
+      );
       await svc.shutdown();
     });
 
@@ -334,7 +483,19 @@ describe('McpKnotService', () => {
       );
       registry.groupManager.getAllGroups.mockReturnValue(new Map());
 
-      await expect(svc.initialize()).rejects.toThrow(/Critical health issues/);
+      await expect(svc.initialize()).rejects.toThrow(
+        'Critical health issues: No groups are loaded',
+      );
+      // 健康验证失败日志（issues 精确）与失败清理日志
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Service health validation failed',
+        expect.any(Error),
+        expect.objectContaining({ issues: ['No groups are loaded'] }),
+      );
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Cleaning up after failed initialization',
+      );
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Cleanup completed successfully');
       // cleanupFailedInitialization：关闭 serverManager
       expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
       expect(svc.getServiceStatus().isInitialized).toBe(false);
@@ -361,16 +522,28 @@ describe('McpKnotService', () => {
     });
 
     it('ServerManager.initialize 抛错时包装为 ConfigError 并清理', async () => {
-      const svc = new McpKnotService(serverConfigs, groupConfigs);
-      registry.serverManager.getAllServers.mockReturnValue(new Map());
-      registry.groupManager.getAllGroups.mockReturnValue(new Map());
-      registry.serverManager.initialize.mockRejectedValue(new Error('boom'));
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2000));
+      try {
+        const svc = new McpKnotService(serverConfigs, groupConfigs);
+        registry.serverManager.getAllServers.mockReturnValue(new Map());
+        registry.groupManager.getAllGroups.mockReturnValue(new Map());
+        registry.serverManager.initialize.mockRejectedValue(new Error('boom'));
 
-      await expect(svc.initialize()).rejects.toThrow('boom');
-      expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
+        await expect(svc.initialize()).rejects.toThrow('boom');
+        expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
+        // 失败日志携带初始化耗时与配置规模（冻结时钟下耗时恒为 0）
+        expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+          'MCP Knot Service initialization failed',
+          expect.any(Error),
+          { initializationTimeMs: 0, serverCount: 1, groupCount: 1 },
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('无已连接服务器时跳过 startPolling', async () => {
+    it('无已连接服务器时跳过 startPolling 并记录 No servers 警告', async () => {
       const svc = new McpKnotService(serverConfigs, groupConfigs);
       registry.serverManager.getAllServers.mockReturnValue(
         new Map([['s1', { id: 's1', status: ServerStatus.DISCONNECTED, tools: [] }]]),
@@ -382,6 +555,26 @@ describe('McpKnotService', () => {
 
       await svc.initialize();
       expect(registry.detector.startPolling).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Service health validation completed with warnings',
+        expect.objectContaining({
+          warnings: ['No servers are connected - service will have limited functionality'],
+        }),
+      );
+      expect(vi.mocked(logger.info)).not.toHaveBeenCalledWith('Service health validation passed');
+      await svc.shutdown();
+    });
+
+    it('subscriptions.enabled=false 时记录跳过轮询日志且不启动 startPolling', async () => {
+      const svc = await createInitializedService({
+        subscriptions: { enabled: false },
+      } as unknown as DeepReadonly<SystemConfig>);
+
+      expect(registry.detectorOpts).toHaveLength(0); // 未构造 detector
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'subscriptions.enabled=false，跳过上游工具集变更轮询与 fan-out（P5）',
+      );
+      expect(vi.mocked(logger.info)).not.toHaveBeenCalledWith('上游工具集变更轮询已启动（P5）');
       await svc.shutdown();
     });
   });
@@ -411,10 +604,45 @@ describe('McpKnotService', () => {
       await svc.shutdown();
     });
 
+    it('getGroupInfo 日志精确记录配置/可用/连接服务器数', async () => {
+      const svc = await createInitializedService();
+      // getGroupServers 返回 s1、s2，但 serverManager 中只有 s1 处于连接态
+      registry.groupManager.getGroupServers.mockReturnValue(['s1', 's2']);
+      registry.groupManager.getGroup.mockReturnValue({
+        id: 'default',
+        name: 'Default',
+        servers: ['s1'],
+        tools: [],
+      });
+
+      expect(svc.getGroupInfo('default')).toMatchObject({ id: 'default' });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Group information retrieved successfully',
+        {
+          groupId: 'default',
+          groupName: 'Default',
+          configuredServers: 1,
+          availableServers: 2,
+          connectedServers: 1,
+          configuredTools: 0,
+        },
+      );
+      await svc.shutdown();
+    });
+
     it('getGroupInfo 组不存在返回 undefined', async () => {
       const svc = await createInitializedService();
       registry.groupManager.getGroup.mockReturnValue(undefined);
       expect(svc.getGroupInfo('missing')).toBeUndefined();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Group information request for non-existent group',
+        { groupId: 'missing', availableGroups: ['default'] },
+      );
+      expect(vi.mocked(logger.error)).not.toHaveBeenCalledWith(
+        'Error retrieving group information',
+        expect.anything(),
+        expect.anything(),
+      );
       await svc.shutdown();
     });
 
@@ -424,6 +652,11 @@ describe('McpKnotService', () => {
         throw new Error('group broken');
       });
       expect(svc.getGroupInfo('default')).toBeUndefined();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error retrieving group information',
+        expect.any(Error),
+        { groupId: 'default' },
+      );
       await svc.shutdown();
     });
 
@@ -431,6 +664,10 @@ describe('McpKnotService', () => {
       const svc = await createInitializedService();
       registry.groupManager.getGroup.mockReturnValue(undefined);
       await expect(svc.listTools('missing')).rejects.toThrow(/Group 'missing' not found/);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Tool listing failed: group not found',
+        expect.objectContaining({ groupId: 'missing', availableGroups: ['default'] }),
+      );
       await svc.shutdown();
     });
 
@@ -440,30 +677,141 @@ describe('McpKnotService', () => {
       await expect(svc.listTools()).rejects.toThrow(
         /Failed to list tools for group 'default': fetch failed/,
       );
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool listing operation failed',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'default', errorType: 'Error' }),
+      );
       await svc.shutdown();
     });
 
     it('listTools 成功返回工具列表（默认组 default）', async () => {
-      const svc = await createInitializedService();
-      const tools = [{ name: 't1', inputSchema: {}, serverId: 's1' }];
-      registry.toolManager.getToolsForGroup.mockResolvedValue(tools);
-      await expect(svc.listTools()).resolves.toEqual(tools);
-      expect(registry.toolManager.getToolsForGroup).toHaveBeenCalledWith('default');
-      await svc.shutdown();
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(1000));
+      try {
+        const svc = await createInitializedService();
+        const tools = [{ name: 't1', inputSchema: {}, serverId: 's1' }];
+        registry.toolManager.getToolsForGroup.mockResolvedValue(tools);
+        await expect(svc.listTools()).resolves.toEqual(tools);
+        expect(registry.toolManager.getToolsForGroup).toHaveBeenCalledWith('default');
+
+        expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Starting tool listing operation', {
+          operationId: 'list-tools-default-1000',
+          groupId: 'default',
+          timestamp: expect.any(String),
+        });
+        expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Tools listed successfully', {
+          operationId: 'list-tools-default-1000',
+          groupId: 'default',
+          toolCount: 1,
+          durationMs: expect.any(Number),
+          toolNames: ['t1'],
+        });
+        await svc.shutdown();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
   describe('callTool / isToolAvailable / getToolDetails', () => {
     it('callTool 成功返回结果', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(1000));
+      try {
+        const svc = await createInitializedService();
+        const result = { content: [{ type: 'text', text: 'ok' }], isError: false };
+        registry.toolManager.getToolsForGroup.mockResolvedValue([
+          { name: 't1', inputSchema: {}, serverId: 's1' },
+        ]);
+        registry.toolManager.executeTool.mockResolvedValue(result);
+
+        await expect(svc.callTool('t1', { a: 1 })).resolves.toEqual(result);
+        expect(registry.toolManager.executeTool).toHaveBeenCalledWith('default', 't1', { a: 1 });
+
+        expect(vi.mocked(logger.logToolExecution)).toHaveBeenNthCalledWith(
+          1,
+          't1',
+          'default',
+          'started',
+          {
+            executionId: 'exec-default-t1-1000',
+            args: { a: 1 },
+            timestamp: expect.any(String),
+          },
+        );
+        expect(vi.mocked(logger.logToolExecution)).toHaveBeenNthCalledWith(
+          2,
+          't1',
+          'default',
+          'completed',
+          {
+            executionId: 'exec-default-t1-1000',
+            durationMs: expect.any(Number),
+            resultSize: expect.any(Number),
+            contentTypes: ['text'],
+          },
+        );
+        expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+          'Validating tool execution prerequisites',
+          { executionId: 'exec-default-t1-1000', toolName: 't1', groupId: 'default' },
+        );
+        expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool execution validation passed', {
+          executionId: 'exec-default-t1-1000',
+          toolName: 't1',
+          groupId: 'default',
+          availableServers: 1,
+          connectedServers: 1,
+        });
+        await svc.shutdown();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('callTool 成功时 contentTypes 对缺失 type 的内容项回退 unknown', async () => {
       const svc = await createInitializedService();
-      const result = { content: [{ type: 'text', text: 'ok' }], isError: false };
+      registry.toolManager.getToolsForGroup.mockResolvedValue([
+        { name: 't1', inputSchema: {}, serverId: 's1' },
+      ]);
+      registry.toolManager.executeTool.mockResolvedValue({
+        content: [{ type: 'text', text: 'a' }, {}],
+        isError: false,
+      });
+
+      await svc.callTool('t1', {});
+      expect(vi.mocked(logger.logToolExecution)).toHaveBeenCalledWith(
+        't1',
+        'default',
+        'completed',
+        expect.objectContaining({ contentTypes: ['text', 'unknown'] }),
+      );
+      await svc.shutdown();
+    });
+
+    it('callTool 返回 isError 结果时状态记为 failed 并输出警告', async () => {
+      const svc = await createInitializedService();
+      const result = { content: [{ type: 'text', text: 'boom inside tool' }], isError: true };
       registry.toolManager.getToolsForGroup.mockResolvedValue([
         { name: 't1', inputSchema: {}, serverId: 's1' },
       ]);
       registry.toolManager.executeTool.mockResolvedValue(result);
 
-      await expect(svc.callTool('t1', { a: 1 })).resolves.toEqual(result);
-      expect(registry.toolManager.executeTool).toHaveBeenCalledWith('default', 't1', { a: 1 });
+      await expect(svc.callTool('t1', {})).resolves.toEqual(result);
+      expect(vi.mocked(logger.logToolExecution)).toHaveBeenCalledWith(
+        't1',
+        'default',
+        'failed',
+        expect.objectContaining({ resultSize: expect.any(Number) }),
+      );
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Tool execution completed with error result',
+        expect.objectContaining({
+          toolName: 't1',
+          groupId: 'default',
+          errorContent: result.content,
+        }),
+      );
       await svc.shutdown();
     });
 
@@ -509,6 +857,71 @@ describe('McpKnotService', () => {
       registry.toolManager.executeTool.mockRejectedValue(new Error('timeout'));
 
       await expect(svc.callTool('t1', {})).rejects.toThrow(/Tool execution failed: timeout/);
+      expect(vi.mocked(logger.logToolExecution)).toHaveBeenCalledWith(
+        't1',
+        'default',
+        'failed',
+        expect.objectContaining({ error: 'timeout', errorType: 'Error' }),
+      );
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool execution failed with exception',
+        expect.any(Error),
+        expect.objectContaining({ toolName: 't1', groupId: 'default', args: {} }),
+      );
+      await svc.shutdown();
+    });
+
+    it('callTool 失败日志携带健康摘要（区分连接与错误服务器）', async () => {
+      const svc = await createInitializedService();
+      registry.serverManager.getAllServers.mockReturnValue(
+        new Map([
+          ['s1', { id: 's1', status: ServerStatus.CONNECTED, tools: [] }],
+          ['s2', { id: 's2', status: ServerStatus.ERROR, tools: [] }],
+        ]),
+      );
+      registry.toolManager.getToolsForGroup.mockResolvedValue([
+        { name: 't1', inputSchema: {}, serverId: 's1' },
+      ]);
+      registry.toolManager.executeTool.mockRejectedValue(new Error('timeout'));
+
+      await expect(svc.callTool('t1', {})).rejects.toThrow(/Tool execution failed: timeout/);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool execution failed with exception',
+        expect.any(Error),
+        expect.objectContaining({
+          serviceHealth: {
+            isInitialized: true,
+            totalServers: 2,
+            connectedServers: 1,
+            totalGroups: 1,
+            timestamp: expect.any(String),
+          },
+        }),
+      );
+      await svc.shutdown();
+    });
+
+    it('callTool 失败时健康摘要自身异常则降级为错误对象', async () => {
+      const svc = await createInitializedService();
+      registry.toolManager.getToolsForGroup.mockResolvedValue([
+        { name: 't1', inputSchema: {}, serverId: 's1' },
+      ]);
+      registry.toolManager.executeTool.mockRejectedValue(new Error('timeout'));
+      registry.serverManager.getAllServers.mockImplementation(() => {
+        throw new Error('server map exploded');
+      });
+
+      await expect(svc.callTool('t1', {})).rejects.toThrow(
+        'Tool execution failed: server map exploded',
+      );
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool execution failed with exception',
+        expect.any(Error),
+        expect.objectContaining({
+          serviceHealth: { error: 'Failed to get health summary', message: 'server map exploded' },
+        }),
+      );
+      registry.serverManager.getAllServers.mockReturnValue(new Map());
       await svc.shutdown();
     });
 
@@ -522,6 +935,11 @@ describe('McpKnotService', () => {
 
       registry.toolManager.getToolsForGroup.mockRejectedValue(new Error('boom'));
       await expect(svc.isToolAvailable('t1')).resolves.toBe(false);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error checking tool availability',
+        expect.any(Error),
+        { toolName: 't1', groupId: 'default' },
+      );
       await svc.shutdown();
     });
 
@@ -535,6 +953,11 @@ describe('McpKnotService', () => {
 
       registry.toolManager.getToolsForGroup.mockRejectedValue(new Error('boom'));
       await expect(svc.getToolDetails('t1')).resolves.toBeNull();
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error getting tool details',
+        expect.any(Error),
+        { toolName: 't1', groupId: 'default' },
+      );
       await svc.shutdown();
     });
   });
@@ -555,6 +978,31 @@ describe('McpKnotService', () => {
       const svc = await createInitializedService();
       const health = svc.getServerHealth();
       expect(health.get('s1')).toBe(ServerStatus.CONNECTED);
+      await svc.shutdown();
+    });
+
+    it('getServiceStatus/getDetailedServiceStatus 精确区分连接与错误服务器', async () => {
+      const svc = await createInitializedService();
+      registry.serverManager.getAllServers.mockReturnValue(
+        new Map([
+          ['s1', { id: 's1', status: ServerStatus.CONNECTED, tools: [] }],
+          ['s2', { id: 's2', status: ServerStatus.ERROR, tools: [] }],
+        ]),
+      );
+
+      expect(svc.getServiceStatus()).toStrictEqual({
+        isInitialized: true,
+        serverCount: 1,
+        connectedServers: 1,
+        groupCount: 1,
+        totalTools: 0,
+      });
+      await expect(svc.getDetailedServiceStatus()).resolves.toMatchObject({
+        isInitialized: true,
+        serverCount: 1,
+        connectedServers: 1,
+        groupCount: 1,
+      });
       await svc.shutdown();
     });
 
@@ -585,6 +1033,12 @@ describe('McpKnotService', () => {
       const status = await svc.getDetailedServiceStatus();
       expect(status.apiTools).toBe(0);
       expect(status.totalTools).toBe(0);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('获取API工具统计失败', {
+        error: 'stats down',
+      });
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('获取MCP工具统计失败', {
+        error: "Failed to list tools for group 'default': tools down",
+      });
       await svc.shutdown();
     });
 
@@ -654,6 +1108,48 @@ describe('McpKnotService', () => {
         errors: [],
       });
       expect(diagnostics.performance.cacheStats).toMatchObject({ totalTools: 2 });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Service diagnostics generated', {
+        serverCount: 2,
+        connectedServers: 1,
+        groupCount: 1,
+      });
+      await svc.shutdown();
+    });
+
+    it('getServiceDiagnostics 多服务器下 connected/failed 计数互不混淆（2+2）', async () => {
+      const svc = await createInitializedService();
+      registry.serverManager.getAllServers.mockReturnValue(
+        new Map([
+          ['s1', { id: 's1', status: ServerStatus.CONNECTED, tools: [] }],
+          ['s2', { id: 's2', status: ServerStatus.CONNECTED, tools: [] }],
+          ['s3', { id: 's3', status: ServerStatus.ERROR, tools: [] }],
+          ['s4', { id: 's4', status: ServerStatus.ERROR, tools: [] }],
+        ]),
+      );
+      registry.toolManager.getToolsForGroup.mockResolvedValue([]);
+
+      const diagnostics = await svc.getServiceDiagnostics();
+      expect(diagnostics.servers.connected).toBe(2);
+      expect(diagnostics.servers.failed).toBe(2);
+      await svc.shutdown();
+    });
+
+    it('getServiceDiagnostics 透传 API 健康检查返回的非空 errors', async () => {
+      const svc = await createInitializedService();
+      registry.apiToolService.performHealthCheck.mockResolvedValue({
+        initialized: true,
+        healthy: false,
+        errors: ['api degraded'],
+      });
+      registry.apiToolService.getStats.mockResolvedValue({ totalApiTools: 1 });
+
+      const diagnostics = await svc.getServiceDiagnostics();
+      expect(diagnostics.apiTools).toEqual({
+        initialized: true,
+        healthy: false,
+        totalTools: 1,
+        errors: ['api degraded'],
+      });
       await svc.shutdown();
     });
 
@@ -665,7 +1161,24 @@ describe('McpKnotService', () => {
       const diagnostics = await svc.getServiceDiagnostics();
       expect(diagnostics.groups.details[0]).toMatchObject({ toolCount: 0, isHealthy: false });
       expect(diagnostics.apiTools.initialized).toBe(false);
+      expect(diagnostics.apiTools.healthy).toBe(false);
       expect(diagnostics.apiTools.errors[0]).toContain('API工具诊断失败: api down');
+      await svc.shutdown();
+    });
+
+    it('getServiceDiagnostics：底层汇总异常时包装为 INTERNAL_SERVER_ERROR', async () => {
+      const svc = await createInitializedService();
+      registry.serverManager.getAllServers.mockImplementation(() => {
+        throw new Error('diag boom');
+      });
+
+      await expect(svc.getServiceDiagnostics()).rejects.toThrow('Failed to generate diagnostics');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to generate service diagnostics',
+        expect.any(Error),
+      );
+      // 恢复 mock，避免后续 shutdown 的 getConnectedServerCount 再次抛错
+      registry.serverManager.getAllServers.mockReturnValue(new Map());
       await svc.shutdown();
     });
   });
@@ -696,6 +1209,10 @@ describe('McpKnotService', () => {
         healthy: false,
         errors: [expect.stringContaining('health boom')],
       });
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error getting API tool service health',
+        expect.any(Error),
+      );
       await svc.shutdown();
     });
 
@@ -716,6 +1233,10 @@ describe('McpKnotService', () => {
         healthy: false,
         errors: [expect.stringContaining('check boom')],
       });
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error performing API tool health check',
+        expect.any(Error),
+      );
       await svc.shutdown();
     });
 
@@ -723,9 +1244,15 @@ describe('McpKnotService', () => {
       const svc = await createInitializedService();
       await expect(svc.reloadApiToolConfig()).resolves.toBeUndefined();
       expect(registry.apiToolService.reloadConfig).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('重新加载API工具配置');
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('API工具配置重新加载完成');
 
       registry.apiToolService.reloadConfig.mockRejectedValue(new Error('reload boom'));
       await expect(svc.reloadApiToolConfig()).rejects.toThrow('reload boom');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        '重新加载API工具配置失败',
+        expect.any(Error),
+      );
       await svc.shutdown();
     });
   });
@@ -793,6 +1320,9 @@ describe('McpKnotService', () => {
       const svc = new McpKnotService(serverConfigs, groupConfigs);
       await svc.shutdown();
       expect(registry.serverManager.shutdown).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'MCP Knot Service not initialized, skipping shutdown',
+      );
     });
 
     it('优雅关闭：停监控、清消息、停 detector/fanout、关 API 服务与服务器', async () => {
@@ -806,6 +1336,52 @@ describe('McpKnotService', () => {
       expect(registry.apiToolService.shutdown).toHaveBeenCalledTimes(1);
       expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
       expect(svc.getServiceStatus().isInitialized).toBe(false);
+      // 优雅关闭全链路日志与最终状态
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Starting graceful MCP Knot Service shutdown',
+        expect.objectContaining({ connectedServers: 1 }),
+      );
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Performing graceful shutdown');
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('API tool service shutdown completed');
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Graceful shutdown completed');
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'MCP Knot Service shutdown completed successfully',
+        expect.objectContaining({ shutdownTimeMs: expect.any(Number) }),
+      );
+      expect(svc.getLifecycleStatus().shutdownInProgress).toBe(false);
+    });
+
+    it('冻结时钟下优雅关闭耗时为 0 且清理超时定时器', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(3000));
+      try {
+        const svc = await createInitializedService();
+        await svc.shutdown();
+
+        expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+          'MCP Knot Service shutdown completed successfully',
+          { shutdownTimeMs: 0, timestamp: expect.any(String) },
+        );
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('API 工具服务 shutdown 失败被吞掉且优雅关闭继续完成', async () => {
+      const svc = await createInitializedService();
+      registry.apiToolService.shutdown.mockRejectedValue(new Error('api tool shutdown fail'));
+
+      await expect(svc.shutdown()).resolves.toBeUndefined();
+      expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'API tool service shutdown failed',
+        expect.any(Error),
+      );
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'MCP Knot Service shutdown completed successfully',
+        expect.anything(),
+      );
     });
 
     it('优雅关闭后再次 shutdown 跳过', async () => {
@@ -813,6 +1389,34 @@ describe('McpKnotService', () => {
       await svc.shutdown();
       await svc.shutdown();
       expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    it('关闭进行中再次调用 shutdown 直接返回并告警', async () => {
+      vi.useFakeTimers();
+      try {
+        const svc = await createInitializedService();
+        registry.serverManager.shutdown.mockImplementation(
+          () => new Promise(() => undefined), // 永不完成
+        );
+        registry.serverManager.getAllServers.mockReturnValue(new Map());
+
+        const first = svc.shutdown();
+        // shutdownInProgress 在首个 await 前同步置位，第二次调用直接走早退分支
+        await expect(svc.shutdown()).resolves.toBeUndefined();
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'Shutdown already in progress, waiting for completion',
+        );
+
+        const expectation = expect(first).rejects.toThrow(
+          /Shutdown completed with 1 errors: Shutdown timeout/,
+        );
+        await vi.advanceTimersByTimeAsync(10_000);
+        await expectation;
+        // 并发保护：serverManager.shutdown 仅被调用一次
+        expect(registry.serverManager.shutdown).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('ServerManager.shutdown 抛错时走强制关闭并抛 ServiceError', async () => {
@@ -834,10 +1438,30 @@ describe('McpKnotService', () => {
         ]),
       );
 
-      await expect(svc.shutdown()).rejects.toThrow(/Shutdown completed with 1 errors/);
+      await expect(svc.shutdown()).rejects.toThrow(
+        'Shutdown completed with 1 errors: graceful fail',
+      );
       // 强制关闭调用了 client.close
       expect(forceClose).toHaveBeenCalledTimes(1);
       expect(svc.getServiceStatus().isInitialized).toBe(false);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Error during graceful shutdown',
+        expect.any(Error),
+      );
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Attempting force shutdown due to graceful shutdown failure',
+      );
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Performing force shutdown');
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Force shutdown completed');
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'MCP Knot Service shutdown completed with errors',
+        expect.any(Error),
+        {
+          shutdownTimeMs: expect.any(Number),
+          errorCount: 1,
+          errors: ['graceful fail'],
+        },
+      );
     });
 
     it('优雅与强制关闭都失败时汇总两个错误', async () => {
@@ -861,6 +1485,61 @@ describe('McpKnotService', () => {
       // client.close 抛错在 performForceShutdown 内被捕获，不追加 errors
       await expect(svc.shutdown()).rejects.toThrow(/1 errors/);
       expect(svc.getServiceStatus().isInitialized).toBe(false);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Force close server connection failed', {
+        serverId: 's1',
+        error: 'force fail',
+      });
+    });
+
+    it('强制关闭时 server 无可用 close 方法则跳过且不报错', async () => {
+      const svc = await createInitializedService();
+      registry.serverManager.shutdown.mockRejectedValue(new Error('graceful fail'));
+      registry.serverManager.getAllServers.mockReturnValue(
+        new Map([['s1', { id: 's1', status: ServerStatus.CONNECTED, tools: [], client: {} }]]),
+      );
+
+      await expect(svc.shutdown()).rejects.toThrow('Shutdown completed with 1 errors');
+      expect(vi.mocked(logger.debug)).not.toHaveBeenCalledWith(
+        'Force close server connection failed',
+        expect.anything(),
+      );
+    });
+
+    it('强制关闭超时（2s）记录 Force close timeout 日志', async () => {
+      vi.useFakeTimers();
+      try {
+        const svc = await createInitializedService();
+        registry.serverManager.shutdown.mockRejectedValue(new Error('graceful fail'));
+        registry.serverManager.getAllServers.mockReturnValue(
+          new Map([
+            [
+              's1',
+              {
+                id: 's1',
+                status: ServerStatus.CONNECTED,
+                tools: [],
+                client: { close: vi.fn().mockImplementation(() => new Promise(() => undefined)) },
+              },
+            ],
+          ]),
+        );
+
+        const expectation = expect(svc.shutdown()).rejects.toThrow(
+          'Shutdown completed with 1 errors: graceful fail',
+        );
+        // 10s shutdown 超时 + 2s force close 超时
+        await vi.advanceTimersByTimeAsync(12_000);
+        await expectation;
+        expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+          'Force close server connection failed',
+          {
+            serverId: 's1',
+            error: 'Force close timeout',
+          },
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('优雅关闭超时（10s）触发强制关闭', async () => {
@@ -888,7 +1567,7 @@ describe('McpKnotService', () => {
         // 先挂 rejection 断言再推进时钟：reject 发生在 advanceTimersByTimeAsync 期间，
         // 若事后才挂处理器会跨宏任务边界被 Node 记为 unhandled rejection（会拖垮 Stryker 干跑）
         const expectation = expect(shutdownPromise).rejects.toThrow(
-          /Shutdown completed with 1 errors/,
+          /Shutdown completed with 1 errors: Shutdown timeout/,
         );
         // 推进 10s 触发 shutdown 超时 → 强制关闭路径
         await vi.advanceTimersByTimeAsync(10_000);
@@ -955,6 +1634,45 @@ describe('McpKnotService', () => {
       publishToolListChanged('default');
       // 异步动态 import 后发布
       await vi.waitFor(() => expect(toolsChanged).toHaveBeenCalledTimes(1));
+      await svc.shutdown();
+    });
+
+    it('publishToolListChanged：handler 未创建时为 no-op（不抛错、不告警）', async () => {
+      const svc = await createInitializedService();
+      const { publishToolListChanged } = registry.fanoutOpts[0] as {
+        publishToolListChanged: (groupId: string) => void;
+      };
+
+      expect(() => publishToolListChanged('unknown-group')).not.toThrow();
+      // 等待异步动态 import 落定后再断言无告警
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+        'publishToolListChanged 失败',
+        expect.anything(),
+      );
+      await svc.shutdown();
+    });
+
+    it('publishToolListChanged：handler 发布抛错时记录警告', async () => {
+      const svc = await createInitializedService();
+      registry.groupHandlersCache.set('default', {
+        notify: {
+          toolsChanged: vi.fn(() => {
+            throw new Error('notify boom');
+          }),
+        },
+      });
+
+      const { publishToolListChanged } = registry.fanoutOpts[0] as {
+        publishToolListChanged: (groupId: string) => void;
+      };
+      publishToolListChanged('default');
+      await vi.waitFor(() =>
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('publishToolListChanged 失败', {
+          groupId: 'default',
+          error: 'notify boom',
+        }),
+      );
       await svc.shutdown();
     });
 
