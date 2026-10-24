@@ -8,6 +8,7 @@ import { apiToMcpService } from '@/services/api-to-mcp';
 vi.mock('@/services/api-to-mcp', () => ({
   apiToMcpService: {
     getConfigs: vi.fn(),
+    getConfigDetails: vi.fn(),
     getConfigStats: vi.fn(),
     createConfig: vi.fn(),
     updateConfig: vi.fn(),
@@ -18,7 +19,7 @@ vi.mock('tdesign-vue-next', async (importOriginal) => ({
   MessagePlugin: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
-async function open() {
+async function open(mode: 'create' | 'edit' = 'create') {
   const wrapper = mount(ApiToMcp, {
     global: {
       stubs: {
@@ -46,6 +47,14 @@ async function open() {
     },
   });
   await flushPromises();
+  if (mode === 'edit') {
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '编辑')!
+      .trigger('click');
+    await flushPromises();
+    return wrapper;
+  }
   await wrapper
     .findAll('button')
     .find((button) => button.text().includes('添加API配置'))!
@@ -134,5 +143,58 @@ describe('API configuration form validation', () => {
     await flushPromises();
     expect(apiToMcpService.createConfig).not.toHaveBeenCalled();
     expect(MessagePlugin.error).toHaveBeenCalled();
+  });
+});
+
+describe('API config editing', () => {
+  it('reads the full config and preserves fields outside the editable form', async () => {
+    const config = {
+      id: 'config-id',
+      name: 'Saved name',
+      description: 'Original',
+      api: {
+        url: 'https://api.example.com/saved',
+        method: 'GET' as const,
+        headers: { 'X-QA': 'keep' },
+        timeout: 12000,
+      },
+      parameters: {
+        type: 'object' as const,
+        properties: { query: { type: 'string' as const } },
+        required: ['query'],
+      },
+      response: { dataPath: '$.data' },
+      security: { allowedDomains: ['api.example.com'] },
+      cache: { enabled: true, ttl: 30 },
+    };
+    vi.mocked(apiToMcpService.getConfigs).mockResolvedValue({
+      configs: [
+        {
+          id: config.id,
+          name: 'Summary only',
+          description: config.description,
+          api: config.api,
+          status: 'active',
+          toolsGenerated: 1,
+          lastUpdated: '',
+        },
+      ],
+    });
+    vi.mocked(apiToMcpService.getConfigDetails).mockResolvedValue(config);
+    const wrapper = await open('edit');
+    expect(apiToMcpService.getConfigDetails).toHaveBeenCalledWith(config.id);
+    expect(
+      (wrapper.get('input[placeholder="API配置名称"]').element as HTMLInputElement).value,
+    ).toBe('Saved name');
+    expect(JSON.parse(wrapper.findAll('textarea')[1].element.value)).toEqual(config.api.headers);
+    expect(JSON.parse(wrapper.findAll('textarea')[2].element.value)).toEqual(config.parameters);
+    await wrapper.findAll('textarea')[0].setValue('Description only');
+    await wrapper.get('.save-config').trigger('click');
+    await flushPromises();
+    expect(apiToMcpService.updateConfig).toHaveBeenCalledWith(config.id, {
+      ...config,
+      description: 'Description only',
+    });
+    wrapper.unmount();
   });
 });

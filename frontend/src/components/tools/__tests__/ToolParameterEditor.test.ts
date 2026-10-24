@@ -58,6 +58,7 @@ describe('ToolParameterEditor', () => {
     const wrapper = mount(ToolParameterEditor, {
       props: { schema: choices, modelValue: { choice: true } },
     });
+    expect(typeof wrapper.findComponent(Select).vm.$.vnode.props?.onChange).toBe('function');
     wrapper.findComponent(Select).vm.$emit('change', '0');
     await nextTick();
     expect(wrapper.vm.getArguments()).toEqual({ choice: false });
@@ -69,6 +70,7 @@ describe('ToolParameterEditor', () => {
       },
       modelValue: { choice: 1 },
     });
+    expect(typeof wrapper.findComponent(Select).vm.$.vnode.props?.onChange).toBe('function');
     wrapper.findComponent(Select).vm.$emit('change', '0');
     await nextTick();
     expect(wrapper.vm.getArguments()).toEqual({ choice: 0 });

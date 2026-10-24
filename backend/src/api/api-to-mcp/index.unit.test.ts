@@ -96,6 +96,19 @@ describe('API to MCP API Routes', () => {
     });
   });
 
+  it('serves stats as a static route rather than treating stats as a config ID', async () => {
+    vi.mocked(mockApiToMcpService.getConfigs).mockResolvedValue({ configs: [] });
+    const response = await app.request('/api/api-to-mcp/configs/stats');
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual({
+      totalConfigs: 0,
+      activeConfigs: 0,
+      totalTools: 0,
+      lastUpdated: '',
+    });
+    expect(mockApiToMcpService.getConfigDetails).not.toHaveBeenCalled();
+  });
+
   describe('POST /api/api-to-mcp/configs', () => {
     const validConfig = {
       config: {

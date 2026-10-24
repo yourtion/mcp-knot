@@ -684,3 +684,22 @@ describe('deleteGroup', () => {
     expect(configMock.saveConfig).not.toHaveBeenCalled();
   });
 });
+
+describe('persisted group startup invariants', () => {
+  it('rejects an empty new group even when skills is omitted', async () => {
+    baseConfig({});
+    await expect(
+      createGroup({ id: 'empty', name: 'Empty', servers: [], tools: [] }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+    expect(configMock.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it('rejects removing the last server without published skills', async () => {
+    baseConfig({ team: { id: 'team', name: 'Team', servers: ['srv-a'], tools: [] } });
+    await expect(updateGroup('team', { servers: [] })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      status: 400,
+    });
+    expect(configMock.saveConfig).not.toHaveBeenCalled();
+  });
+});

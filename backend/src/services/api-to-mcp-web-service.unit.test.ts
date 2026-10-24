@@ -63,6 +63,7 @@ vi.mock('node:fs', async () => {
       writeFile: vi.fn(),
       readFile: vi.fn(),
       access: vi.fn(),
+      stat: vi.fn().mockResolvedValue({ mtime: new Date(0) }),
     },
   };
 });
@@ -95,6 +96,13 @@ describe('ApiToMcpWebService', () => {
       serviceStatus: 'running',
     });
     mockConfigManager.loadConfig.mockResolvedValue([]);
+    const fsMock = (await import('node:fs')).promises;
+    vi.mocked(fsMock.readFile).mockImplementation(async () =>
+      JSON.stringify({
+        version: '1.0.0',
+        tools: await mockConfigManager.loadConfig(),
+      }),
+    );
   });
 
   afterEach(() => {
@@ -148,19 +156,28 @@ describe('ApiToMcpWebService', () => {
         },
       ];
 
-      mockApiToolIntegrationService.getApiTools.mockResolvedValue(mockApiTools);
+      mockConfigManager.loadConfig.mockResolvedValue(
+        mockApiTools.map((tool) => ({
+          id: 'config-id',
+          name: tool.name,
+          description: tool.description,
+          api: { url: 'https://example.com/qa', method: 'POST' },
+          parameters: tool.inputSchema,
+          response: {},
+        })),
+      );
 
       const result = await service.getConfigs();
 
       expect(result.configs).toHaveLength(1);
       expect(result.configs[0]).toEqual({
-        id: 'test-tool',
+        id: 'config-id',
         name: 'test-tool',
         description: 'Test tool description',
         status: 'active',
         api: {
-          url: '',
-          method: 'GET',
+          url: 'https://example.com/qa',
+          method: 'POST',
         },
         toolsGenerated: 1,
         lastUpdated: expect.any(String),
@@ -169,10 +186,30 @@ describe('ApiToMcpWebService', () => {
 
     it('应该正确处理获取配置列表错误', async () => {
       const error = new Error('获取失败');
-      mockApiToolIntegrationService.getApiTools.mockRejectedValue(error);
+      mockConfigManager.loadConfig.mockRejectedValue(error);
 
       await expect(service.getConfigs()).rejects.toThrow('获取配置列表失败: 获取失败');
     });
+  });
+
+  it('returns source templates rather than resolved runtime secrets for editing', async () => {
+    await service.initialize('/path/to/config.json');
+    const source = {
+      id: 'templated',
+      name: 'Template',
+      description: 'QA',
+      api: { url: 'https://example.com', method: 'GET', headers: { 'X-Key': '${QA_KEY}' } },
+      parameters: { type: 'object', properties: {} },
+      response: {},
+    };
+    mockConfigManager.loadConfig.mockResolvedValue([
+      { ...source, api: { ...source.api, headers: { 'X-Key': 'resolved-value' } } },
+    ]);
+    const fsMock = (await import('node:fs')).promises;
+    vi.mocked(fsMock.readFile).mockResolvedValue(
+      JSON.stringify({ version: '1.0.0', tools: [source] }),
+    );
+    expect(await service.getConfigDetails(source.id)).toEqual(source);
   });
 
   describe('createConfig', () => {
@@ -282,7 +319,7 @@ describe('ApiToMcpWebService', () => {
       const { promises: fsMock } = await import('node:fs');
       vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
       vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
-      vi.mocked(fsMock.readFile).mockResolvedValue('{}');
+
       vi.mocked(fsMock.access).mockResolvedValue(undefined);
 
       await service.initialize('/path/to/config.json');
@@ -361,7 +398,7 @@ describe('ApiToMcpWebService', () => {
       const { promises: fsMock } = await import('node:fs');
       vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
       vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
-      vi.mocked(fsMock.readFile).mockResolvedValue('{}');
+
       vi.mocked(fsMock.access).mockResolvedValue(undefined);
 
       await service.initialize('/path/to/config.json');
