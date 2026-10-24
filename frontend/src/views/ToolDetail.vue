@@ -8,14 +8,16 @@
             返回工具列表
           </t-button>
           <h2 class="mcp-page__title detail-title">{{ tool?.name || toolName }}</h2>
-          <p class="mcp-page__desc">{{ tool?.description || '加载中...' }}</p>
+          <p class="mcp-page__desc">
+            {{ loading ? '加载中...' : tool?.description || '工具详情不可用' }}
+          </p>
         </div>
         <div class="mcp-page__actions">
-          <t-button variant="outline" @click="goTest">
+          <t-button variant="outline" :disabled="loading || !tool" @click="goTest">
             <template #icon><CheckCircleIcon /></template>
             测试工具
           </t-button>
-          <t-button theme="primary" @click="goExecute">
+          <t-button theme="primary" :disabled="loading || !tool" @click="goExecute">
             <template #icon><PlayIcon /></template>
             执行工具
           </t-button>
@@ -24,6 +26,10 @@
     </div>
 
     <t-loading :loading="loading" />
+    <div v-if="error" role="alert" class="mcp-card">
+      <p>{{ error }}</p>
+      <t-button @click="fetchTool">重试</t-button>
+    </div>
 
     <template v-if="tool && !loading">
       <!-- Status & Server Info -->
@@ -90,8 +96,7 @@
 
 <script setup lang="ts">
 import { ChevronLeftIcon, CheckCircleIcon, PlayIcon } from 'tdesign-icons-vue-next';
-import { MessagePlugin } from 'tdesign-vue-next';
-import { computed, h, onMounted, ref } from 'vue';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { useToolStore } from '@/stores/tool';
@@ -114,6 +119,8 @@ const toolStore = useToolStore();
 
 const toolName = computed(() => route.params.toolName as string);
 const loading = ref(false);
+const error = ref('');
+let requestId = 0;
 const tool = ref<ToolInfo | null>(null);
 
 const requiredParams = computed(() => {
@@ -267,22 +274,32 @@ const goBack = () => {
 };
 
 const goTest = () => {
+  if (loading.value || !tool.value) return;
   router.push({ name: 'ToolTest', params: { toolName: toolName.value } });
 };
 
 const goExecute = () => {
+  if (loading.value || !tool.value) return;
   router.push({ name: 'ToolExecute', params: { toolName: toolName.value } });
 };
 
-onMounted(async () => {
+const fetchTool = async () => {
+  const id = ++requestId;
   loading.value = true;
+  error.value = '';
+  tool.value = null;
   try {
-    tool.value = await toolStore.fetchToolDetail(toolName.value);
+    const result = await toolStore.fetchToolDetail(toolName.value);
+    if (id === requestId) tool.value = result;
   } catch {
-    MessagePlugin.error('获取工具详情失败');
+    if (id === requestId) error.value = '无法加载工具详情，请确认工具存在且服务器可用后重试。';
   } finally {
-    loading.value = false;
+    if (id === requestId) loading.value = false;
   }
+};
+watch(toolName, fetchTool, { immediate: true });
+onBeforeUnmount(() => {
+  requestId++;
 });
 </script>
 

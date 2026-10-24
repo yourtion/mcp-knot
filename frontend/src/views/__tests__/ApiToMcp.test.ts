@@ -163,7 +163,7 @@ describe('API config editing', () => {
         properties: { query: { type: 'string' as const } },
         required: ['query'],
       },
-      response: { dataPath: '$.data' },
+      response: { jsonata: 'data', errorPath: 'error', successCondition: 'ok = true' },
       security: { allowedDomains: ['api.example.com'] },
       cache: { enabled: true, ttl: 30 },
     };

@@ -8,12 +8,18 @@
             返回工具详情
           </t-button>
           <h2 class="mcp-page__title test-title">测试工具: {{ tool?.name || toolName }}</h2>
-          <p class="mcp-page__desc">{{ tool?.description || '加载中...' }}</p>
+          <p class="mcp-page__desc">
+            {{ loading ? '加载中...' : tool?.description || '工具详情不可用' }}
+          </p>
         </div>
       </div>
     </div>
 
     <t-loading :loading="loading" />
+    <div v-if="error" role="alert" class="mcp-card">
+      <p>{{ error }}</p>
+      <t-button @click="retry">重试</t-button>
+    </div>
 
     <template v-if="tool && !loading">
       <div class="mcp-grid mcp-grid--2">
@@ -133,6 +139,8 @@ import type { ToolTestResponse } from '@/types/tool';
 const {
   toolName,
   loading,
+  error,
+  retry,
   tool,
   formData,
   parameterEditor,

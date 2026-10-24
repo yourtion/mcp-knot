@@ -36,7 +36,7 @@ Vue.js 前端界面，为 MCP Knot 提供完整的 Web 管理功能。
 # 仓库根目录
 pnpm install --frozen-lockfile
 pnpm build:share
-pnpm typecheck:fe
+pnpm typecheck
 pnpm --filter @mcp-core/mcp-knot-web test
 pnpm build:fe
 ```
@@ -90,7 +90,7 @@ pnpm check
 pnpm typecheck
 
 # 在仓库根目录执行前端检查
-pnpm typecheck:fe
+pnpm typecheck
 ```
 
 仓库根目录的 `pnpm typecheck` 也包含上述 Vue 模板检查。
@@ -228,3 +228,9 @@ if (authStore.isAuthenticated) {
 - CSP 头部设置
 - XSS 防护
 - CSRF 保护
+
+### 类型检查
+
+仓库根目录的 `pnpm typecheck` 对普通 TypeScript 包执行 `tsc --noEmit`，
+对 Web 执行 `vue-tsc --noEmit`，包含 Vue 模板、props、defineExpose 和前端测试。
+不要用普通 `tsc` 的通用 `*.vue` 声明代替 Vue SFC 类型检查，也不要只运行前端检查而遗漏其他包。

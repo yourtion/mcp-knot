@@ -37,10 +37,15 @@ const ParameterNumber = accessibleInput(InputNumber, 'spinbutton');
 
 // TDesign select values do not include booleans. Index values keep JSON enum
 // types intact, including false, 0, and strings that look like numbers.
-const ParameterSelect = defineComponent({
+export const ParameterSelect = defineComponent({
   name: 'ParameterSelect',
   props: {
-    modelValue: { default: undefined },
+    modelValue: {
+      type: [String, Number, Boolean, Object, Array] as PropType<
+        string | number | boolean | Record<string, unknown> | unknown[] | null
+      >,
+      default: undefined,
+    },
     items: { type: Array as PropType<FormFieldItem[]>, default: () => [] },
     disabled: Boolean,
   },

@@ -14,6 +14,7 @@ export function useToolForm() {
   const toolStore = useToolStore();
   const toolName = computed(() => route.params.toolName as string);
   const loading = ref(false);
+  const error = ref('');
   const tool = ref<ToolInfo | null>(null);
   const formData = ref<Arguments>({});
   const parameterEditor = ref<ParameterEditorInstance>();
@@ -28,6 +29,7 @@ export function useToolForm() {
   const fetchTool = async () => {
     const id = ++requestId;
     loading.value = true;
+    error.value = '';
     tool.value = null;
     editorKey.value++;
     try {
@@ -36,7 +38,10 @@ export function useToolForm() {
       tool.value = fetched;
       initFormDataDefaults();
     } catch {
-      if (id === requestId) MessagePlugin.error('获取工具详情失败');
+      if (id === requestId) {
+        error.value = '无法加载工具详情，请确认工具存在且服务器可用后重试。';
+        MessagePlugin.error('获取工具详情失败');
+      }
     } finally {
       if (id === requestId) loading.value = false;
     }
@@ -50,6 +55,8 @@ export function useToolForm() {
   return {
     toolName,
     loading,
+    error,
+    retry: fetchTool,
     tool,
     formData,
     parameterEditor,

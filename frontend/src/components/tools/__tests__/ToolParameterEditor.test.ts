@@ -1,8 +1,9 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { Input, InputNumber, Select, Switch } from 'tdesign-vue-next';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 
+import { ParameterSelect } from '../parameter-widgets';
 import ToolParameterEditor from '../ToolParameterEditor.vue';
 import { initialArguments } from '@/utils/tool-parameters';
 
@@ -175,4 +176,30 @@ describe('ToolParameterEditor', () => {
     expect(wrapper.vm.getArguments()).toBeNull();
     wrapper.unmount();
   });
+});
+
+it('handles real TDesign option clicks without merging inherited change listeners', async () => {
+  const wrapper = mount(ParameterSelect, {
+    attachTo: document.body,
+    props: {
+      modelValue: '0',
+      items: [
+        { label: '0', value: '0' },
+        { label: 'one', value: 'one' },
+      ],
+    },
+    attrs: { popupVisible: true, onChange: vi.fn() },
+    global: { stubs: { TSelect: false, TInput: false, TOption: false } },
+  });
+  try {
+    await flushPromises();
+    await vi.waitFor(() =>
+      expect(document.querySelector('.t-select-option[title="one"]')).not.toBeNull(),
+    );
+    document.querySelector<HTMLElement>('.t-select-option[title="one"]')!.click();
+    await flushPromises();
+    expect(wrapper.emitted('update:modelValue')?.slice(-1)[0]).toEqual(['one']);
+  } finally {
+    wrapper.unmount();
+  }
 });
