@@ -51,6 +51,7 @@
 </template>
 
 <script setup lang="ts">
+import { MessagePlugin } from 'tdesign-vue-next';
 import { ref, reactive, watch, computed } from 'vue';
 
 import { useServerStore } from '@/stores/server';
@@ -146,6 +147,10 @@ function resetForm() {
 async function handleConfirm() {
   const validateResult = await formRef.value?.validate();
   if (validateResult !== true) return;
+  if (!formData.servers.length && !props.groupData?.skills?.include.length) {
+    MessagePlugin.warning('组至少需要选择一个服务器或保留已发布技能');
+    return;
+  }
 
   if (props.mode === 'create') {
     const data: CreateGroupRequest = {

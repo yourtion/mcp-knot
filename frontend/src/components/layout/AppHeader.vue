@@ -1,7 +1,13 @@
 <template>
   <header class="app-header">
     <div class="app-header__left">
-      <Button variant="text" shape="square" size="medium" @click="$emit('toggle-sidebar')">
+      <Button
+        aria-label="切换导航栏"
+        variant="text"
+        shape="square"
+        size="medium"
+        @click="$emit('toggle-sidebar')"
+      >
         <template #icon>
           <MenuUnfoldIcon v-if="collapsed" />
           <MenuFoldIcon v-else />
@@ -11,7 +17,13 @@
     </div>
     <div class="app-header__right">
       <div class="app-header__theme-btn">
-        <Button variant="text" shape="square" size="medium" @click="toggleTheme">
+        <Button
+          aria-label="切换主题"
+          variant="text"
+          shape="square"
+          size="medium"
+          @click="toggleTheme"
+        >
           <template #icon>
             <SunnyIcon v-if="isDark" />
             <MoonIcon v-else />

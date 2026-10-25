@@ -34,7 +34,7 @@
       row-key="name"
       hover
       stripe
-      :empty="emptyContent"
+      :empty="() => emptyContent"
       @row-click="handleRowClick"
     />
   </div>

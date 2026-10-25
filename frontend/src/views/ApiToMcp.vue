@@ -219,6 +219,8 @@ const configDialogVisible = ref(false);
 const dialogSaving = ref(false);
 const isEditing = ref(false);
 const editingId = ref('');
+const originalConfig = ref<ApiToolConfig | null>(null);
+let editRequest = 0;
 
 const formData = reactive({
   name: '',
@@ -320,6 +322,8 @@ async function fetchStats(): Promise<void> {
 
 // --- Dialog Actions ---
 function resetForm(): void {
+  editRequest++;
+  originalConfig.value = null;
   formData.name = '';
   formData.description = '';
   formData.url = '';
@@ -335,15 +339,25 @@ function openAddDialog(): void {
   configDialogVisible.value = true;
 }
 
-function openEditDialog(row: ApiConfigInfo): void {
+async function openEditDialog(row: ApiConfigInfo): Promise<void> {
   resetForm();
-  isEditing.value = true;
-  editingId.value = row.id;
-  formData.name = row.name;
-  formData.description = row.description;
-  formData.url = row.api.url;
-  formData.method = row.api.method;
-  configDialogVisible.value = true;
+  const request = editRequest;
+  try {
+    const config = await apiToMcpService.getConfigDetails(row.id);
+    if (request !== editRequest) return;
+    originalConfig.value = config;
+    isEditing.value = true;
+    editingId.value = config.id;
+    formData.name = config.name;
+    formData.description = config.description;
+    formData.url = config.api.url;
+    formData.method = config.api.method;
+    formData.headers = JSON.stringify(config.api.headers || {}, null, 2);
+    formData.parametersSchema = JSON.stringify(config.parameters, null, 2);
+    configDialogVisible.value = true;
+  } catch {
+    if (request === editRequest) MessagePlugin.error('读取完整API配置失败，请重试');
+  }
 }
 
 async function handleSaveConfig(): Promise<void> {
@@ -381,12 +395,14 @@ async function handleSaveConfig(): Promise<void> {
   dialogSaving.value = true;
   try {
     const configPayload: ApiToolConfig = {
+      ...originalConfig.value,
       id: isEditing.value
         ? editingId.value
         : `api-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name: formData.name,
       description: formData.description,
       api: {
+        ...originalConfig.value?.api,
         url: formData.url,
         method: formData.method as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
         headers,
@@ -395,7 +411,7 @@ async function handleSaveConfig(): Promise<void> {
         ...parameterSchema.data,
         required,
       },
-      response: {},
+      response: originalConfig.value?.response || {},
     };
 
     if (isEditing.value) {

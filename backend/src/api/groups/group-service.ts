@@ -665,9 +665,9 @@ export async function createGroup(body: CreateGroupRequest): Promise<Record<stri
     ...(body.skills !== undefined && { skills: body.skills }),
   };
 
+  if (newGroup.servers.length === 0 && !newGroup.skills?.include.length)
+    throw new GroupServiceError('VALIDATION_ERROR', '组至少需要服务器或已发布技能', 400);
   if (body.skills) {
-    if (newGroup.servers.length === 0 && body.skills.include.length === 0)
-      throw new GroupServiceError('VALIDATION_ERROR', '组至少需要服务器或已发布技能', 400);
     try {
       await getSkillRepository().catalog(body.skills, body.id);
     } catch (error) {
@@ -792,9 +792,9 @@ export async function updateGroup(
     ...(body.skills !== undefined && { skills: body.skills }),
   };
 
+  if (updatedGroup.servers.length === 0 && !updatedGroup.skills?.include.length)
+    throw new GroupServiceError('VALIDATION_ERROR', '组至少需要服务器或已发布技能', 400);
   if (body.skills) {
-    if (updatedGroup.servers.length === 0 && body.skills.include.length === 0)
-      throw new GroupServiceError('VALIDATION_ERROR', '组至少需要服务器或已发布技能', 400);
     try {
       await getSkillRepository().catalog(body.skills, groupId);
     } catch (error) {

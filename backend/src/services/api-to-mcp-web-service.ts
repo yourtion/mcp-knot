@@ -82,19 +82,16 @@ export class ApiToMcpWebService {
    */
   async getConfigs(): Promise<ApiConfigListResponse> {
     try {
-      const apiTools = await this.apiToolIntegrationService.getApiTools();
-
-      const configs: ApiConfigInfo[] = apiTools.map((tool) => ({
-        id: tool.name,
-        name: tool.name,
-        description: tool.description || '',
+      const saved = await this.loadAllConfigs();
+      const modified = this.configPath ? await fs.stat(this.configPath).catch(() => null) : null;
+      const configs: ApiConfigInfo[] = saved.map((config) => ({
+        id: config.id,
+        name: config.name,
+        description: config.description || '',
         status: 'active' as const,
-        api: {
-          url: this.extractApiUrl(tool.inputSchema),
-          method: this.extractHttpMethod(tool.inputSchema),
-        },
+        api: { url: config.api.url, method: config.api.method },
         toolsGenerated: 1,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: modified?.mtime.toISOString() || '',
       }));
 
       return { configs };
@@ -314,13 +311,6 @@ export class ApiToMcpWebService {
     try {
       logger.info('获取API配置详情', { configId });
 
-      // 从API工具集成服务获取工具定义
-      const toolDefinition = this.apiToolIntegrationService.getApiToolDefinition(configId);
-
-      if (!toolDefinition) {
-        return null;
-      }
-
       // 加载完整配置信息
       if (!this.configPath) {
         return null;
@@ -378,7 +368,11 @@ export class ApiToMcpWebService {
     }
 
     try {
-      return await this.configManager.loadConfig(this.configPath);
+      // Validate the runtime form, but edit/persist the original source. The runtime
+      // loader expands environment placeholders and must never replace saved templates.
+      await this.configManager.loadConfig(this.configPath);
+      const source = JSON.parse(await fs.readFile(this.configPath, 'utf-8')) as ApiToolsConfig;
+      return source.tools;
     } catch (error) {
       if (
         error instanceof ConfigLoadError &&
@@ -424,36 +418,6 @@ export class ApiToMcpWebService {
       path: this.configPath,
       configCount: configs.length,
     });
-  }
-
-  /**
-   * 从工具schema中提取API URL
-   */
-  private extractApiUrl(schema: Record<string, unknown>): string {
-    const url = (schema.description as string | undefined)?.match(/https?:\/\/[^\s]+/)?.[0];
-    if (!url) {
-      logger.warn('No API URL found in schema, returning empty string', {
-        hasDescription: !!schema.description,
-      });
-    }
-    return url || '';
-  }
-
-  /**
-   * 从工具schema中提取HTTP方法
-   */
-  private extractHttpMethod(schema: Record<string, unknown>): string {
-    const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
-    const method =
-      properties?.method?.default ||
-      (Array.isArray(properties?.method?.enum) ? properties.method.enum[0] : undefined);
-
-    if (method && typeof method === 'string') {
-      return method.toUpperCase();
-    }
-
-    logger.debug('No HTTP method found in schema, defaulting to GET');
-    return 'GET';
   }
 
   /**
