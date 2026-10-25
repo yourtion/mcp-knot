@@ -26,20 +26,41 @@
               clearable
               style="width: 200px"
             />
-            <t-button theme="primary" :loading="toolTest.loading" @click="handleTestTool">
+            <t-button
+              variant="outline"
+              :loading="schemaLoading"
+              :disabled="!!selectedTool"
+              @click="loadToolParameters"
+            >
+              加载参数
+            </t-button>
+            <t-button
+              theme="primary"
+              :loading="toolTest.loading"
+              :disabled="!selectedTool || schemaLoading"
+              @click="handleTestTool"
+            >
               <template #icon><PlayIcon /></template>
               执行
             </t-button>
           </div>
 
           <div class="debug-page__field">
-            <label class="debug-page__label">参数 (JSON)</label>
-            <t-textarea
-              v-model="toolTest.argsJson"
-              :autosize="{ minRows: 4, maxRows: 12 }"
-              class="debug-page__textarea"
-              placeholder='{"key": "value"}'
+            <div v-if="schemaError" role="alert">
+              <p>{{ schemaError }}</p>
+              <t-button @click="loadToolParameters">重试</t-button>
+            </div>
+            <t-loading v-else-if="schemaLoading" text="加载参数定义…" />
+            <ToolParameterEditor
+              v-else-if="selectedTool"
+              ref="parameterEditor"
+              :key="parameterSession"
+              v-model="toolArguments"
+              :schema="selectedTool.inputSchema"
+              :disabled="toolTest.loading"
+              @change="toolTest.result = null"
             />
+            <p v-else role="status">输入工具名称后加载参数；修改工具或服务器后请重新加载。</p>
           </div>
 
           <div v-if="toolTest.result !== null" class="debug-page__output">
@@ -241,16 +262,19 @@ import {
   Tabs as TTabs,
   TabPanel as TTabPanel,
   Input as TInput,
-  Textarea as TTextarea,
+  Loading as TLoading,
   Button as TButton,
   Table as TTable,
   Tag as TTag,
   Select as TSelect,
   MessagePlugin,
 } from 'tdesign-vue-next';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
+import ToolParameterEditor from '@/components/tools/ToolParameterEditor.vue';
 import { testTool, getErrorAnalysis, getPerformanceStats, getMcpMessages } from '@/services/debug';
+import { getTools } from '@/services/tool';
+import { initialArguments } from '@/utils/tool-parameters';
 
 import type {
   McpMessage,
@@ -258,6 +282,8 @@ import type {
   DebugErrorAnalysisResponse,
   DebugPerformanceStatsResponse,
 } from '@/types/debug';
+import type { ToolInfo } from '@/types/tool';
+import type { Arguments, ParameterEditorInstance } from '@/utils/tool-parameters';
 
 const activeTab = ref('tool');
 
@@ -265,11 +291,61 @@ const activeTab = ref('tool');
 const toolTest = reactive({
   toolName: '',
   serverId: '',
-  argsJson: '{}',
   result: null as unknown,
   executionTime: 0,
   loading: false,
 });
+
+const selectedTool = ref<ToolInfo | null>(null);
+const schemaLoading = ref(false);
+const schemaError = ref('');
+const toolArguments = ref<Arguments>({});
+const parameterEditor = ref<ParameterEditorInstance>();
+const parameterSession = ref(0);
+
+function resetParameters() {
+  parameterSession.value++;
+  selectedTool.value = null;
+  schemaLoading.value = false;
+  schemaError.value = '';
+  toolArguments.value = {};
+  toolTest.result = null;
+  toolTest.executionTime = 0;
+  toolTest.loading = false;
+}
+
+watch([() => toolTest.toolName, () => toolTest.serverId], resetParameters, { flush: 'sync' });
+onBeforeUnmount(resetParameters);
+
+async function loadToolParameters() {
+  if (schemaLoading.value || selectedTool.value) return;
+  resetParameters();
+  const name = toolTest.toolName.trim();
+  const serverId = toolTest.serverId.trim();
+  if (!name) {
+    schemaError.value = '请输入工具名称。';
+    return;
+  }
+  const session = parameterSession.value;
+  schemaLoading.value = true;
+  try {
+    const response = await getTools({ groupId: 'default', serverId: serverId || undefined });
+    if (session !== parameterSession.value) return;
+    const tool = response.tools.find(
+      (candidate) => candidate.name === name && (!serverId || candidate.serverId === serverId),
+    );
+    if (!tool) throw new Error('未找到匹配的工具，请检查工具名称、服务器和默认组配置。');
+    const args = initialArguments(tool.inputSchema);
+    selectedTool.value = tool;
+    toolArguments.value = args;
+  } catch (err) {
+    if (session === parameterSession.value) {
+      schemaError.value = err instanceof Error ? err.message : '加载参数定义失败，请重试。';
+    }
+  } finally {
+    if (session === parameterSession.value) schemaLoading.value = false;
+  }
+}
 
 // --- Error Analysis State ---
 const errorAnalysis = reactive({
@@ -354,18 +430,11 @@ function messageTypeTheme(type: string): 'primary' | 'success' | 'warning' {
 
 // --- Actions ---
 async function handleTestTool(): Promise<void> {
-  if (!toolTest.toolName.trim()) {
-    MessagePlugin.warning('请输入工具名称');
-    return;
-  }
-
-  let args: Record<string, unknown>;
-  try {
-    args = JSON.parse(toolTest.argsJson || '{}') as Record<string, unknown>;
-  } catch {
-    MessagePlugin.error('参数 JSON 格式错误');
-    return;
-  }
+  if (toolTest.loading || schemaLoading.value || !selectedTool.value) return;
+  const args = parameterEditor.value?.getArguments();
+  if (!args) return;
+  const session = parameterSession.value;
+  const tool = selectedTool.value;
 
   toolTest.loading = true;
   toolTest.result = null;
@@ -373,19 +442,22 @@ async function handleTestTool(): Promise<void> {
 
   try {
     const response: ToolTestResponse = await testTool({
-      toolName: toolTest.toolName,
-      serverId: toolTest.serverId || undefined,
+      toolName: tool.name,
+      serverId: tool.serverId,
+      groupId: 'default',
       arguments: args,
     });
+    if (session !== parameterSession.value) return;
     toolTest.result = response.result;
     toolTest.executionTime = response.executionTime;
     MessagePlugin.success('工具执行完成');
   } catch (err) {
+    if (session !== parameterSession.value) return;
     const message = err instanceof Error ? err.message : '工具执行失败';
     MessagePlugin.error(message);
     toolTest.result = { error: message };
   } finally {
-    toolTest.loading = false;
+    if (session === parameterSession.value) toolTest.loading = false;
   }
 }
 
@@ -468,11 +540,6 @@ onMounted(async () => {
   font-weight: var(--weight-medium);
   color: var(--text-secondary);
   margin-bottom: var(--space-2);
-}
-
-.debug-page__textarea :deep(textarea) {
-  font-family: var(--font-mono) !important;
-  font-size: var(--text-sm) !important;
 }
 
 /* Output area */
