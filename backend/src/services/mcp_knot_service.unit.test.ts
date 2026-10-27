@@ -454,6 +454,22 @@ describe('McpKnotService', () => {
   });
 
   describe('callTool / isToolAvailable / getToolDetails', () => {
+    it('callTool 透传显式服务器，不改变同名工具的执行目标', async () => {
+      const svc = await createInitializedService();
+      registry.toolManager.getToolsForGroup.mockResolvedValue([
+        { name: 't1', inputSchema: {}, serverId: 's1' },
+        { name: 't1', inputSchema: {}, serverId: 's2' },
+      ]);
+      await svc.callTool('t1', { value: 0 }, 'default', 's2');
+      expect(registry.toolManager.executeTool).toHaveBeenCalledExactlyOnceWith(
+        'default',
+        't1',
+        { value: 0 },
+        's2',
+      );
+      await svc.shutdown();
+    });
+
     it('callTool 成功返回结果', async () => {
       const svc = await createInitializedService();
       const result = { content: [{ type: 'text', text: 'ok' }], isError: false };
@@ -463,7 +479,12 @@ describe('McpKnotService', () => {
       registry.toolManager.executeTool.mockResolvedValue(result);
 
       await expect(svc.callTool('t1', { a: 1 })).resolves.toEqual(result);
-      expect(registry.toolManager.executeTool).toHaveBeenCalledWith('default', 't1', { a: 1 });
+      expect(registry.toolManager.executeTool).toHaveBeenCalledWith(
+        'default',
+        't1',
+        { a: 1 },
+        undefined,
+      );
       await svc.shutdown();
     });
 

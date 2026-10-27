@@ -83,7 +83,7 @@ describe('调试API', () => {
         result: { content: [] },
       },
     });
-    expect(hubService.callTool).toHaveBeenCalledWith('echo', { q: 'x' }, 'team');
+    expect(hubService.callTool).toHaveBeenCalledWith('echo', { q: 'x' }, 'team', 'srv');
   });
 
   it('POST /tool-test 缺少 toolName 时返回 400', async () => {
@@ -112,7 +112,7 @@ describe('调试API', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(hubService.callTool).toHaveBeenCalledWith('echo', {}, undefined);
+    expect(hubService.callTool).toHaveBeenCalledWith('echo', {}, undefined, undefined);
   });
 
   it('POST /tool-test 执行失败时返回 500', async () => {

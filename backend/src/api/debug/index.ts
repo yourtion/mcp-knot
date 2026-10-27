@@ -34,13 +34,18 @@ debugApi.post('/tool-test', async (c) => {
 
     const { toolName, serverId, groupId, arguments: args } = body;
 
-    if (!toolName) {
+    const validationError = !toolName
+      ? 'toolName is required'
+      : serverId !== undefined && (typeof serverId !== 'string' || !serverId.trim())
+        ? 'serverId must be a non-empty string'
+        : undefined;
+    if (validationError) {
       return c.json(
         {
           success: false,
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'toolName is required',
+            message: validationError,
           },
           timestamp: new Date().toISOString(),
           requestId: c.get('requestId'),
@@ -52,7 +57,7 @@ debugApi.post('/tool-test', async (c) => {
 
     // Execute the tool
     const startTime = Date.now();
-    const result = await service.callTool(toolName, args || {}, groupId);
+    const result = await service.callTool(toolName, args || {}, groupId, serverId);
     const executionTime = Date.now() - startTime;
 
     return successResponse(c, {

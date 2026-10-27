@@ -430,6 +430,7 @@ export class McpKnotService implements IMcpKnotService {
     toolName: string,
     args: Record<string, unknown>,
     groupId?: string,
+    serverId?: string,
   ): Promise<ToolResult> {
     this.ensureInitialized();
 
@@ -448,7 +449,7 @@ export class McpKnotService implements IMcpKnotService {
       const startTime = Date.now();
       // executeTool 在内部已用 try/catch 吸收 v2 的未知工具 -32602 rejection，
       // 统一返回带 isError 的 ToolResult，不会在此处抛错。
-      const result = await this.toolManager.executeTool(targetGroupId, toolName, args);
+      const result = await this.toolManager.executeTool(targetGroupId, toolName, args, serverId);
       const duration = Date.now() - startTime;
 
       // 此处读取 isError 仅判断工具内部执行失败（v2 下仍保留 isError 语义），
