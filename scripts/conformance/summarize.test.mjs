@@ -13,7 +13,10 @@ test('distinguishes failed, warning-only and successful scenarios and checks', (
       name: 'dns-rebinding-protection',
       checks: [{ status: 'SUCCESS' }, { status: 'FAILURE', errorMessage: 'invalid host accepted' }],
     },
-    { name: 'server-sse-multiple-streams', checks: [{ status: 'WARNING' }] },
+    {
+      name: 'server-sse-multiple-streams',
+      checks: [{ status: 'WARNING', details: { message: 'Server did not provide session ID' } }],
+    },
     { name: 'future-info', checks: [{ status: 'INFO' }] },
   ]);
   assert.deepEqual(report.counts, { passed: 1, failed: 1, warnings: 1, informational: 1 });
@@ -21,17 +24,31 @@ test('distinguishes failed, warning-only and successful scenarios and checks', (
   assert.equal(report.scenarios[0].status, 'failed');
   assert.equal(report.scenarios[0].checks[1].errorMessage, 'invalid host accepted');
   assert.equal(report.scenarios.find((s) => s.name === 'future-info').category, 'unclassified');
+  assert.equal(
+    report.scenarios.find((s) => s.name === 'server-sse-multiple-streams').category,
+    'optional-session-warning',
+  );
 });
 
 test('diagnostic category cannot turn a failure or warning into a pass', () => {
   const report = summarizeReports([
     { name: 'tools-call-image', checks: [{ status: 'FAILURE' }] },
-    { name: 'server-sse-multiple-streams', checks: [{ status: 'FAILURE' }, { status: 'WARNING' }] },
+    {
+      name: 'server-sse-multiple-streams',
+      checks: [
+        { status: 'FAILURE', errorMessage: 'GROUP_NOT_FOUND during concurrent requests' },
+        { status: 'WARNING', details: { message: 'Server did not provide session ID' } },
+      ],
+    },
     { name: 'unknown-new-scenario', checks: [{ status: 'FAILURE' }] },
   ]);
   assert.equal(report.counts.failed, 3);
   assert.equal(report.counts.passed, 0);
   assert.equal(report.counts.warnings, 0);
+  assert.equal(
+    report.scenarios.find((s) => s.name === 'server-sse-multiple-streams').category,
+    'unclassified',
+  );
 });
 
 test('classifies actual errors without labeling later payload failures as missing fixtures', () => {

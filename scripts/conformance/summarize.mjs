@@ -17,6 +17,7 @@ function classify(name, results) {
   }
   if (name === 'dns-rebinding-protection' && errors.length) return 'host-origin-validation';
   if (
+    errors.length === 0 &&
     name === 'server-sse-multiple-streams' &&
     results.some(
       (r) => r.status === 'WARNING' && r.details?.message?.includes('did not provide session ID'),
