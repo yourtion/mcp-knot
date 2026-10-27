@@ -26,12 +26,13 @@
 # Fix round 2（2026-08-02）：group_status/list_group_tools 补 description，tools-list
 #   场景通过、移出 baseline（真 bug 不再被 baseline 掩盖）。
 # 2026-10-27：接通隔离 stdio fixture，经真实 test_<tool> 寻址恢复六种内容/错误场景；
-#   仅移除实际通过的六项。当前 19 个失败场景及 1 个 warning-only 场景。
+#   仅移除实际通过的六项。
+# 同日修复请求作用域的进度中继，官方 progress 场景通过后移除其条目。
+#   当前 18 个失败场景及 1 个 warning-only 场景。
 # =============================================================================
 
 server:
   # ---- 一、剩余工具能力：六种基本内容/错误结果已有真实 Hub 转发测试。
-  - tools-call-with-progress # fixture 已提供；Hub 未中继 progress token/通知，实测收到 0 条
   - tools-call-sampling # 缺 test_sampling 工具（需 sampling server 能力）
   - tools-call-elicitation # 缺 test_elicitation 工具（需 elicitation server 能力）
   - tools-call-with-logging # logging/setLevel method not found（见下）

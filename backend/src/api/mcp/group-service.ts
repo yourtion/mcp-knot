@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod/v4';
 
+import { runWithProgressContext } from '../../middleware/progress-context.js';
 import { extractFromMeta, runWithTraceContext } from '../../middleware/trace-context.js';
 import { MrtrRelayService } from '../../services/mrtr-relay-service.js';
 import { getSkillRepository } from '../../services/skills-service.js';
@@ -717,11 +718,25 @@ export class GroupMcpService {
                   }
                 : {};
 
-              const result = await this.coreServiceManager.executeToolCallWithContext(
-                tool.name,
-                args,
-                tool.serverId,
-                retryContext,
+              const result = await runWithProgressContext(
+                {
+                  progressToken: extra?.mcpReq?._meta?.progressToken,
+                  notify: extra?.mcpReq?.notify
+                    ? (params) =>
+                        extra.mcpReq.notify({
+                          method: 'notifications/progress',
+                          params: { ...params },
+                        })
+                    : undefined,
+                  signal: extra?.mcpReq?.signal,
+                },
+                () =>
+                  this.coreServiceManager.executeToolCallWithContext(
+                    tool.name,
+                    args,
+                    tool.serverId,
+                    retryContext,
+                  ),
               );
 
               // P5：识别上游 InputRequiredResult（修原 bug——原实现只看 'content' in result，

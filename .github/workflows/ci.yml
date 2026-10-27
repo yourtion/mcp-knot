@@ -5,7 +5,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, fix/conformance-baseline-cleanup, fix/progress-notification-relay]
 
 permissions:
   contents: read
