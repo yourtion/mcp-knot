@@ -71,8 +71,8 @@ MCP Knot 由两个服务组成：
 
 ### 网络
 
-- 开放端口：`8180`（前端，或由前置 Nginx 暴露 80/443）、`8181`（后端，建议仅内网）
-- 建议使用域名和 SSL 证书
+- 域名部署只公开 HTTPS `443`，使用[网关覆盖文件](#单一-tls-入口示例)或等价隔离，禁止外部直连 `8180`/`8181`。
+- 基础 Compose 默认发布这两个端口，不能单独作为 MCP 的完整安全边界；本机开发与公网部署应区分。
 
 ---
 
@@ -449,7 +449,7 @@ pm2 startup
 
 以下变量出现在 `.env.production.example` 或旧文档中，但**代码并不读取**，设置它们无效：
 
-- `PORT`、`HOST`：端口由 `system.json` 的 `server.port` 控制；host 由 `server.host` 控制。
+- `PORT`、`HOST`：端口由 `system.json` 的 `server.port` 控制；当前监听器未应用 `server.host`，不可据此认定只监听 localhost。
 - `CONFIG_DIR`、`MCP_SERVER_CONFIG`、`GROUP_CONFIG`、`SYSTEM_CONFIG`：配置目录请用 `CONFIG_PATH`。
 - `JWT_SECRET`、`JWT_EXPIRES_IN` 等：JWT 密钥与有效期在 `system.json` 的 `auth` 段配置，不是环境变量。
 - `CORS_ORIGIN`、`RATE_LIMIT_*`、`MONITORING_ENABLED` 等：均在 `system.json` 中配置。
@@ -477,13 +477,8 @@ sudo certbot renew --dry-run
 
 ### 3. 防火墙
 
-只暴露前端端口（或 80/443），后端 8181 仅内网可达：
-
-```bash
-sudo ufw allow 22/tcp
-sudo ufw allow 8180/tcp   # 或 80/443
-sudo ufw enable
-```
+使用下节域名网关示例时只公开 HTTPS 443；API 8181 和带 MCP 代理的 Web 8180 都不能绕过网关。
+先审核 Compose 合并后的端口，再由部署维护者配置实际网络/防火墙并从外部验证。Docker 端口映射不能仅靠常规 UFW 规则判断。
 
 ### 4. 安全头部
 
@@ -499,73 +494,63 @@ add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" alway
 
 ## 反向代理（Nginx）
 
-如需用前置 Nginx 统一入口（前端 + API），可参考以下最小配置 `/etc/nginx/sites-available/mcp-knot`：
+域名部署可由 Nginx/网关承担 Host/Origin 校验，条件是网关是唯一对外入口。
+[2025-11-25 Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning)
+和 [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#security--endpoint)
+均要求校验 Origin：该头存在且非法时必须返回 **403**。只配置 CORS、HTTPS 或响应安全头不满足此要求。
 
-```nginx
-upstream mcp_knot_backend {
-    server 127.0.0.1:8181;
-}
+### 单一 TLS 入口示例
 
-server {
-    listen 443 ssl http2;
-    server_name mcp-knot.example.com;
+仓库提供 [Nginx 配置](../examples/nginx-gateway/nginx.conf)、
+[njs 头校验策略](../examples/nginx-gateway/policy.mjs) 和
+[Compose 覆盖文件](../examples/nginx-gateway/compose.yaml)。覆盖文件仅作部署示例，本仓测试不会修改实际网关或防火墙。
 
-    ssl_certificate     /etc/ssl/certs/mcp-knot.crt;
-    ssl_certificate_key /etc/ssl/private/mcp-knot.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
+- Compose **2.24.4+**：合并覆盖文件会清空 API **8181** 和 Web **8180** 的宿主机端口，只发布网关 **443**。Web 本身也代理 MCP，不能留下其直连入口。
+- Nginx 镜像按 digest 固定，包含 njs 模块。njs 检查原始头，区分缺少 Origin（允许）与空、null、重复或其他 Origin（403）；普通 `$http_origin` 空值 map 无法区分前两种情况。
+- `MCP_PUBLIC_ORIGIN` 只设置网关的规范化 HTTPS origin，例如 `https://mcp.example.com`，使用小写域名或 IPv4，不含路径、结尾 `/` 或默认 `:443`。实际 Host 必须匹配；非默认端口须包含端口。示例为单域名单入口，不向应用硬编码公网白名单。
+- 请求判断只使用实际 Host/Origin。代理前保留 Origin 和 Authorization，覆盖客户端提供的 X-Forwarded-Host/Proto/For，并移除不可信 Forwarded。
+- API/Web 保持容器网络内访问，不开放宿主机端口。不要再合并其他恢复 8180/8181 映射的覆盖文件，也不要把它们接到其他公开代理入口。
 
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # 前端静态文件（如自行托管 dist）
-    location / {
-        root /var/www/mcp-knot/frontend/dist;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # API
-    location /api/ {
-        proxy_pass http://mcp_knot_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # 组级 Streamable HTTP MCP；保留原 URI，不使用旧全局 /mcp 或 WebSocket 升级
-    location ~ ^/[^/]+/mcp$ {
-        proxy_pass http://mcp_knot_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_buffering off;
-        proxy_cache off;
-    }
-
-    # SSE：禁用缓冲
-    location /api/events {
-        proxy_pass http://mcp_knot_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_buffering off;
-        proxy_cache off;
-    }
-}
-
-server {
-    listen 80;
-    server_name mcp-knot.example.com;
-    return 301 https://$server_name$request_uri;
-}
-```
-
-启用：
+先准备正常的生产配置、证书 `tls.crt`/`tls.key` 和入站 MCP OAuth。管理界面 JWT 登录不能代替 MCP 端点认证；
+无 Origin 的机器客户端仍需有效访问令牌。不得把 conformance 的 `{}` 开放测试配置用于公网。
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/mcp-knot /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
+export MCP_KNOT_VERSION=v0.1.1  # 按已验证的发布版本选择；本示例不触发发版
+export MCP_PUBLIC_ORIGIN=https://mcp.example.com
+export MCP_KNOT_TLS_DIR=/absolute/path/to/tls
+docker compose -f docker-compose.release.yml -f examples/nginx-gateway/compose.yaml config
+# 审核合并结果：API/Web 没有 ports，只有 gateway 发布 443；再由部署维护者启动
+docker compose -f docker-compose.release.yml -f examples/nginx-gateway/compose.yaml up -d
 ```
+
+证书目录只读挂载，文件须预先存在。更换域名/证书或允许其他浏览器 origin 时，应明确调整网关策略并重复验证，不自动相信 X-Forwarded-\*。
+后端出站 MCP/OAuth 访问仍使用原网络；本示例不创建阻断其出站连接的 internal-only 网络。
+
+### 验证边界
+
+从实际外网客户端确认只有域名 HTTPS 网关可达：8180、8181 不可直达；Docker 发布端口可能绕过常规 UFW 规则，不能只看防火墙配置。
+同时验证正确域名/HTTPS Origin、无 Origin 的带令牌请求、未带令牌应 401、恶意 Host/Origin 应 403，以及伪造转发头不能绕过。
+已有服务器、网络路径和防火墙的检查与变更由部署维护者执行，本示例不能证明任意现有环境已经隔离。
+
+原生 PM2/主机部署须另外确保后端只能由可信代理访问。当前 `backend/src/index.ts` 未将 `server.host` 传给监听器，
+仅在 JSON 中填写 localhost 不能证明监听已限制。即便仅监听 loopback，浏览器仍可能直接访问本机；裸后端仍缺 Origin 防护，不能继承网关的安全结论。
+
+### 自动回归与 Conformance 结果
+
+```bash
+# 需要 Docker、OpenSSL、Node/pnpm 及已构建的工作区；测试只创建临时容器/证书
+node --test scripts/gateway/nginx-gateway.test.mjs
+```
+
+测试使用相同 Nginx/njs 配置验证 TLS、原始头策略、无 Origin 客户端的认证转发和合并后的端口拓扑。
+认证转发先用隔离 mock 验证 Authorization/401 透传，再启动真实 Hub 内置 AS，验证无 Origin 的缺失/错误令牌为 401、有效令牌可初始化 MCP、元数据发现可访问；实际生产 IdP 和配置仍须按上述步骤验收。
+另启动真实隔离 Hub，通过 HTTPS 网关跑固定官方 TCK；CA 只用于这次测试，不关闭 TLS 证书校验。
+
+直连报告位于 `.conformance-results/`；网关报告位于 `.conformance-gateway-results/`，各自的 `target.json` 记录被测入口。
+**baseline 门禁通过不等于全部协议场景通过**。固定 TCK 0.1.16 的 DNS 用例只面向无 HTTPS/无认证 localhost，
+即便 URL 是 HTTPS 也发送 `http://localhost` Origin；伪造 Host 的请求还按恶意 Host 校验 TLS 证书，先报证书名不匹配；对公网域名会直接拒绝非 localhost URL。
+严格网关不为此放行 HTTP Origin，该官方场景的残留失败须原样报告；合法 HTTPS Origin 由针对性测试验证。
+裸后端的恶意头仍返回 200；网关部署的拒绝行为和裸后端缺口必须分别评价。
 
 ---
 

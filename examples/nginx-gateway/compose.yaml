@@ -1,0 +1,41 @@
+# Use with docker-compose.release.yml; requires Docker Compose >= 2.24.4.
+# Reset both published entries: Web also has MCP proxy locations.
+services:
+  mcp-knot-api:
+    ports: !reset []
+  mcp-knot-web:
+    ports: !reset []
+
+  mcp-knot-gateway:
+    image: nginx:stable@sha256:a7675fcee220f59b4a99f7098c06a0d5d999c2c0ee37c0211efb780536e5cb20
+    ports:
+      - '443:443'
+    environment:
+      MCP_PUBLIC_ORIGIN: ${MCP_PUBLIC_ORIGIN:?Set the exact HTTPS public origin without a trailing slash}
+    volumes:
+      - type: bind
+        source: ./examples/nginx-gateway/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./examples/nginx-gateway/policy.mjs
+        target: /etc/nginx/mcp/policy.mjs
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MCP_KNOT_TLS_DIR:?Set a directory containing tls.crt and tls.key}
+        target: /etc/nginx/tls
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      mcp-knot-api:
+        condition: service_healthy
+      mcp-knot-web:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mcp-knot-network
