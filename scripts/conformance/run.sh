@@ -98,9 +98,8 @@ fi
 #   - system.json={} → port 默认 8181、OAuth 未配置 → /:group/mcp 全开，TCK 无需凭据。
 #   - 占位上游连不上 → ServerManager 把它登记为 ERROR（仍出现在 getAllServers，
 #     使 group 校验通过），但 getAvailableServersForGroup 只留 status=connected 的 →
-#     该组可用上游为空。tools/list 仍会返回 Hub 自注册的两个组管理工具
-#     （group_status / list_group_tools），它们缺 description → tools-list 场景 FAILURE，
-#     已在 baseline（详见 expected-failures.yaml 第五节）。
+#     该组可用上游为空。tools/list 仍会返回带 description 的两个组管理工具
+#     （group_status / list_group_tools）；不会提供 TCK 写死名称的 test_* 测试工具。
 #   - 不生成 api-tools.json：JsonStorage 在缺失时不报错，且无 apiToolService 注册。
 TMP_CONFIG="$(mktemp -d)"
 
@@ -188,9 +187,19 @@ npx "${CONFORMANCE_PKG}" server \
 TCK_EXIT=$?
 set -e
 
+# 区分实际失败与 warning-only 场景。诊断分类不改变 TCK 的 baseline 门禁。
+set +e
+node "${REPO_ROOT}/scripts/conformance/summarize.mjs" "${OUT_DIR}"
+SUMMARY_EXIT=$?
+set -e
+
 # ---------- 5. 结果 ----------
 if [[ "${TCK_EXIT}" -eq 0 ]]; then
-  log "✅ conformance 通过：所有失败均在 baseline 内，无新增回归，无 stale 条目。"
+  if [[ "${SUMMARY_EXIT}" -ne 0 ]]; then
+    err "Conformance 结果不完整或格式无效。"
+    exit "${SUMMARY_EXIT}"
+  fi
+  log "Conformance baseline 门禁通过：无新增失败、无 stale 项；实际失败和警告见 summary.json。"
   exit 0
 else
   err "❌ conformance 未通过（exit ${TCK_EXIT}）：存在 unexpected failure 或 stale baseline 条目。"
