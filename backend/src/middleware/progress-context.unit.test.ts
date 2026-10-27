@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '../utils/logger.js';
@@ -78,6 +79,7 @@ describe('request-scoped tool progress', () => {
       ),
     );
     for (const callback of captured) callback({ progress: 999 });
+    await Promise.resolve();
     expect(received.a).toEqual([{ progress: 1, progressToken: 'a' }]);
     expect(received.b).toEqual([{ progress: 1, progressToken: 'b' }]);
     expect(getProgressCallback()).toBeUndefined();
@@ -93,6 +95,7 @@ describe('request-scoped tool progress', () => {
         callback({ progress: 1 });
         await Promise.resolve();
         controller.abort();
+        expect(getProgressCallback()).toBeUndefined();
         callback({ progress: 2 });
         return 42;
       },
@@ -105,6 +108,28 @@ describe('request-scoped tool progress', () => {
         expect(getProgressCallback()).toBeUndefined();
       },
     );
+  });
+
+  it('drops queued notifications when cancellation arrives before sending', async () => {
+    const controller = new AbortController();
+    const notify = vi.fn(async () => {});
+    await runWithProgressContext(
+      { progressToken: 'queued', notify, signal: controller.signal },
+      async () => {
+        getProgressCallback()!({ progress: 1 });
+        controller.abort();
+      },
+    );
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('releases its cancellation listener when a non-aborted operation completes', async () => {
+    const controller = new AbortController();
+    await runWithProgressContext(
+      { progressToken: 'complete', notify: async () => {}, signal: controller.signal },
+      async () => 'done',
+    );
+    expect(getEventListeners(controller.signal, 'abort')).toEqual([]);
   });
 
   it('handles rejected notifications without rejecting or retrying the completed tool', async () => {
@@ -131,6 +156,7 @@ describe('request-scoped tool progress', () => {
       }),
     ).rejects.toThrow('original tool failure');
     callback!({ progress: 2 });
+    await Promise.resolve();
     expect(notify).toHaveBeenCalledExactlyOnceWith({ progress: 1, progressToken: 'x' });
     expect(getProgressCallback()).toBeUndefined();
   });
