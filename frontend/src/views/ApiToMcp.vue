@@ -141,23 +141,29 @@
       :header="`测试API配置 - ${testTarget?.name ?? ''}`"
       :footer="false"
       width="640px"
+      @close="testDialogVisible = false"
     >
       <div class="api-to-mcp-page__test-section">
-        <t-form label-align="top">
-          <t-form-item label="测试参数 (JSON)">
-            <t-textarea
-              v-model="testParams"
-              :autosize="{ minRows: 3, maxRows: 8 }"
-              class="api-to-mcp-page__json-textarea"
-              placeholder='{"key": "value"}'
-            />
-          </t-form-item>
-        </t-form>
+        <div v-if="testSchemaError" role="alert">
+          <p>{{ testSchemaError }}</p>
+          <t-button @click="loadTestParameters">重试</t-button>
+        </div>
+        <t-loading v-else-if="testSchemaLoading" text="加载参数定义…" />
+        <ToolParameterEditor
+          v-else-if="testSchema"
+          ref="testParameterEditor"
+          :key="testSession"
+          v-model="testParams"
+          :schema="testSchema"
+          :disabled="testLoading"
+          @change="testResult = null"
+        />
 
         <t-button
           theme="primary"
           :loading="testLoading"
-          style="margin-bottom: var(--space-4)"
+          :disabled="!testSchema || testSchemaLoading"
+          style="margin: var(--space-4) 0"
           @click="handleTestConfig"
         >
           执行测试
@@ -197,12 +203,16 @@ import {
   Popconfirm as TPopconfirm,
   MessagePlugin,
 } from 'tdesign-vue-next';
-import { onMounted, reactive, ref } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { StatusTag } from '@/components/common';
+import ToolParameterEditor from '@/components/tools/ToolParameterEditor.vue';
 import { apiToMcpService } from '@/services/api-to-mcp';
+import { initialArguments } from '@/utils/tool-parameters';
 
 import type { ApiConfigInfo, ApiToolConfig, TestApiConfigResponse } from '@/types/api-to-mcp';
+import type { JsonSchema } from '@/types/tool';
+import type { Arguments, ParameterEditorInstance } from '@/utils/tool-parameters';
 
 // --- State ---
 const loading = ref(false);
@@ -235,8 +245,35 @@ const formData = reactive({
 const testDialogVisible = ref(false);
 const testLoading = ref(false);
 const testTarget = ref<ApiConfigInfo | null>(null);
-const testParams = ref('{}');
+const testParams = ref<Arguments>({});
 const testResult = ref<TestApiConfigResponse | null>(null);
+const testSchema = ref<JsonSchema | null>(null);
+const testSchemaLoading = ref(false);
+const testSchemaError = ref('');
+const testParameterEditor = ref<ParameterEditorInstance>();
+const testSession = ref(0);
+
+function resetTestSession() {
+  testSession.value++;
+  testSchema.value = null;
+  testParams.value = {};
+  testResult.value = null;
+  testLoading.value = false;
+  testSchemaLoading.value = false;
+  testSchemaError.value = '';
+}
+
+watch(
+  testDialogVisible,
+  (visible) => {
+    if (!visible) resetTestSession();
+  },
+  { flush: 'sync' },
+);
+onBeforeUnmount(() => {
+  resetTestSession();
+  editRequest++;
+});
 
 // --- Table columns ---
 const tableColumns = [
@@ -447,25 +484,51 @@ async function handleDelete(id: string): Promise<void> {
 
 // --- Test Actions ---
 function openTestDialog(row: ApiConfigInfo): void {
+  resetTestSession();
   testTarget.value = row;
-  testParams.value = '{}';
-  testResult.value = null;
   testDialogVisible.value = true;
+  void loadTestParameters();
+}
+
+async function loadTestParameters(): Promise<void> {
+  if (!testTarget.value || !testDialogVisible.value || testSchemaLoading.value) return;
+  const target = testTarget.value;
+  resetTestSession();
+  const session = testSession.value;
+  testSchemaLoading.value = true;
+  try {
+    const config = await apiToMcpService.getConfigDetails(target.id);
+    if (session !== testSession.value) return;
+    const schema = config.parameters as JsonSchema;
+    const args = initialArguments(schema);
+    testSchema.value = schema;
+    testParams.value = args;
+  } catch (err) {
+    if (session === testSession.value) {
+      testSchemaError.value = err instanceof Error ? err.message : '加载参数定义失败，请重试。';
+    }
+  } finally {
+    if (session === testSession.value) testSchemaLoading.value = false;
+  }
 }
 
 async function handleTestConfig(): Promise<void> {
-  if (!testTarget.value) return;
-
-  const params = parseJsonSafe(testParams.value);
+  if (!testTarget.value || !testSchema.value || testLoading.value || testSchemaLoading.value)
+    return;
+  const params = testParameterEditor.value?.getArguments();
   if (!params) return;
+  const session = testSession.value;
+  const target = testTarget.value;
 
   testLoading.value = true;
   testResult.value = null;
 
   try {
-    const response = await apiToMcpService.testConfig(testTarget.value.id, params);
+    const response = await apiToMcpService.testConfig(target.id, params);
+    if (session !== testSession.value) return;
     testResult.value = response;
   } catch (err) {
+    if (session !== testSession.value) return;
     const message = err instanceof Error ? err.message : '测试失败';
     MessagePlugin.error(message);
     testResult.value = {
@@ -474,7 +537,7 @@ async function handleTestConfig(): Promise<void> {
       executionTime: 0,
     };
   } finally {
-    testLoading.value = false;
+    if (session === testSession.value) testLoading.value = false;
   }
 }
 
