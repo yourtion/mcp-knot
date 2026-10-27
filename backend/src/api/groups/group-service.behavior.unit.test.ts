@@ -781,7 +781,7 @@ describe('updateGroup 行为补强', () => {
   });
 
   it('更新后调用 reload，失败时仅告警', async () => {
-    baseConfig({ team: { servers: [], tools: [], description: 'keep' } });
+    baseConfig({ team: { servers: ['srv-a'], tools: [], description: 'keep' } });
 
     await updateGroup('team', { name: '新名' });
     expect(registryMock.reloadCoreServiceManager).toHaveBeenCalledTimes(1);

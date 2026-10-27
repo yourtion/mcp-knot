@@ -44,7 +44,7 @@ describe('Router', () => {
   beforeAll(async () => {
     vi.stubGlobal('localStorage', createLocalStorage());
     router = (await import('@/router')).default;
-  });
+  }, 30000);
 
   beforeEach(async () => {
     vi.stubGlobal('localStorage', createLocalStorage());

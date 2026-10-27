@@ -91,11 +91,9 @@ describe('ApiToMcpService', () => {
           required: [],
         },
         response: {
-          statusCodePath: '',
-          dataPath: '',
-          errorMessagePath: '',
-          successCodes: [200],
-          errorCodes: [400],
+          jsonata: 'data',
+          errorPath: 'error',
+          successCondition: 'ok = true',
         },
       };
 
@@ -132,11 +130,9 @@ describe('ApiToMcpService', () => {
           required: [],
         },
         response: {
-          statusCodePath: '',
-          dataPath: '',
-          errorMessagePath: '',
-          successCodes: [200],
-          errorCodes: [400],
+          jsonata: 'data',
+          errorPath: 'error',
+          successCondition: 'ok = true',
         },
       };
 
@@ -181,11 +177,9 @@ describe('ApiToMcpService', () => {
           required: [],
         },
         response: {
-          statusCodePath: '',
-          dataPath: '',
-          errorMessagePath: '',
-          successCodes: [200],
-          errorCodes: [400],
+          jsonata: 'data',
+          errorPath: 'error',
+          successCondition: 'ok = true',
         },
       };
 
@@ -383,11 +377,9 @@ describe('ApiToMcpService', () => {
           required: [],
         },
         response: {
-          statusCodePath: '',
-          dataPath: '',
-          errorMessagePath: '',
-          successCodes: [200],
-          errorCodes: [400],
+          jsonata: 'data',
+          errorPath: 'error',
+          successCondition: 'ok = true',
         },
       };
 

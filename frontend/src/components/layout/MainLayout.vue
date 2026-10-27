@@ -17,26 +17,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { useMediaQuery } from '@vueuse/core';
+import { ref, watch } from 'vue';
 
 import AppHeader from './AppHeader.vue';
 import SideNavigation from './SideNavigation.vue';
 
 const STORAGE_KEY = 'sidebar_collapsed';
 
+const narrow = useMediaQuery('(max-width: 640px)');
 const collapsed = ref(false);
+watch(
+  narrow,
+  (isNarrow) => {
+    collapsed.value = isNarrow || localStorage.getItem(STORAGE_KEY) === 'true';
+  },
+  { immediate: true },
+);
 
 const toggleSidebar = () => {
   collapsed.value = !collapsed.value;
-  localStorage.setItem(STORAGE_KEY, String(collapsed.value));
+  if (!narrow.value) localStorage.setItem(STORAGE_KEY, String(collapsed.value));
 };
-
-onMounted(() => {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored !== null) {
-    collapsed.value = stored === 'true';
-  }
-});
 </script>
 
 <style scoped>
@@ -72,7 +74,7 @@ onMounted(() => {
 .page-content {
   flex: 1;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 /* Page transition */

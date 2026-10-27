@@ -17,7 +17,7 @@ export default defineConfig({
   server: {
     port: 8180,
     proxy: {
-      '/api': {
+      '/api/': {
         target: process.env.MCP_KNOT_DEV_API_URL || 'http://localhost:8181',
         changeOrigin: true,
       },

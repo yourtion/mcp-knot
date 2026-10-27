@@ -74,13 +74,20 @@
               variant="text"
               shape="square"
               size="small"
+              aria-label="发布技能或回滚"
               @click="emit('manageSkills', row.id)"
             >
               <template #icon><BookOpenIcon /></template>
             </t-button>
           </t-tooltip>
           <t-tooltip content="编辑">
-            <t-button variant="text" shape="square" size="small" @click="emit('edit', row)">
+            <t-button
+              variant="text"
+              shape="square"
+              size="small"
+              aria-label="编辑组"
+              @click="emit('edit', row)"
+            >
               <template #icon><EditIcon /></template>
             </t-button>
           </t-tooltip>
@@ -89,6 +96,7 @@
               variant="text"
               shape="square"
               size="small"
+              aria-label="管理工具"
               @click="emit('manageTools', row.id)"
             >
               <template #icon><ControlPlatformIcon /></template>
@@ -99,13 +107,14 @@
               variant="text"
               shape="square"
               size="small"
+              aria-label="管理验证"
               @click="emit('manageValidation', row.id)"
             >
               <template #icon><LockOnIcon /></template>
             </t-button>
           </t-tooltip>
           <t-popconfirm content="确认删除此组？" @confirm="emit('delete', row.id)">
-            <t-button variant="text" shape="square" size="small" theme="danger">
+            <t-button variant="text" shape="square" size="small" theme="danger" aria-label="删除">
               <template #icon><DeleteIcon /></template>
             </t-button>
           </t-popconfirm>
@@ -186,12 +195,12 @@ const filteredGroups = computed(() => {
 });
 
 function healthPercentage(score: number): string {
-  return `${Math.round(score * 100)}%`;
+  return `${Math.round(score)}%`;
 }
 
 function healthColorClass(score: number): string {
-  if (score > 0.8) return 'group-list__health--good';
-  if (score > 0.5) return 'group-list__health--warn';
+  if (score > 80) return 'group-list__health--good';
+  if (score > 50) return 'group-list__health--warn';
   return 'group-list__health--bad';
 }
 </script>

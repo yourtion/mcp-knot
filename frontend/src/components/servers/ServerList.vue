@@ -69,6 +69,7 @@
             variant="text"
             shape="square"
             size="small"
+            aria-label="连接服务器"
             @click="emit('connect', row.id)"
           >
             <template #icon><LinkIcon /></template>
@@ -79,15 +80,22 @@
             shape="square"
             size="small"
             theme="warning"
+            aria-label="断开服务器"
             @click="emit('disconnect', row.id)"
           >
             <template #icon><LinkUnlinkIcon /></template>
           </t-button>
-          <t-button variant="text" shape="square" size="small" @click="emit('edit', row)">
+          <t-button
+            variant="text"
+            shape="square"
+            size="small"
+            aria-label="编辑服务器"
+            @click="emit('edit', row)"
+          >
             <template #icon><EditIcon /></template>
           </t-button>
           <t-popconfirm content="确认删除此服务器？" @confirm="emit('delete', row.id)">
-            <t-button variant="text" shape="square" size="small" theme="danger">
+            <t-button variant="text" shape="square" size="small" theme="danger" aria-label="删除">
               <template #icon><DeleteIcon /></template>
             </t-button>
           </t-popconfirm>

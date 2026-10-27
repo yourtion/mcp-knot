@@ -1,7 +1,7 @@
-import { flushPromises, mount } from '@vue/test-utils';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { MessagePlugin } from 'tdesign-vue-next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 
@@ -42,6 +42,8 @@ const makeTool = (inputSchema: ToolInfo['inputSchema']): ToolInfo => ({
   status: 'available',
 });
 
+enableAutoUnmount(afterEach);
+
 const DummyView = defineComponent({ template: '<div />' });
 
 /**
@@ -56,7 +58,10 @@ type ToolFormContext = {
  * 挂载一个调用 useToolForm 的宿主组件并返回其上下文。
  * detail 传 'reject' 时模拟接口失败。
  */
-async function mountToolForm(schema?: ToolInfo['inputSchema'], detail: 'reject' | 'ok' = 'ok') {
+async function mountToolForm(
+  schema?: ToolInfo['inputSchema'],
+  detail: 'reject' | 'ok' | 'configured' = 'ok',
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -69,7 +74,7 @@ async function mountToolForm(schema?: ToolInfo['inputSchema'], detail: 'reject' 
 
   if (detail === 'reject') {
     mockToolService.getToolDetail.mockRejectedValue(new Error('获取失败'));
-  } else {
+  } else if (detail === 'ok') {
     mockToolService.getToolDetail.mockResolvedValue(makeTool(schema ?? { type: 'object' }));
   }
 
@@ -86,7 +91,7 @@ async function mountToolForm(schema?: ToolInfo['inputSchema'], detail: 'reject' 
   await flushPromises();
 
   context = wrapper.vm as unknown as ToolFormContext;
-  return { context, router };
+  return { context, router, wrapper };
 }
 
 describe('useToolForm', () => {
@@ -111,8 +116,8 @@ describe('useToolForm', () => {
     expect(context.tool?.name).toBe('demo-tool');
     expect(context.loading).toBe(false);
     expect(context.formData.name).toBe('hello');
-    expect(context.formData.enabled).toBe(false);
-    expect(context.formData.tags).toBe(JSON.stringify(['a', 'b'], null, 2));
+    expect(context.formData).not.toHaveProperty('enabled');
+    expect(context.formData.tags).toEqual(['a', 'b']);
     expect(context.formData.plain).toBeUndefined();
   });
 
@@ -124,117 +129,83 @@ describe('useToolForm', () => {
     expect(MessagePlugin.error).toHaveBeenCalledWith('获取工具详情失败');
   });
 
-  it('schemaProperties 映射字段并应用缺省回退', async () => {
-    const { context } = await mountToolForm({
+  it('编辑器未就绪时阻止生成参数', async () => {
+    const { context } = await mountToolForm();
+    context.formData.unchecked = '{not json';
+    expect(context.buildArguments()).toBeNull();
+  });
+
+  it('编辑器校验失败时不使用上一次草稿兜底', async () => {
+    const { context } = await mountToolForm();
+    const getArguments = vi.fn().mockReturnValue(null);
+    context.parameterEditor = { getArguments };
+    context.formData.stale = 'previous';
+    expect(context.buildArguments()).toBeNull();
+    expect(getArguments).toHaveBeenCalledOnce();
+  });
+
+  it('保留校验后 JSON 参数的类型、空值与嵌套结构', async () => {
+    const { context } = await mountToolForm();
+    const args = {
+      empty: '',
+      count: 0,
+      enabled: false,
+      value: null,
+      tags: ['a'],
+      config: { nested: 1 },
+    };
+    context.parameterEditor = { getArguments: () => args };
+    expect(context.buildArguments()).toEqual(args);
+  });
+
+  it('默认对象和数组独立复制，重置不会修改工具 schema', async () => {
+    const schema: ToolInfo['inputSchema'] = {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '名称' },
-        port: { type: 'number', minimum: 1, maximum: 65535, default: 8080 },
-        mode: { type: 'string', enum: ['fast', 'slow'] },
+        tags: { type: 'array', default: ['a'] },
+        config: { type: 'object', default: { nested: 1 } },
       },
-      required: ['name'],
-    });
-
-    const props = context.schemaProperties;
-    expect(props).toHaveLength(3);
-
-    const [name, port, mode] = props;
-    expect(name).toMatchObject({
-      name: 'name',
-      type: 'string',
-      description: '名称',
-      required: true,
-      enumValues: [],
-    });
-    expect(port).toMatchObject({ minimum: 1, maximum: 65535, defaultValue: 8080 });
-    expect(mode).toMatchObject({ enumValues: ['fast', 'slow'], required: false });
+    };
+    const { context } = await mountToolForm(schema);
+    (context.formData.tags as string[]).push('changed');
+    (context.formData.config as { nested: number }).nested = 2;
+    expect(schema.properties?.tags.default).toEqual(['a']);
+    expect(schema.properties?.config.default).toEqual({ nested: 1 });
+    const before = context.editorKey;
+    context.initFormDataDefaults();
+    expect(context.formData).toEqual({ tags: ['a'], config: { nested: 1 } });
+    expect(context.editorKey).not.toBe(before);
   });
 
-  it('无输入 schema 时 schemaProperties 为空数组', async () => {
-    const { context } = await mountToolForm(undefined);
-
-    expect(context.schemaProperties).toEqual([]);
-  });
-
-  it('formLabel 优先描述并标注必填', async () => {
-    const { context } = await mountToolForm({
+  it('切换路由后获取新工具并重置参数', async () => {
+    const { context, router } = await mountToolForm({
       type: 'object',
-      properties: {
-        name: { type: 'string', description: '名称' },
-        age: { type: 'number' },
-      },
-      required: ['age'],
+      properties: { previous: { type: 'string', default: 'old' } },
     });
-
-    const [name, age] = context.schemaProperties;
-    expect(context.formLabel(name)).toBe('名称');
-    expect(context.formLabel(age)).toBe('age *');
+    mockToolService.getToolDetail.mockResolvedValue({
+      ...makeTool({ type: 'object', properties: { next: { type: 'number', default: 0 } } }),
+      name: 'next-tool',
+    });
+    await router.push('/tools/next-tool/test');
+    await flushPromises();
+    expect(mockToolService.getToolDetail).toHaveBeenLastCalledWith('next-tool', undefined);
+    expect(context.toolName).toBe('next-tool');
+    expect(context.formData).toEqual({ next: 0 });
   });
 
-  it('formRulesForField 仅必填字段生成规则', async () => {
-    const { context } = await mountToolForm({
-      type: 'object',
-      properties: {
-        name: { type: 'string' },
-        age: { type: 'number' },
-      },
-      required: ['age'],
-    });
-
-    const [name, age] = context.schemaProperties;
-    expect(context.formRulesForField(name)).toEqual([]);
-    expect(context.formRulesForField(age)).toEqual([{ required: true, message: 'age 是必填参数' }]);
-  });
-
-  describe('buildArguments', () => {
-    it('跳过空值并解析 array/object 类型字符串', async () => {
-      const { context } = await mountToolForm({
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          count: { type: 'number' },
-          tags: { type: 'array' },
-          config: { type: 'object' },
-        },
-      });
-
-      context.formData.name = 'abc';
-      context.formData.count = '';
-      context.formData.tags = '["a","b"]';
-      context.formData.config = '{"k":1}';
-
-      expect(context.buildArguments()).toEqual({
-        name: 'abc',
-        tags: ['a', 'b'],
-        config: { k: 1 },
-      });
-    });
-
-    it('非法 JSON 字符串原样保留', async () => {
-      const { context } = await mountToolForm({
-        type: 'object',
-        properties: { tags: { type: 'array' } },
-      });
-
-      context.formData.tags = '{not json';
-
-      expect(context.buildArguments()).toEqual({ tags: '{not json' });
-    });
-
-    it('undefined 与 null 值都被跳过', async () => {
-      const { context } = await mountToolForm({
-        type: 'object',
-        properties: {
-          a: { type: 'string' },
-          b: { type: 'string' },
-        },
-      });
-
-      context.formData.a = null;
-      context.formData.b = undefined;
-
-      expect(context.buildArguments()).toEqual({});
-    });
+  it('卸载后忽略未完成请求的错误', async () => {
+    let fail: (error: Error) => void = () => {};
+    mockToolService.getToolDetail.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    const { context, wrapper } = await mountToolForm(undefined, 'configured');
+    expect(context.loading).toBe(true);
+    wrapper.unmount();
+    fail(new Error('late failure'));
+    await flushPromises();
+    expect(MessagePlugin.error).not.toHaveBeenCalled();
   });
 
   it('initFormDataDefaults 先清空旧字段再填默认值', async () => {

@@ -81,6 +81,7 @@ export class ToolManager implements IToolManager {
     groupId: string,
     toolName: string,
     args: Record<string, unknown>,
+    requestedServerId?: string,
   ): Promise<ToolResult> {
     const executionId = `${groupId}-${toolName}-${Date.now()}`;
     logger.info('Starting tool execution', {
@@ -111,7 +112,12 @@ export class ToolManager implements IToolManager {
       }
 
       // Step 3: Route tool to appropriate server
-      const routingResult = await this.routeToolExecution(groupId, toolName, executionId);
+      const routingResult = await this.routeToolExecution(
+        groupId,
+        toolName,
+        executionId,
+        requestedServerId,
+      );
       if (!routingResult.success) {
         logger.warn('Tool routing failed', {
           executionId,
@@ -174,6 +180,7 @@ export class ToolManager implements IToolManager {
     groupId: string,
     toolName: string,
     executionId: string,
+    requestedServerId?: string,
   ): Promise<
     | { success: true; serverId: string; tool: Tool; isApiTool?: boolean }
     | { success: false; error: string }
@@ -181,8 +188,12 @@ export class ToolManager implements IToolManager {
     logger.debug('Routing tool execution', { executionId, groupId, toolName });
 
     try {
-      // First check if this is an API tool
-      if (this.apiToolService?.isApiTool(toolName)) {
+      // Automatic routing keeps API precedence; an explicit MCP target cannot
+      // be replaced by a same-named API tool.
+      if (
+        (requestedServerId === undefined || requestedServerId === 'api-tools') &&
+        this.apiToolService?.isApiTool(toolName)
+      ) {
         const apiTool = this.apiToolService.getApiToolDefinition(toolName);
         if (apiTool) {
           logger.debug('Tool routing successful (API tool)', {
@@ -201,8 +212,18 @@ export class ToolManager implements IToolManager {
         }
       }
 
-      // Find the server that has this tool (MCP servers)
-      const serverId = this.findToolServer(toolName, groupId);
+      // A pinned target must belong to the group. Never fall back to another
+      // server if it disconnected or no longer exposes the selected tool.
+      if (
+        requestedServerId !== undefined &&
+        !this.groupManager.getGroup(groupId)?.servers.includes(requestedServerId)
+      ) {
+        return {
+          success: false,
+          error: `Server '${requestedServerId}' is not in group '${groupId}'`,
+        };
+      }
+      const serverId = requestedServerId ?? this.findToolServer(toolName, groupId);
       if (!serverId) {
         return {
           success: false,

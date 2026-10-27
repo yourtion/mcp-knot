@@ -1,3 +1,6 @@
+import { createParser } from 'eventsource-parser';
+
+import { validateToken } from './auth';
 // SSE (Server-Sent Events) 服务
 
 import type {
@@ -18,13 +21,28 @@ export type SSEEventType =
 export type SSEEventHandler<T = unknown> = (event: T) => void;
 
 export class SSEService {
-  private eventSource: EventSource | null = null;
+  private controller: AbortController | null = null;
+  private state: 'connecting' | 'open' | 'closed' = 'closed';
+  private stateListeners = new Set<(state: 'connecting' | 'open' | 'closed') => void>();
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private handlers: Map<SSEEventType, Set<SSEEventHandler>> = new Map();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000; // 1秒
   private isConnecting = false;
   private subscriptions: string[] = [];
+
+  onConnectionState(handler: (state: 'connecting' | 'open' | 'closed') => void): () => void {
+    this.stateListeners.add(handler);
+    return () => {
+      this.stateListeners.delete(handler);
+    };
+  }
+
+  private setState(state: 'connecting' | 'open' | 'closed') {
+    this.state = state;
+    this.stateListeners.forEach((handler) => handler(state));
+  }
 
   constructor() {
     // 初始化事件处理器映射
@@ -38,107 +56,101 @@ export class SSEService {
   /**
    * 连接到SSE端点
    */
-  connect(subscriptions: SSEEventType[] = []): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.eventSource && this.eventSource.readyState === EventSource.OPEN) {
-        resolve();
-        return;
+  async connect(subscriptions: SSEEventType[] = []): Promise<void> {
+    if (this.state === 'open') return;
+    if (this.isConnecting) throw new Error('已在连接中');
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.controller?.abort();
+    const controller = new AbortController();
+    this.controller = controller;
+    this.isConnecting = true;
+    this.setState('connecting');
+    this.subscriptions = subscriptions;
+    const params = new URLSearchParams();
+    if (subscriptions.length) params.set('subscriptions', subscriptions.join(','));
+    const url = `/api/dashboard/events${params.size ? `?${params}` : ''}`;
+    const open = () =>
+      fetch(url, {
+        headers: {
+          Accept: 'text/event-stream',
+          Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
+        },
+        signal: controller.signal,
+      });
+    try {
+      let response = await open();
+      // Reuse the ordinary authenticated API's refresh queue; never put tokens in URLs.
+      if (response.status === 401 && (await validateToken()) && !controller.signal.aborted) {
+        response = await open();
       }
-
-      if (this.isConnecting) {
-        reject(new Error('已在连接中'));
-        return;
+      if (
+        !response.ok ||
+        !response.body ||
+        !response.headers.get('content-type')?.includes('text/event-stream')
+      ) {
+        throw new Error(`SSE连接失败 (${response.status})`);
       }
-
-      this.isConnecting = true;
-      this.subscriptions = subscriptions;
-
-      try {
-        // 构建URL参数
-        const params = new URLSearchParams();
-        if (subscriptions.length > 0) {
-          params.append('subscriptions', subscriptions.join(','));
-        }
-
-        const url = `/api/dashboard/events${params.toString() ? `?${params.toString()}` : ''}`;
-
-        this.eventSource = new EventSource(url);
-
-        this.eventSource.onopen = () => {
-          console.log('SSE连接已建立');
-          this.isConnecting = false;
-          this.reconnectAttempts = 0;
-          resolve();
-        };
-
-        this.eventSource.onmessage = (event) => {
-          try {
-            const data: SSEEvent = JSON.parse(event.data);
-            this.handleEvent(data);
-          } catch (error) {
-            console.error('解析SSE事件数据失败:', error);
-          }
-        };
-
-        this.eventSource.onerror = (error) => {
-          console.error('SSE连接错误:', error);
-          this.isConnecting = false;
-
-          if (this.eventSource?.readyState === EventSource.CLOSED) {
-            this.attemptReconnect();
-          }
-
-          reject(error);
-        };
-
-        // 监听特定事件类型
-        subscriptions.forEach((eventType) => {
-          this.eventSource?.addEventListener(eventType, (event) => {
-            try {
-              const data = JSON.parse((event as MessageEvent).data);
-              this.handleTypedEvent(eventType, data);
-            } catch (error) {
-              console.error(`解析${eventType}事件数据失败:`, error);
-            }
-          });
-        });
-      } catch (error) {
-        this.isConnecting = false;
-        reject(error);
-      }
-    });
+      if (controller.signal.aborted) throw new DOMException('SSE已取消', 'AbortError');
+      this.setState('open');
+      this.isConnecting = false;
+      this.reconnectAttempts = 0;
+      void this.readStream(response.body, controller);
+    } catch (error) {
+      if (controller.signal.aborted || this.controller !== controller) throw error;
+      this.setState('closed');
+      this.isConnecting = false;
+      this.attemptReconnect();
+      throw error;
+    }
   }
 
-  /**
-   * 断开SSE连接
-   */
-  disconnect(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+  private async readStream(body: ReadableStream<Uint8Array>, controller: AbortController) {
+    const parser = createParser({
+      onEvent: (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (event.event && event.event !== 'message') {
+            this.handleTypedEvent(event.event as SSEEventType, data);
+          } else {
+            this.handleEvent(data as SSEEvent);
+          }
+        } catch (error) {
+          console.error('解析SSE事件数据失败:', error);
+        }
+      },
+    });
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done || controller.signal.aborted) break;
+        parser.feed(decoder.decode(value, { stream: true }));
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) console.error('SSE连接错误:', error);
+    } finally {
+      reader.releaseLock();
+      if (!controller.signal.aborted && this.controller === controller) {
+        this.setState('closed');
+        this.attemptReconnect();
+      }
     }
+  }
+
+  disconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.controller?.abort();
+    this.controller = null;
+    this.setState('closed');
     this.isConnecting = false;
     this.reconnectAttempts = 0;
-    console.log('SSE连接已断开');
   }
 
-  /**
-   * 获取连接状态
-   */
   getConnectionState(): 'connecting' | 'open' | 'closed' {
-    if (this.isConnecting) return 'connecting';
-    if (!this.eventSource) return 'closed';
-
-    switch (this.eventSource.readyState) {
-      case EventSource.CONNECTING:
-        return 'connecting';
-      case EventSource.OPEN:
-        return 'open';
-      case EventSource.CLOSED:
-        return 'closed';
-      default:
-        return 'closed';
-    }
+    return this.state;
   }
 
   /**
@@ -186,7 +198,7 @@ export class SSEService {
     if (handlers) {
       handlers.forEach((handler) => {
         try {
-          handler(event);
+          handler(event.data);
         } catch (error) {
           console.error(`处理${event.type}事件时发生错误:`, error);
         }
@@ -224,7 +236,7 @@ export class SSEService {
 
     console.log(`${delay}ms后尝试第${this.reconnectAttempts}次SSE重连`);
 
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
       this.connect(this.subscriptions as SSEEventType[])
         .then(() => {
           console.log('SSE重连成功');

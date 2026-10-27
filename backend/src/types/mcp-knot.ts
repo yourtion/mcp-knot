@@ -117,6 +117,7 @@ export interface ToolManager {
     groupId: string,
     toolName: string,
     args: Record<string, unknown>,
+    serverId?: string,
   ): Promise<ToolResult>;
   findToolServer(toolName: string, groupId: string): string | undefined;
   validateToolArgs(toolName: string, args: Record<string, unknown>): boolean;
@@ -126,7 +127,12 @@ export interface ToolManager {
 export interface McpKnotService {
   initialize(): Promise<void>;
   listTools(groupId?: string): Promise<Tool[]>;
-  callTool(toolName: string, args: Record<string, unknown>, groupId?: string): Promise<ToolResult>;
+  callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    groupId?: string,
+    serverId?: string,
+  ): Promise<ToolResult>;
   getGroupInfo(groupId: string): Group | undefined;
   getServerHealth(): Map<string, ServerStatus>;
   shutdown(): Promise<void>;

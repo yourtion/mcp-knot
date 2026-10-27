@@ -431,6 +431,9 @@ a:hover {
 
 .mcp-toolbar__left {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-3);
 }
@@ -564,4 +567,11 @@ a:hover {
   --td-radius-large: 12px;
   --td-font-size-body-medium: 14px;
   --td-font-size-title-large: 22px;
+}
+
+/* Fixed-width filter widgets must fit the available viewport. Tables keep their own scrolling. */
+@media (max-width: 640px) {
+  .mcp-toolbar__left > * {
+    max-width: 100%;
+  }
 }

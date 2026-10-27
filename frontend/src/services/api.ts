@@ -17,15 +17,21 @@ const api: AxiosInstance = axios.create({
 
 // Token 刷新锁，防止多个 401 并发触发多次刷新
 let isRefreshing = false;
-let refreshSubscribers: Array<(token: string) => void> = [];
+let refreshSubscribers: Array<{
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+}> = [];
 
 function onTokenRefreshed(token: string): void {
-  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers.forEach((subscriber) => subscriber.resolve(token));
   refreshSubscribers = [];
 }
 
-function addRefreshSubscriber(callback: (token: string) => void): void {
-  refreshSubscribers.push(callback);
+function addRefreshSubscriber(
+  callback: (token: string) => void,
+  reject: (error: unknown) => void,
+): void {
+  refreshSubscribers.push({ resolve: callback, reject });
 }
 
 // 扩展 AxiosRequestConfig 以支持 _retry 标记
@@ -67,11 +73,11 @@ api.interceptors.response.use(
 
       // 如果已经在刷新中，排队等待
       if (isRefreshing) {
-        return new Promise<AxiosResponse>((resolve) => {
+        return new Promise<AxiosResponse>((resolve, reject) => {
           addRefreshSubscriber((newToken: string) => {
             originalRequest.headers.Authorization = `Bearer ${newToken}`;
             resolve(api(originalRequest));
-          });
+          }, reject);
         });
       }
 
@@ -95,6 +101,7 @@ api.interceptors.response.use(
         // 刷新失败，清除token并跳转到登录页
         localStorage.removeItem('auth_token');
         localStorage.removeItem('refresh_token');
+        refreshSubscribers.forEach((subscriber) => subscriber.reject(error));
         refreshSubscribers = [];
         window.location.href = '/login';
         return Promise.reject(error);

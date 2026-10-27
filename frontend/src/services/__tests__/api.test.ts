@@ -211,6 +211,26 @@ describe('api 服务', () => {
       expect(window.location.href).toBe('/login');
     });
 
+    it('rejects every queued request when a shared refresh fails', async () => {
+      const { responseInterceptor, axios } = await loadApi();
+      localStorage.setItem('refresh_token', 'expired');
+      let fail!: (error: Error) => void;
+      axios.post.mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            fail = reject;
+          }),
+      );
+      const first = responseInterceptor(make401Error());
+      const second = responseInterceptor(make401Error());
+      const settled = Promise.allSettled([first, second]);
+      fail(new Error('refresh failed'));
+      const results = await settled;
+      expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(window.location.href).toBe('/login');
+    });
+
     it('并发 401 时排队等待刷新完成后统一重试', async () => {
       const { responseInterceptor, axios, apiInstance } = await loadApi();
       localStorage.setItem('refresh_token', 'r1');

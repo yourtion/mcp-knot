@@ -208,7 +208,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
   };
 
   // SSE连接管理
+  let stopSSEState = () => {};
   const connectSSE = async (subscriptions: SSEEventType[] = []) => {
+    stopSSEState();
+    stopSSEState =
+      sseService.onConnectionState?.((state) => {
+        sseConnectionState.value = state;
+        sseConnected.value = state === 'open';
+      }) || (() => {});
     try {
       sseConnectionState.value = 'connecting';
       await sseService.connect(subscriptions);
@@ -225,6 +232,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   };
 
   const disconnectSSE = () => {
+    stopSSEState();
     sseService.disconnect();
     sseConnected.value = false;
     sseConnectionState.value = 'closed';

@@ -63,6 +63,7 @@ vi.mock('node:fs', async () => {
       writeFile: vi.fn(),
       readFile: vi.fn(),
       access: vi.fn(),
+      stat: vi.fn().mockResolvedValue({ mtime: new Date(0) }),
     },
   };
 });
@@ -95,6 +96,13 @@ describe('ApiToMcpWebService', () => {
       serviceStatus: 'running',
     });
     mockConfigManager.loadConfig.mockResolvedValue([]);
+    const fsMock = (await import('node:fs')).promises;
+    vi.mocked(fsMock.readFile).mockImplementation(async () =>
+      JSON.stringify({
+        version: '1.0.0',
+        tools: await mockConfigManager.loadConfig(),
+      }),
+    );
   });
 
   afterEach(() => {
@@ -148,19 +156,28 @@ describe('ApiToMcpWebService', () => {
         },
       ];
 
-      mockApiToolIntegrationService.getApiTools.mockResolvedValue(mockApiTools);
+      mockConfigManager.loadConfig.mockResolvedValue(
+        mockApiTools.map((tool) => ({
+          id: 'config-id',
+          name: tool.name,
+          description: tool.description,
+          api: { url: 'https://example.com/qa', method: 'POST' },
+          parameters: tool.inputSchema,
+          response: {},
+        })),
+      );
 
       const result = await service.getConfigs();
 
       expect(result.configs).toHaveLength(1);
       expect(result.configs[0]).toEqual({
-        id: 'test-tool',
+        id: 'config-id',
         name: 'test-tool',
         description: 'Test tool description',
         status: 'active',
         api: {
-          url: '',
-          method: 'GET',
+          url: 'https://example.com/qa',
+          method: 'POST',
         },
         toolsGenerated: 1,
         lastUpdated: expect.any(String),
@@ -169,10 +186,30 @@ describe('ApiToMcpWebService', () => {
 
     it('应该正确处理获取配置列表错误', async () => {
       const error = new Error('获取失败');
-      mockApiToolIntegrationService.getApiTools.mockRejectedValue(error);
+      mockConfigManager.loadConfig.mockRejectedValue(error);
 
       await expect(service.getConfigs()).rejects.toThrow('获取配置列表失败: 获取失败');
     });
+  });
+
+  it('returns source templates rather than resolved runtime secrets for editing', async () => {
+    await service.initialize('/path/to/config.json');
+    const source = {
+      id: 'templated',
+      name: 'Template',
+      description: 'QA',
+      api: { url: 'https://example.com', method: 'GET', headers: { 'X-Key': '${QA_KEY}' } },
+      parameters: { type: 'object', properties: {} },
+      response: {},
+    };
+    mockConfigManager.loadConfig.mockResolvedValue([
+      { ...source, api: { ...source.api, headers: { 'X-Key': 'resolved-value' } } },
+    ]);
+    const fsMock = (await import('node:fs')).promises;
+    vi.mocked(fsMock.readFile).mockResolvedValue(
+      JSON.stringify({ version: '1.0.0', tools: [source] }),
+    );
+    expect(await service.getConfigDetails(source.id)).toEqual(source);
   });
 
   describe('createConfig', () => {
@@ -282,7 +319,7 @@ describe('ApiToMcpWebService', () => {
       const { promises: fsMock } = await import('node:fs');
       vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
       vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
-      vi.mocked(fsMock.readFile).mockResolvedValue('{}');
+
       vi.mocked(fsMock.access).mockResolvedValue(undefined);
 
       await service.initialize('/path/to/config.json');
@@ -361,7 +398,7 @@ describe('ApiToMcpWebService', () => {
       const { promises: fsMock } = await import('node:fs');
       vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
       vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
-      vi.mocked(fsMock.readFile).mockResolvedValue('{}');
+
       vi.mocked(fsMock.access).mockResolvedValue(undefined);
 
       await service.initialize('/path/to/config.json');
@@ -983,121 +1020,72 @@ describe('ApiToMcpWebService', () => {
     });
   });
 
-  describe('getConfigs schema 提取（补强）', () => {
-    beforeEach(async () => {
-      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+  describe('getConfigs 使用持久化配置而非运行时 Schema 推断', () => {
+    const cases: Array<{
+      name: string;
+      description?: string;
+      schema: Record<string, unknown>;
+    }> = [
+      { name: '描述含 https URL', description: 'see https://runtime.example/other', schema: {} },
+      { name: '描述含 http URL', description: 'see http://runtime.example/other', schema: {} },
+      { name: '描述不含 URL', description: 'no URL here', schema: {} },
+      { name: '描述缺失', schema: {} },
+      { name: '描述为空', description: '', schema: {} },
+      {
+        name: '参数有 method.default',
+        schema: { properties: { method: { type: 'string', default: 'post' } } },
+      },
+      {
+        name: '参数有 method.default 和 enum',
+        schema: { properties: { method: { type: 'string', default: 'delete', enum: ['POST'] } } },
+      },
+      {
+        name: '参数有 method.enum',
+        schema: { properties: { method: { type: 'string', enum: ['PUT', 'GET'] } } },
+      },
+      {
+        name: '参数 method.enum 非数组',
+        schema: { properties: { method: { type: 'string', enum: 'GET' } } },
+      },
+      { name: '参数无 method', schema: { properties: {} } },
+      { name: '参数无 properties', schema: { type: 'object' } },
+      {
+        name: '参数 method.default 非字符串',
+        schema: { properties: { method: { type: 'number', default: 42 } } },
+      },
+    ];
+
+    it.each(cases)('$name 不覆盖保存的 API 地址与方法', async ({ schema, description }) => {
       await service.initialize('/path/to/config.json');
-    });
-
-    const fetchConfigs = async (
-      inputSchema: Record<string, unknown>,
-      schemaDescription?: string,
-    ): Promise<{ url: string; method: string }> => {
+      const source = {
+        id: 'saved-id',
+        name: 'Saved config',
+        description: 'Saved description',
+        api: { url: 'https://saved.example/endpoint', method: 'PATCH' },
+        parameters: { type: 'object', ...schema },
+        response: {},
+      };
+      mockConfigManager.loadConfig.mockResolvedValue([source]);
       mockApiToolIntegrationService.getApiTools.mockResolvedValue([
-        {
-          name: 'a-tool',
-          description: 'tool description',
-          inputSchema: { ...inputSchema, description: schemaDescription },
-        },
+        { name: 'runtime-name', description, inputSchema: { ...schema, description } },
       ]);
+
       const result = await service.getConfigs();
-      return result.configs[0].api;
-    };
 
-    it('从描述中提取 https URL', async () => {
-      const api = await fetchConfigs(
-        { type: 'object', properties: {} },
-        '调用 https://api.example.com/v1/data 获取数据',
-      );
-      expect(api.url).toBe('https://api.example.com/v1/data');
-    });
-
-    it('支持 http URL（非 https）', async () => {
-      const api = await fetchConfigs(
-        { type: 'object', properties: {} },
-        'see http://plain.example.com/x end',
-      );
-      expect(api.url).toBe('http://plain.example.com/x');
-    });
-
-    it('描述无 URL：返回空串并按有描述告警', async () => {
-      const warnSpy = vi.spyOn(logger, 'warn');
-      const api = await fetchConfigs({ type: 'object', properties: {} }, 'no url here');
-      expect(api.url).toBe('');
-      expect(warnSpy).toHaveBeenCalledWith('No API URL found in schema, returning empty string', {
-        hasDescription: true,
+      expect(result).toStrictEqual({
+        configs: [
+          {
+            id: source.id,
+            name: source.name,
+            description: source.description,
+            status: 'active',
+            api: source.api,
+            toolsGenerated: 1,
+            lastUpdated: new Date(0).toISOString(),
+          },
+        ],
       });
-    });
-
-    it('无描述：hasDescription 为 false', async () => {
-      const warnSpy = vi.spyOn(logger, 'warn');
-      const api = await fetchConfigs({ type: 'object', properties: {} }, undefined);
-      expect(api.url).toBe('');
-      expect(warnSpy).toHaveBeenCalledWith('No API URL found in schema, returning empty string', {
-        hasDescription: false,
-      });
-    });
-
-    it('提取到 URL 时不告警', async () => {
-      const warnSpy = vi.spyOn(logger, 'warn');
-      await fetchConfigs(
-        { type: 'object', properties: {} },
-        '调用 https://api.example.com/v1/data 获取数据',
-      );
-      expect(warnSpy).not.toHaveBeenCalledWith(
-        'No API URL found in schema, returning empty string',
-        expect.anything(),
-      );
-    });
-
-    it('method.default 优先且转大写', async () => {
-      const api = await fetchConfigs({
-        type: 'object',
-        properties: { method: { type: 'string', default: 'post' } },
-      });
-      expect(api.method).toBe('POST');
-    });
-
-    it('method.default 优先于 enum', async () => {
-      const api = await fetchConfigs({
-        type: 'object',
-        properties: { method: { type: 'string', default: 'delete', enum: ['POST'] } },
-      });
-      expect(api.method).toBe('DELETE');
-    });
-
-    it('method.enum 数组取第一个', async () => {
-      const api = await fetchConfigs({
-        type: 'object',
-        properties: { method: { type: 'string', enum: ['PUT', 'GET'] } },
-      });
-      expect(api.method).toBe('PUT');
-    });
-
-    it('method.enum 非数组时忽略并回退 GET', async () => {
-      const api = await fetchConfigs({
-        type: 'object',
-        properties: { method: { type: 'string', enum: 'GET' } },
-      });
-      expect(api.method).toBe('GET');
-    });
-
-    it('properties 存在但无 method：回退 GET', async () => {
-      const api = await fetchConfigs({ type: 'object', properties: {} });
-      expect(api.method).toBe('GET');
-    });
-
-    it('无 properties 键：回退 GET 且不抛错', async () => {
-      const api = await fetchConfigs({ type: 'object' });
-      expect(api.method).toBe('GET');
-    });
-
-    it('method.default 非字符串时忽略并回退 GET', async () => {
-      const api = await fetchConfigs({
-        type: 'object',
-        properties: { method: { type: 'number', default: 42 } },
-      });
-      expect(api.method).toBe('GET');
+      expect(mockApiToolIntegrationService.getApiTools).not.toHaveBeenCalled();
     });
   });
 
@@ -1107,11 +1095,10 @@ describe('ApiToMcpWebService', () => {
       await service.initialize('/path/to/config.json');
     });
 
-    it('工具定义获取抛错时转换为 McpKnotCoreError 并记录日志', async () => {
+    it('源配置读取失败时转换为 McpKnotCoreError 并记录日志', async () => {
       const errorSpy = vi.spyOn(logger, 'error');
-      mockApiToolIntegrationService.getApiToolDefinition.mockImplementation(() => {
-        throw new Error('boom');
-      });
+      const fsMock = (await import('node:fs')).promises;
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error('boom'));
 
       await expect(service.getConfigDetails('test-config')).rejects.toThrow(
         '获取配置详情失败: boom',
