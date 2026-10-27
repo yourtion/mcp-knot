@@ -84,12 +84,19 @@ describe('crypto', () => {
       expect(decryptValidationKey(encrypted)).toBe(longKey);
     });
 
-    it('解密篡改过的数据应抛出错误', () => {
+    it('CBC 填充被破坏时解密应抛出错误', () => {
       const encrypted = encryptValidationKey('secret');
       const [iv, data] = encrypted.split(':');
-      // 篡改密文部分
-      const tampered = `${iv}:${data!.slice(0, -2)}ff`;
-      expect(() => decryptValidationKey(tampered)).toThrow();
+      expect(decryptValidationKey(encrypted)).toBe('secret');
+      expect(data).toHaveLength(32); // 单个 AES 块，末尾是 10 个 0x0a 填充字节
+      // CBC 不提供完整性认证，任意修改密文不保证破坏填充；固定写 ff
+      // 还可能与原字节相同。翻转 IV 的末位，确定性地将最后的 0x0a 改为
+      // 0x0b，其余填充仍为 0x0a，必须在 final() 时拒绝。
+      const tamperedIv = Buffer.from(iv, 'hex');
+      tamperedIv[tamperedIv.length - 1] ^= 1;
+      const tampered = `${tamperedIv.toString('hex')}:${data}`;
+      expect(tampered).not.toBe(encrypted);
+      expect(() => decryptValidationKey(tampered)).toThrow('密钥解密失败');
     });
 
     it('解密格式无效的数据应抛出错误', () => {
