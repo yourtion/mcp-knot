@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ServerStatus } from '../types/mcp-knot.js';
+import { logger } from '../utils/logger.js';
 import { HealthMonitorService } from './health-monitor-service.js';
 
 import type { GroupManager, ServerManager } from '../types/mcp-knot.js';
@@ -83,5 +84,40 @@ describe('HealthMonitorService stop 清理（真实定时器）', () => {
     // 之后再触发手动检查仍可用
     await expect(monitor.triggerCheck()).resolves.toBeUndefined();
     expect(monitor.getLifecycleStatus().lastHealthCheck).toBeTruthy();
+  });
+
+  it('stop 在初始 immediate 触发前调用可取消初始检查', async () => {
+    // 断连服务器：若初始 immediate 未被真正清理，检查会触发 onHealthCheck 回调
+    const disconnectedManager = {
+      getAllServers: vi
+        .fn()
+        .mockReturnValue(
+          new Map([['s1', { id: 's1', status: ServerStatus.DISCONNECTED, tools: [] }]]),
+        ),
+    } as unknown as ServerManager;
+    const monitor = new HealthMonitorService(disconnectedManager, groupManager, onHealthCheck);
+    monitor.start();
+    monitor.stop();
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(onHealthCheck).not.toHaveBeenCalled();
+  });
+
+  it('清理定时器抛错被捕获并记录，不影响其余定时器清理', async () => {
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+    clearIntervalSpy.mockImplementationOnce(() => {
+      throw new Error('clear boom');
+    });
+
+    const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+    monitor.markInitialized();
+    monitor.start();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(() => monitor.stop()).not.toThrow();
+    expect(logger.error).toHaveBeenCalledWith('清理定时器失败', expect.any(Error));
+    clearIntervalSpy.mockRestore();
+    monitor.stop();
   });
 });

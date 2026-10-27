@@ -596,4 +596,608 @@ describe('ApiToMcpWebService', () => {
       await expect(service.shutdown()).rejects.toThrow('关闭失败');
     });
   });
+
+  describe('initialize 补充（日志断言）', () => {
+    it('初始化成功记录开始与完成日志', async () => {
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      await service.initialize('/path/to/config.json');
+
+      expect(infoSpy).toHaveBeenCalledWith('初始化API到MCP Web服务', {
+        configPath: '/path/to/config.json',
+      });
+      expect(infoSpy).toHaveBeenCalledWith('API到MCP Web服务初始化完成', {
+        configPath: '/path/to/config.json',
+      });
+    });
+
+    it('初始化失败记录错误日志', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+      mockApiToolIntegrationService.initialize.mockRejectedValue(new Error('boom'));
+
+      await expect(service.initialize('/path/to/config.json')).rejects.toThrow('初始化失败: boom');
+      expect(errorSpy).toHaveBeenCalledWith('API到MCP Web服务初始化失败', expect.any(Error));
+    });
+  });
+
+  describe('createConfig 持久化与校验（补强）', () => {
+    const validConfig: ApiToolConfig = {
+      id: 'test-config',
+      name: 'Test Config',
+      description: 'Test configuration',
+      api: {
+        url: 'https://api.example.com/test',
+        method: 'GET',
+      },
+      parameters: {
+        type: 'object',
+        properties: {
+          param1: { type: 'string', description: 'Test parameter' },
+        },
+        required: ['param1'],
+      },
+      response: {},
+    };
+
+    let fsMock: { mkdir: ReturnType<typeof vi.fn>; writeFile: ReturnType<typeof vi.fn> };
+
+    const writtenContent = (): { version: string; tools: unknown[] } => {
+      const call = vi.mocked(fsMock.writeFile).mock.calls[0];
+      return JSON.parse(call[1] as string) as { version: string; tools: unknown[] };
+    };
+
+    beforeEach(async () => {
+      const { promises } = await import('node:fs');
+      fsMock = promises as unknown as {
+        mkdir: ReturnType<typeof vi.fn>;
+        writeFile: ReturnType<typeof vi.fn>;
+      };
+      vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
+      mockConfigManager.loadConfig.mockResolvedValue([]);
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      mockApiToolIntegrationService.reloadConfig.mockResolvedValue(undefined);
+      await service.initialize('/tmp/dir/api-tools.json');
+    });
+
+    it('成功创建：mkdir 递归创建目录并写入完整配置对象', async () => {
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      const result = await service.createConfig(validConfig);
+
+      expect(result).toStrictEqual({
+        success: true,
+        message: 'API配置创建成功',
+        config: validConfig,
+      });
+      expect(fsMock.mkdir).toHaveBeenCalledWith('/tmp/dir', { recursive: true });
+      expect(writtenContent()).toStrictEqual({ version: '1.0.0', tools: [validConfig] });
+      expect(fsMock.writeFile).toHaveBeenCalledWith(
+        '/tmp/dir/api-tools.json',
+        expect.any(String),
+        'utf-8',
+      );
+      expect(infoSpy).toHaveBeenCalledWith('API配置创建成功', { configId: 'test-config' });
+    });
+
+    it('重复 ID：精确消息且不写文件不重载', async () => {
+      mockConfigManager.loadConfig.mockResolvedValue([validConfig]);
+
+      const result = await service.createConfig(validConfig);
+
+      expect(result).toStrictEqual({ success: false, message: "配置ID 'test-config' 已存在" });
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+      expect(mockApiToolIntegrationService.reloadConfig).not.toHaveBeenCalled();
+    });
+
+    it('未初始化时创建：精确错误消息', async () => {
+      const fresh = new ApiToMcpWebService();
+
+      const result = await fresh.createConfig(validConfig);
+
+      expect(result).toStrictEqual({
+        success: false,
+        message: '创建配置失败: 配置文件路径未设置，无法创建配置',
+        error: '配置文件路径未设置，无法创建配置',
+      });
+    });
+
+    it.each([
+      ['id 为空白字符串', { id: '   ' }, '配置ID不能为空'],
+      ['name 为空白字符串', { name: '   ' }, '配置名称不能为空'],
+      ['description 为空字符串', { description: '' }, '配置描述不能为空'],
+      ['api 缺失', { api: undefined }, 'API配置不完整'],
+      ['api.url 缺失', { api: { method: 'GET' } }, 'API配置不完整'],
+      ['api.method 缺失', { api: { url: 'https://api.example.com' } }, 'API配置不完整'],
+      [
+        'api.method 为空字符串',
+        { api: { url: 'https://api.example.com', method: '' } },
+        'API配置不完整',
+      ],
+      ['parameters 缺失', { parameters: undefined }, '参数配置不完整'],
+      ['parameters 无 properties', { parameters: { type: 'object' } }, '参数配置不完整'],
+    ])('校验失败：%s', async (_label, overrides, expectedMessage) => {
+      const invalidConfig = { ...validConfig, ...overrides } as unknown as ApiToolConfig;
+
+      const result = await service.createConfig(invalidConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe(`创建配置失败: ${expectedMessage}`);
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('配置文件不存在（ENOENT）视为空配置继续创建', async () => {
+      const { ConfigLoadError } = await import('@mcp-core/mcp-knot-core/api-to-mcp');
+      const enoentError = new ConfigLoadError(
+        'load failed',
+        Object.assign(new Error('no such file'), { code: 'ENOENT' }),
+      );
+      mockConfigManager.loadConfig.mockRejectedValue(enoentError);
+
+      const result = await service.createConfig(validConfig);
+
+      expect(result.success).toBe(true);
+      expect(writtenContent()).toStrictEqual({ version: '1.0.0', tools: [validConfig] });
+    });
+
+    it('加载配置的其它错误向上传递为失败结果', async () => {
+      mockConfigManager.loadConfig.mockRejectedValue(new Error('disk corrupted'));
+
+      const result = await service.createConfig(validConfig);
+
+      expect(result).toStrictEqual({
+        success: false,
+        message: '创建配置失败: disk corrupted',
+        error: 'disk corrupted',
+      });
+    });
+
+    it('configManager 缺失但路径已设置时按空配置处理', async () => {
+      service.configManager = undefined;
+
+      const result = await service.createConfig({ ...validConfig, id: 'another' });
+
+      expect(result.success).toBe(true);
+      expect(mockConfigManager.loadConfig).not.toHaveBeenCalled();
+      expect(writtenContent()).toStrictEqual({
+        version: '1.0.0',
+        tools: [{ ...validConfig, id: 'another' }],
+      });
+    });
+
+    it('mkdir 报 EEXIST 时忽略错误继续写文件', async () => {
+      vi.mocked(fsMock.mkdir).mockRejectedValue(
+        Object.assign(new Error('directory exists'), { code: 'EEXIST' }),
+      );
+
+      const result = await service.createConfig(validConfig);
+
+      expect(result.success).toBe(true);
+      expect(fsMock.writeFile).toHaveBeenCalled();
+    });
+
+    it('mkdir 报其它错误时创建失败', async () => {
+      vi.mocked(fsMock.mkdir).mockRejectedValue(
+        Object.assign(new Error('permission denied'), { code: 'EACCES' }),
+      );
+
+      const result = await service.createConfig(validConfig);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('创建配置失败: permission denied');
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateConfig 补强', () => {
+    const existingConfig: ApiToolConfig = {
+      id: 'test-config',
+      name: 'Test Config',
+      description: 'Test configuration',
+      api: { url: 'https://api.example.com/test', method: 'GET' },
+      parameters: { type: 'object', properties: {} },
+      response: {},
+    };
+
+    let fsMock: { mkdir: ReturnType<typeof vi.fn>; writeFile: ReturnType<typeof vi.fn> };
+
+    const writtenContent = (): { version: string; tools: unknown[] } => {
+      const call = vi.mocked(fsMock.writeFile).mock.calls[0];
+      return JSON.parse(call[1] as string) as { version: string; tools: unknown[] };
+    };
+
+    beforeEach(async () => {
+      const { promises } = await import('node:fs');
+      fsMock = promises as unknown as {
+        mkdir: ReturnType<typeof vi.fn>;
+        writeFile: ReturnType<typeof vi.fn>;
+      };
+      vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
+      mockConfigManager.loadConfig.mockResolvedValue([existingConfig]);
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      mockApiToolIntegrationService.reloadConfig.mockResolvedValue(undefined);
+      await service.initialize('/tmp/dir/api-tools.json');
+    });
+
+    it('成功更新：文件内容只包含更新后的配置', async () => {
+      const updated = { ...existingConfig, name: 'Updated Config' };
+
+      const result = await service.updateConfig('test-config', updated);
+
+      expect(result).toStrictEqual({
+        success: true,
+        message: 'API配置更新成功',
+        config: updated,
+      });
+      expect(writtenContent()).toStrictEqual({ version: '1.0.0', tools: [updated] });
+    });
+
+    it('未初始化时更新：精确错误消息', async () => {
+      const fresh = new ApiToMcpWebService();
+
+      const result = await fresh.updateConfig('test-config', existingConfig);
+
+      expect(result).toStrictEqual({
+        success: false,
+        message: '更新配置失败: 配置文件路径未设置，无法更新配置',
+        error: '配置文件路径未设置，无法更新配置',
+      });
+    });
+
+    it('ID 不匹配：精确消息', async () => {
+      const result = await service.updateConfig('test-config', {
+        ...existingConfig,
+        id: 'different-id',
+      });
+
+      expect(result).toStrictEqual({ success: false, message: '配置ID不匹配' });
+    });
+
+    it('配置不存在：精确消息且不写文件', async () => {
+      const result = await service.updateConfig('nope', { ...existingConfig, id: 'nope' });
+
+      expect(result).toStrictEqual({ success: false, message: "配置 'nope' 不存在" });
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('写文件失败：失败结果', async () => {
+      vi.mocked(fsMock.writeFile).mockRejectedValue(new Error('写入失败'));
+
+      const result = await service.updateConfig('test-config', existingConfig);
+
+      expect(result).toStrictEqual({
+        success: false,
+        message: '更新配置失败: 写入失败',
+        error: '写入失败',
+      });
+    });
+  });
+
+  describe('deleteConfig 补强', () => {
+    const existingConfig: ApiToolConfig = {
+      id: 'test-config',
+      name: 'Test Config',
+      description: 'Test configuration',
+      api: { url: 'https://api.example.com/test', method: 'GET' },
+      parameters: { type: 'object', properties: {} },
+      response: {},
+    };
+
+    let fsMock: { mkdir: ReturnType<typeof vi.fn>; writeFile: ReturnType<typeof vi.fn> };
+
+    const writtenContent = (): { version: string; tools: unknown[] } => {
+      const call = vi.mocked(fsMock.writeFile).mock.calls[0];
+      return JSON.parse(call[1] as string) as { version: string; tools: unknown[] };
+    };
+
+    beforeEach(async () => {
+      const { promises } = await import('node:fs');
+      fsMock = promises as unknown as {
+        mkdir: ReturnType<typeof vi.fn>;
+        writeFile: ReturnType<typeof vi.fn>;
+      };
+      vi.mocked(fsMock.mkdir).mockResolvedValue(undefined);
+      vi.mocked(fsMock.writeFile).mockResolvedValue(undefined);
+      mockConfigManager.loadConfig.mockResolvedValue([existingConfig]);
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      mockApiToolIntegrationService.reloadConfig.mockResolvedValue(undefined);
+      await service.initialize('/tmp/dir/api-tools.json');
+    });
+
+    it('成功删除：文件 tools 列表为空', async () => {
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      const result = await service.deleteConfig('test-config');
+
+      expect(result).toStrictEqual({ success: true, message: 'API配置删除成功' });
+      expect(writtenContent()).toStrictEqual({ version: '1.0.0', tools: [] });
+      expect(infoSpy).toHaveBeenCalledWith('API配置删除成功', { configId: 'test-config' });
+    });
+
+    it('未初始化时删除：精确错误消息', async () => {
+      const fresh = new ApiToMcpWebService();
+
+      const result = await fresh.deleteConfig('test-config');
+
+      expect(result).toStrictEqual({
+        success: false,
+        message: '删除配置失败: 配置文件路径未设置，无法删除配置',
+        error: '配置文件路径未设置，无法删除配置',
+      });
+    });
+
+    it('配置不存在：精确消息且不写文件', async () => {
+      const result = await service.deleteConfig('nope');
+
+      expect(result).toStrictEqual({ success: false, message: "配置 'nope' 不存在" });
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('写文件失败：失败结果', async () => {
+      vi.mocked(fsMock.writeFile).mockRejectedValue(new Error('写入失败'));
+
+      const result = await service.deleteConfig('test-config');
+
+      expect(result).toStrictEqual({
+        success: false,
+        message: '删除配置失败: 写入失败',
+        error: '写入失败',
+      });
+    });
+  });
+
+  describe('testConfig 补强', () => {
+    beforeEach(async () => {
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      await service.initialize('/path/to/config.json');
+    });
+
+    it('executionTime 为结束与开始时间差（fake timers 下精确为 0）', async () => {
+      const infoSpy = vi.spyOn(logger, 'info');
+      vi.useFakeTimers();
+      try {
+        mockApiToolIntegrationService.executeApiTool.mockResolvedValue({
+          isError: false,
+          content: [{ type: 'text', text: 'ok' }],
+        });
+
+        const result = await service.testConfig('t', {});
+
+        expect(result).toStrictEqual({
+          success: true,
+          response: 'ok',
+          error: undefined,
+          executionTime: 0,
+        });
+        expect(infoSpy).toHaveBeenCalledWith('API配置测试完成', {
+          configId: 't',
+          success: true,
+          executionTime: 0,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('成功但 content 为空：response 为 undefined 不抛错', async () => {
+      mockApiToolIntegrationService.executeApiTool.mockResolvedValue({
+        isError: false,
+        content: [],
+      });
+
+      const result = await service.testConfig('t', {});
+
+      expect(result.success).toBe(true);
+      expect(result.response).toBeUndefined();
+      expect(result.error).toBeUndefined();
+    });
+
+    it('isError 且 content 为空：error 为 undefined 不抛错', async () => {
+      mockApiToolIntegrationService.executeApiTool.mockResolvedValue({
+        isError: true,
+        content: [],
+      });
+
+      const result = await service.testConfig('t', {});
+
+      expect(result).toStrictEqual({
+        success: false,
+        response: undefined,
+        error: undefined,
+        executionTime: expect.any(Number),
+      });
+    });
+
+    it('执行抛错时记录错误日志', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+      mockApiToolIntegrationService.executeApiTool.mockRejectedValue(new Error('boom'));
+
+      const result = await service.testConfig('t', {});
+
+      expect(result.success).toBe(false);
+      expect(errorSpy).toHaveBeenCalledWith('测试API配置失败', expect.any(Error));
+    });
+  });
+
+  describe('getConfigs 使用持久化配置而非运行时 Schema 推断', () => {
+    const cases: Array<{
+      name: string;
+      description?: string;
+      schema: Record<string, unknown>;
+    }> = [
+      { name: '描述含 https URL', description: 'see https://runtime.example/other', schema: {} },
+      { name: '描述含 http URL', description: 'see http://runtime.example/other', schema: {} },
+      { name: '描述不含 URL', description: 'no URL here', schema: {} },
+      { name: '描述缺失', schema: {} },
+      { name: '描述为空', description: '', schema: {} },
+      {
+        name: '参数有 method.default',
+        schema: { properties: { method: { type: 'string', default: 'post' } } },
+      },
+      {
+        name: '参数有 method.default 和 enum',
+        schema: { properties: { method: { type: 'string', default: 'delete', enum: ['POST'] } } },
+      },
+      {
+        name: '参数有 method.enum',
+        schema: { properties: { method: { type: 'string', enum: ['PUT', 'GET'] } } },
+      },
+      {
+        name: '参数 method.enum 非数组',
+        schema: { properties: { method: { type: 'string', enum: 'GET' } } },
+      },
+      { name: '参数无 method', schema: { properties: {} } },
+      { name: '参数无 properties', schema: { type: 'object' } },
+      {
+        name: '参数 method.default 非字符串',
+        schema: { properties: { method: { type: 'number', default: 42 } } },
+      },
+    ];
+
+    it.each(cases)('$name 不覆盖保存的 API 地址与方法', async ({ schema, description }) => {
+      await service.initialize('/path/to/config.json');
+      const source = {
+        id: 'saved-id',
+        name: 'Saved config',
+        description: 'Saved description',
+        api: { url: 'https://saved.example/endpoint', method: 'PATCH' },
+        parameters: { type: 'object', ...schema },
+        response: {},
+      };
+      mockConfigManager.loadConfig.mockResolvedValue([source]);
+      mockApiToolIntegrationService.getApiTools.mockResolvedValue([
+        { name: 'runtime-name', description, inputSchema: { ...schema, description } },
+      ]);
+
+      const result = await service.getConfigs();
+
+      expect(result).toStrictEqual({
+        configs: [
+          {
+            id: source.id,
+            name: source.name,
+            description: source.description,
+            status: 'active',
+            api: source.api,
+            toolsGenerated: 1,
+            lastUpdated: new Date(0).toISOString(),
+          },
+        ],
+      });
+      expect(mockApiToolIntegrationService.getApiTools).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getConfigDetails 补充', () => {
+    beforeEach(async () => {
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      await service.initialize('/path/to/config.json');
+    });
+
+    it('源配置读取失败时转换为 McpKnotCoreError 并记录日志', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+      const fsMock = (await import('node:fs')).promises;
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error('boom'));
+
+      await expect(service.getConfigDetails('test-config')).rejects.toThrow(
+        '获取配置详情失败: boom',
+      );
+      expect(errorSpy).toHaveBeenCalledWith('获取API配置详情失败', expect.any(Error));
+    });
+  });
+
+  describe('getHealthStatus 补充', () => {
+    beforeEach(async () => {
+      mockApiToolIntegrationService.getHealthStatus.mockReturnValue({
+        initialized: true,
+        healthy: true,
+        serviceStatus: 'running',
+      });
+      mockApiToolIntegrationService.getStats.mockResolvedValue({
+        totalApiTools: 5,
+        initialized: true,
+      });
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      await service.initialize('/path/to/config.json');
+    });
+
+    it('成功：返回完整对象（toStrictEqual）', async () => {
+      const result = await service.getHealthStatus();
+
+      expect(result).toStrictEqual({
+        initialized: true,
+        healthy: true,
+        configPath: '/path/to/config.json',
+        toolCount: 5,
+        errors: undefined,
+      });
+    });
+
+    it('失败：errors 数组内容精确且记录日志', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+      mockApiToolIntegrationService.getHealthStatus.mockImplementation(() => {
+        throw new Error('boom');
+      });
+
+      const result = await service.getHealthStatus();
+
+      expect(result).toStrictEqual({
+        initialized: false,
+        healthy: false,
+        toolCount: 0,
+        errors: ['获取健康状态失败: boom'],
+      });
+      expect(errorSpy).toHaveBeenCalledWith('获取健康状态失败', expect.any(Error));
+    });
+  });
+
+  describe('reloadConfig 补充', () => {
+    beforeEach(async () => {
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      mockApiToolIntegrationService.reloadConfig.mockResolvedValue(undefined);
+      await service.initialize('/path/to/config.json');
+    });
+
+    it('成功：记录完成日志', async () => {
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      await service.reloadConfig();
+
+      expect(infoSpy).toHaveBeenCalledWith('API配置重新加载完成');
+    });
+
+    it('失败：记录错误日志并上抛', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+      mockApiToolIntegrationService.reloadConfig.mockRejectedValue(new Error('reload failed'));
+
+      await expect(service.reloadConfig()).rejects.toThrow('reload failed');
+      expect(errorSpy).toHaveBeenCalledWith('重新加载API配置失败', expect.any(Error));
+    });
+  });
+
+  describe('shutdown 补充（日志断言）', () => {
+    beforeEach(async () => {
+      mockApiToolIntegrationService.initialize.mockResolvedValue(undefined);
+      mockApiToolIntegrationService.shutdown.mockResolvedValue(undefined);
+      await service.initialize('/path/to/config.json');
+    });
+
+    it('成功：记录开始与完成日志', async () => {
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      await service.shutdown();
+
+      expect(infoSpy).toHaveBeenCalledWith('关闭API到MCP Web服务');
+      expect(infoSpy).toHaveBeenCalledWith('API到MCP Web服务已关闭');
+    });
+
+    it('失败：记录错误日志并上抛', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+      mockApiToolIntegrationService.shutdown.mockRejectedValue(new Error('boom'));
+
+      await expect(service.shutdown()).rejects.toThrow('boom');
+      expect(errorSpy).toHaveBeenCalledWith('关闭API到MCP Web服务时发生错误', expect.any(Error));
+    });
+  });
 });

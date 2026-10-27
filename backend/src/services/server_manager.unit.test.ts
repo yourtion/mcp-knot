@@ -1555,4 +1555,582 @@ describe('ServerManager', () => {
       await manager.shutdown();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 变异测试第二轮补强：针对存活/无覆盖变异体的精确断言
+  // ---------------------------------------------------------------------------
+  describe('变异测试第二轮：日志与状态精确断言', () => {
+    it('initialize 全连通时日志精确记录 serverCount/totalServers/connectedServers/跳过项', async () => {
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await serverManager.initialize();
+
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Initializing ServerManager', {
+        serverCount: 3,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'ServerManager initialization completed',
+        {
+          totalServers: 3,
+          connectedServers: 2,
+        },
+      );
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Skipping disabled server', {
+        serverId: 'disabled-server',
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Initializing server', {
+        serverId: 'test-server-1',
+        type: 'stdio',
+      });
+    });
+
+    it('连接失败时记录初始化失败与 failed 连接日志，tools 保持初始空数组', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockRejectedValue(new Error('connect boom'));
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      const server = manager.getAllServers().get('s1');
+      expect(server?.status).toBe(ServerStatus.ERROR);
+      expect(server?.lastError?.message).toBe('connect boom');
+      expect(server?.tools).toStrictEqual([]);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to initialize server',
+        expect.any(Error),
+        { serverId: 's1' },
+      );
+      expect(vi.mocked(logger.logServerConnection)).toHaveBeenCalledWith('s1', 'failed', {
+        error: 'connect boom',
+      });
+      await manager.shutdown();
+    });
+
+    it('getProtocolEra 返回 modern 时不产生 warn 且完成日志精确记录 era', async () => {
+      mockClient.getProtocolEra = vi.fn().mockReturnValue('modern');
+      const manager = new ServerManager({
+        one: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      expect(manager.getAllServers().get('one')?.era).toBe('modern');
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('上游 era 探测完成（P7）', {
+        serverId: 'one',
+        era: 'modern',
+      });
+      await manager.shutdown();
+    });
+
+    it('无 type 但有 command 的配置按 stdio 连接且不注册 listChanged handler', async () => {
+      // 无 changeDetector：连接成功后也不应注册通知 handler
+      const manager = new ServerManager({
+        s1: { command: 'node', args: ['legacy.js'], enabled: true } as unknown as ServerConfig,
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      expect(manager.getServerStatus('s1')).toBe(ServerStatus.CONNECTED);
+      expect(MockStdioTransport).toHaveBeenCalledTimes(1);
+      expect(MockStdioTransport.mock.calls[0]?.[0]).toMatchObject({
+        command: 'node',
+        args: ['legacy.js'],
+      });
+      expect(mockClient.setNotificationHandler).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Server connecting', { serverId: 's1' });
+      await manager.shutdown();
+    });
+
+    it('stdio 配置缺 command 时不被守卫拦截（transport 收到 command: undefined）', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', enabled: true } as unknown as ServerConfig,
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      expect(manager.getServerStatus('s1')).toBe(ServerStatus.CONNECTED);
+      expect(MockStdioTransport).toHaveBeenCalledTimes(1);
+      const ctorArg = MockStdioTransport.mock.calls[0]?.[0] as {
+        command?: string;
+        args?: string[];
+      };
+      expect(ctorArg?.command).toBeUndefined();
+      expect(ctorArg?.args).toEqual([]);
+      await manager.shutdown();
+    });
+
+    it('sse 配置缺 url 时抛 Invalid server config for SSE connection', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'sse', enabled: true } as unknown as ServerConfig,
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      const server = manager.getAllServers().get('s1');
+      expect(server?.status).toBe(ServerStatus.ERROR);
+      expect(server?.lastError?.message).toBe('Invalid server config for SSE connection');
+      await manager.shutdown();
+    });
+
+    it('streaming 配置缺 url 时抛 Invalid server config for streaming connection', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'streaming', enabled: true } as unknown as ServerConfig,
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+
+      await manager.initialize();
+
+      const server = manager.getAllServers().get('s1');
+      expect(server?.status).toBe(ServerStatus.ERROR);
+      expect(server?.lastError?.message).toBe('Invalid server config for streaming connection');
+      await manager.shutdown();
+    });
+  });
+
+  describe('变异测试第二轮：发现工具与执行路径日志', () => {
+    it('发现工具成功/失败时 logToolDiscovery 与 logger.error 精确记录', async () => {
+      // 成功路径：2 个工具
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({
+        tools: [
+          { name: 'tool1', inputSchema: {} },
+          { name: 'tool2', inputSchema: {} },
+        ],
+      });
+      await manager.initialize();
+
+      expect(vi.mocked(logger.logToolDiscovery)).toHaveBeenCalledWith('s1', 2);
+      await manager.shutdown();
+
+      // 失败路径：logger.error 精确入参
+      const failManager = new ServerManager({
+        s2: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockRejectedValue(new Error('discovery crash'));
+      await failManager.initialize();
+
+      expect(failManager.getServerStatus('s2')).toBe(ServerStatus.CONNECTED);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to discover tools for server',
+        expect.any(Error),
+        { serverId: 's2' },
+      );
+      await failManager.shutdown();
+    });
+
+    it('executeToolOnServer 成功路径 debug 日志精确记录', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+
+      mockClient.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+      await manager.executeToolOnServer('s1', 't1', { a: 1 });
+
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Executing tool on server', {
+        serverId: 's1',
+        toolName: 't1',
+        args: { a: 1 },
+      });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool execution completed', {
+        serverId: 's1',
+        toolName: 't1',
+        executionTime: expect.any(Number),
+      });
+      await manager.shutdown();
+    });
+
+    it('executeToolOnServer 失败路径 logger.error 精确记录', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+
+      mockClient.callTool.mockRejectedValue(new Error('exec boom'));
+      await expect(manager.executeToolOnServer('s1', 't1', {})).rejects.toThrow('exec boom');
+
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool execution failed',
+        expect.any(Error),
+        { serverId: 's1', toolName: 't1' },
+      );
+      await manager.shutdown();
+    });
+
+    it('executeToolOnServer 执行耗时精确等于 callTool 耗时', async () => {
+      const tracker = vi.fn();
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      manager.setMessageTracker(tracker);
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      tracker.mockClear();
+
+      vi.useFakeTimers();
+      try {
+        mockClient.callTool.mockImplementation(async () => {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 100);
+          });
+          return { content: [] };
+        });
+
+        const execPromise = manager.executeToolOnServer('s1', 't1', { a: 1 });
+        await vi.advanceTimersByTimeAsync(100);
+        await execPromise;
+
+        expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'callTool', {
+          content: [],
+          executionTime: 100,
+        });
+      } finally {
+        mockClient.callTool.mockReset();
+        vi.useRealTimers();
+      }
+      await manager.shutdown();
+    });
+  });
+
+  describe('变异测试第二轮：executeToolOnServerWithContext 精确断言', () => {
+    async function initManager() {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      return manager;
+    }
+
+    it('debug 日志精确记录重试上下文存在性（hasInputResponses/hasRequestState）', async () => {
+      const manager = await initManager();
+      mockClient.callTool.mockResolvedValue({ content: [] });
+
+      // 两者皆有
+      await manager.executeToolOnServerWithContext(
+        's1',
+        't1',
+        { a: 1 },
+        {
+          inputResponses: { confirm: true },
+          requestState: 'opaque',
+        },
+      );
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Executing tool on server (with retry context)',
+        {
+          serverId: 's1',
+          toolName: 't1',
+          args: { a: 1 },
+          hasInputResponses: true,
+          hasRequestState: true,
+        },
+      );
+
+      // 两者皆无
+      await manager.executeToolOnServerWithContext('s1', 't2', {}, {});
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Executing tool on server (with retry context)',
+        {
+          serverId: 's1',
+          toolName: 't2',
+          args: {},
+          hasInputResponses: false,
+          hasRequestState: false,
+        },
+      );
+      await manager.shutdown();
+    });
+
+    it('messageTracker 请求对象在无重试字段时严格不含相关键（toStrictEqual）', async () => {
+      const manager = await initManager();
+      const tracker = vi.fn();
+      manager.setMessageTracker(tracker);
+      mockClient.callTool.mockResolvedValue({ content: [] });
+
+      await manager.executeToolOnServerWithContext('s1', 't1', {}, {});
+
+      expect(tracker).toHaveBeenNthCalledWith(1, 's1', 'request', 'callTool', {
+        name: 't1',
+        arguments: {},
+      });
+      // toStrictEqual：多出的 undefined 值键（inputResponses/requestState）也会判不等
+      expect(tracker.mock.calls[0]?.[3]).toStrictEqual({ name: 't1', arguments: {} });
+      await manager.shutdown();
+    });
+
+    it('messageTracker 请求对象仅携带 requestState 键', async () => {
+      const manager = await initManager();
+      const tracker = vi.fn();
+      manager.setMessageTracker(tracker);
+      mockClient.callTool.mockResolvedValue({ content: [] });
+
+      await manager.executeToolOnServerWithContext('s1', 't1', {}, { requestState: 'opaque' });
+
+      expect(tracker).toHaveBeenNthCalledWith(1, 's1', 'request', 'callTool', {
+        name: 't1',
+        arguments: {},
+        requestState: 'opaque',
+      });
+      expect(tracker.mock.calls[0]?.[3]).toStrictEqual({
+        name: 't1',
+        arguments: {},
+        requestState: 'opaque',
+      });
+      await manager.shutdown();
+    });
+
+    it('era 为 undefined 时按 modern 翻译（requestState 仍透传到上游）', async () => {
+      const manager = await initManager();
+      const server = manager.getAllServers().get('s1');
+      if (server) {
+        delete server.era;
+      }
+      mockClient.callTool.mockResolvedValue({ content: [] });
+
+      await manager.executeToolOnServerWithContext('s1', 't1', {}, { requestState: 'opaque' });
+
+      expect(mockClient.callTool).toHaveBeenCalledWith(
+        { name: 't1', arguments: {}, requestState: 'opaque' },
+        { allowInputRequired: true },
+      );
+      await manager.shutdown();
+    });
+
+    it('成功路径 tracker response 与完成 debug 日志精确记录', async () => {
+      const manager = await initManager();
+      const tracker = vi.fn();
+      manager.setMessageTracker(tracker);
+      const mockResult = { content: [{ type: 'text', text: 'ok' }] };
+      mockClient.callTool.mockResolvedValue(mockResult);
+
+      await manager.executeToolOnServerWithContext('s1', 't1', { a: 1 }, {});
+
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'callTool', {
+        ...mockResult,
+        executionTime: expect.any(Number),
+      });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool execution (with retry context) completed',
+        { serverId: 's1', toolName: 't1', executionTime: expect.any(Number) },
+      );
+      await manager.shutdown();
+    });
+
+    it('失败路径 logger.error 与 tracker isError response 精确记录', async () => {
+      const manager = await initManager();
+      const tracker = vi.fn();
+      manager.setMessageTracker(tracker);
+      mockClient.callTool.mockRejectedValue(new Error('ctx boom'));
+
+      await expect(manager.executeToolOnServerWithContext('s1', 't1', {}, {})).rejects.toThrow(
+        'ctx boom',
+      );
+
+      expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'callTool', {
+        error: 'ctx boom',
+        isError: true,
+      });
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Tool execution (with retry context) failed',
+        expect.any(Error),
+        { serverId: 's1', toolName: 't1' },
+      );
+      await manager.shutdown();
+    });
+
+    it('执行耗时精确等于 callTool 耗时（with retry context）', async () => {
+      const manager = await initManager();
+      const tracker = vi.fn();
+      manager.setMessageTracker(tracker);
+      tracker.mockClear();
+
+      vi.useFakeTimers();
+      try {
+        mockClient.callTool.mockImplementation(async () => {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 100);
+          });
+          return { content: [] };
+        });
+
+        const execPromise = manager.executeToolOnServerWithContext('s1', 't1', {}, {});
+        await vi.advanceTimersByTimeAsync(100);
+        await execPromise;
+
+        expect(tracker).toHaveBeenNthCalledWith(2, 's1', 'response', 'callTool', {
+          content: [],
+          executionTime: 100,
+        });
+      } finally {
+        mockClient.callTool.mockReset();
+        vi.useRealTimers();
+      }
+      await manager.shutdown();
+    });
+  });
+
+  describe('变异测试第二轮：refetch 与 shutdown 精确断言', () => {
+    it('refetch 无 changeDetector 时正常推进缓存并记录 logToolDiscovery', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools
+        .mockResolvedValueOnce({ tools: [{ name: 't1', inputSchema: {} }] })
+        .mockResolvedValueOnce({
+          tools: [
+            { name: 't1', description: 'd1', inputSchema: {} },
+            { name: 't2', description: 'd2', inputSchema: {} },
+          ],
+        });
+      await manager.initialize();
+
+      const tools = await manager.refetchServerTools('s1');
+
+      expect(tools).toHaveLength(2);
+      expect(manager.getAllServers().get('s1')?.tools).toHaveLength(2);
+      expect(vi.mocked(logger.logToolDiscovery)).toHaveBeenCalledWith('s1', 2);
+      // 无 changeDetector 时不因 saveSnapshot 报错走 catch 分支（缓存已先行更新，
+      // 唯一可观测差异是误报的“保留旧缓存”warn）
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+        'refetchServerTools 失败（保留旧缓存）',
+        expect.anything(),
+      );
+      await manager.shutdown();
+    });
+
+    it('shutdown 首尾日志精确记录', async () => {
+      const emptyManager = new ServerManager({});
+      await emptyManager.shutdown();
+
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Shutting down ServerManager');
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('ServerManager shutdown completed');
+    });
+
+    it('close 成功后记录 disconnected 日志并清理超时定时器', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockResolvedValue(undefined);
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+      try {
+        await manager.shutdown();
+
+        // 5s 超时保护定时器被真实调度，close 胜出后必须被清理
+        const timeoutCallIdx = setTimeoutSpy.mock.calls.findIndex((c) => c[1] === 5000);
+        expect(timeoutCallIdx).toBeGreaterThanOrEqual(0);
+        expect(clearTimeoutSpy).toHaveBeenCalledWith(
+          setTimeoutSpy.mock.results[timeoutCallIdx]?.value,
+        );
+      } finally {
+        setTimeoutSpy.mockRestore();
+        clearTimeoutSpy.mockRestore();
+      }
+      expect(vi.mocked(logger.logServerConnection)).toHaveBeenCalledWith('s1', 'disconnected');
+    });
+
+    it('关闭超时时先记录尝试强制终止警告再 SIGKILL', async () => {
+      const kill = vi.fn();
+      (mockClient as Record<string, unknown>).transport = { process: { kill, pid: 555 } };
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockRejectedValue(new Error('close timeout exceeded'));
+
+      await manager.shutdown();
+
+      expect(kill).toHaveBeenCalledWith('SIGKILL');
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('服务器关闭超时，尝试强制终止进程', {
+        serverId: 's1',
+      });
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('已强制杀死服务器进程', {
+        serverId: 's1',
+        pid: 555,
+      });
+    });
+
+    it('定时器对象无 unref 方法时（非 Node 运行时）也能正常关闭', async () => {
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+
+      // 在冻结全局 setTimeout 之前捕获真实引用：close 用真实定时器稍后 resolve，
+      // 保证 Promise.race 的胜者是 close，而非（mutant 下同步 reject 的）超时 promise
+      const realSetTimeout = globalThis.setTimeout;
+      mockClient.close.mockImplementation(async () => {
+        await new Promise((resolve) => {
+          realSetTimeout(resolve, 10);
+        });
+      });
+
+      // 模拟 setTimeout 返回的对象没有 unref 方法（浏览器等环境）
+      const bareTimer = {} as unknown as NodeJS.Timeout;
+      vi.stubGlobal(
+        'setTimeout',
+        vi.fn(() => bareTimer),
+      );
+      vi.stubGlobal('clearTimeout', vi.fn());
+      try {
+        await manager.shutdown();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(vi.mocked(logger.logServerConnection)).toHaveBeenCalledWith('s1', 'disconnected');
+    });
+
+    it('client 完全无 transport 属性时记录无法终止警告', async () => {
+      const kill = vi.fn();
+      (mockClient as Record<string, unknown>).transport = undefined;
+      const manager = new ServerManager({
+        s1: { type: 'stdio', command: 'node', args: [], enabled: true },
+      });
+      mockClient.connect.mockResolvedValue(undefined);
+      mockClient.listTools.mockResolvedValue({ tools: [] });
+      await manager.initialize();
+      mockClient.close.mockRejectedValue(new Error('close timeout exceeded'));
+
+      await manager.shutdown();
+
+      expect(kill).not.toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('无法访问服务器进程，可能已经终止', {
+        serverId: 's1',
+      });
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ServerStatus } from '../types/mcp-knot.js';
+import { logger } from '../utils/logger.js';
 import { GroupManager } from './group_manager.js';
 
 import type { ServerConnection, ServerManager } from '../types/mcp-knot.js';
@@ -149,6 +150,20 @@ describe('GroupManager', () => {
       expect(groups.has('default')).toBe(true);
       expect(groups.has('server1-only')).toBe(true);
       expect(groups.has('filtered-tools')).toBe(true);
+      // 初始化阶段日志：数量统计与逐组加载成功日志
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Initializing GroupManager', {
+        groupCount: 5,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('GroupManager initialization completed', {
+        totalGroups: 5,
+        loadedGroups: 5,
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Group loaded successfully', {
+        groupName: 'filtered-tools',
+        groupId: 'filtered-tools',
+        serverCount: 2,
+        toolCount: 2,
+      });
     });
 
     it('should create fallback groups for invalid configuration structure', async () => {
@@ -171,6 +186,20 @@ describe('GroupManager', () => {
       expect(groups.has('invalid-group')).toBe(true);
       const group = groups.get('invalid-group');
       expect(group?.description).toContain('Fallback group created due to configuration errors');
+      // fallback 组使用兜底 id/name，且 servers/tools 归零（安全起点）
+      expect(group?.id).toBe('fallback-invalid-group');
+      expect(group?.name).toBe('Fallback invalid-group');
+      expect(group?.servers).toEqual([]);
+      expect(group?.tools).toEqual([]);
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Attempting to create fallback group', {
+        groupName: 'invalid-group',
+        originalError: expect.stringContaining('id must be a non-empty string'),
+      });
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Fallback group created', {
+        groupName: 'invalid-group',
+        fallbackGroupId: 'fallback-invalid-group',
+        originalError: expect.stringContaining('id must be a non-empty string'),
+      });
     });
 
     it('should handle groups with invalid server references', async () => {
@@ -182,6 +211,17 @@ describe('GroupManager', () => {
       // Group should be loaded but with only valid servers
       expect(invalidGroup).toBeDefined();
       expect(invalidGroup?.servers).toEqual(['server1']); // Only valid server
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Group references non-existent servers', {
+        groupName: 'invalid-server',
+        invalidServers: ['non-existent-server'],
+        validServers: ['server1'],
+      });
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Group loaded with partial server list', {
+        groupName: 'invalid-server',
+        totalServers: 2,
+        validServers: 1,
+        invalidServers: 1,
+      });
     });
 
     it('should create fallback groups for recoverable errors', async () => {
@@ -221,6 +261,33 @@ describe('GroupManager', () => {
       expect(groups.has('no-servers')).toBe(true);
       const group = groups.get('no-servers');
       expect(group?.description).toContain('Fallback group created due to configuration errors');
+      // 无有效 server 引用时记录精确错误（含无效列表）
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Group no-servers has no valid server references',
+        expect.any(Error),
+        { groupName: 'no-servers', invalidServers: ['non-existent1', 'non-existent2'] },
+      );
+    });
+
+    it('空字符串 id/name/tool 视为非法并落入具体校验错误', async () => {
+      const emptyFieldsConfig = {
+        'empty-id': { id: '', name: 'n', servers: ['server1'], tools: [] },
+        'empty-name': { id: 'empty-name', name: '', servers: ['server1'], tools: [] },
+        'empty-tool': { id: 'empty-tool', name: 'n', servers: ['server1'], tools: [''] },
+      };
+
+      const emptyManager = new GroupManager(
+        emptyFieldsConfig as unknown as GroupConfig,
+        mockServerManager,
+      );
+      await emptyManager.initialize();
+
+      const groups = emptyManager.getAllGroups();
+      expect(groups.get('empty-id')?.description).toContain('id must be a non-empty string');
+      expect(groups.get('empty-name')?.description).toContain('name must be a non-empty string');
+      expect(groups.get('empty-tool')?.description).toContain(
+        'tools[0] must be a non-empty string',
+      );
     });
 
     it('超过最大组数量（100）时第 101 个组走 fallback', async () => {
@@ -273,6 +340,10 @@ describe('GroupManager', () => {
 
       expect(manager.getAllGroups().has('invalid-only')).toBe(false);
       expect(emptyServerManager.getAllServers).toHaveBeenCalled();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Cannot create fallback group: no servers available',
+        { groupName: 'invalid-only' },
+      );
     });
 
     it('createFallbackGroup 内部异常被吞掉（不阻断 initialize）', async () => {
@@ -296,6 +367,32 @@ describe('GroupManager', () => {
       const manager = new GroupManager(cfg as unknown as GroupConfig, failingManager);
       await expect(manager.initialize()).resolves.toBeUndefined();
       expect(manager.getAllGroups().has('broken')).toBe(false);
+    });
+
+    it('createFallbackGroup 内 getAllServers 抛错时记录失败日志且组不加载', async () => {
+      const throwingManager = {
+        ...mockServerManager,
+        getAllServers: vi.fn().mockImplementation(() => {
+          throw new Error('server manager exploded');
+        }),
+      };
+      const cfg = {
+        broken: {
+          servers: ['server1'],
+          tools: [],
+        } as Record<string, unknown>,
+      };
+      const manager = new GroupManager(cfg as unknown as GroupConfig, throwingManager);
+      await expect(manager.initialize()).resolves.toBeUndefined();
+      expect(manager.getAllGroups().has('broken')).toBe(false);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to create fallback group',
+        expect.any(Error),
+        {
+          groupName: 'broken',
+          originalError: expect.stringContaining('id must be a non-empty string'),
+        },
+      );
     });
   });
 
@@ -373,6 +470,11 @@ describe('GroupManager', () => {
       await expect(groupManager.getGroupTools('non-existent')).rejects.toThrow(
         'Group non-existent not found',
       );
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Attempted to get tools for non-existent group',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'non-existent' }),
+      );
     });
 
     it('should return empty array for group with disconnected servers', async () => {
@@ -398,6 +500,32 @@ describe('GroupManager', () => {
       const tools = await groupManager.getGroupTools('default');
       // Should still return tools from working server
       expect(tools.length).toBeGreaterThan(0);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Failed to get tools from server', {
+        serverId: 'server1',
+        groupId: 'default',
+        error: 'Server error',
+      });
+    });
+
+    it('白名单中的部分工具不可用时仅返回可用工具并警告缺失项', async () => {
+      const partialToolsConfig = {
+        'partial-tools': {
+          id: 'partial-tools',
+          name: 'Partial Tools',
+          servers: ['server1'],
+          tools: ['tool1', 'missing-tool'],
+        },
+      };
+      const partialManager = new GroupManager(partialToolsConfig, mockServerManager);
+      await partialManager.initialize();
+
+      const tools = await partialManager.getGroupTools('partial-tools');
+
+      expect(tools.map((t) => t.name)).toEqual(['tool1']);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Some tools specified in group are not available',
+        { groupId: 'partial-tools', missingTools: ['missing-tool'] },
+      );
     });
   });
 
@@ -418,14 +546,26 @@ describe('GroupManager', () => {
       expect(groupManager.validateToolAccess('filtered-tools', 'tool3')).toBe(true);
       expect(groupManager.validateToolAccess('filtered-tools', 'tool2')).toBe(false);
       expect(groupManager.validateToolAccess('filtered-tools', 'tool4')).toBe(false);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool access denied: not in group tool allowlist',
+        { groupId: 'filtered-tools', toolName: 'tool2', allowedTools: ['tool1', 'tool3'] },
+      );
     });
 
     it('should deny access for non-existent group', () => {
       expect(groupManager.validateToolAccess('non-existent', 'tool1')).toBe(false);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith('Tool access denied: group not found', {
+        groupId: 'non-existent',
+        toolName: 'tool1',
+      });
     });
 
     it('should deny access for group with no available servers', () => {
       expect(groupManager.validateToolAccess('disconnected-server', 'tool1')).toBe(false);
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Tool access denied: no available servers in group',
+        { groupId: 'disconnected-server', toolName: 'tool1' },
+      );
     });
   });
 
@@ -449,6 +589,10 @@ describe('GroupManager', () => {
     it('should return null for non-existent group', async () => {
       const result = await groupManager.findToolInGroup('non-existent', 'tool1');
       expect(result).toBeNull();
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Attempted to find tool in non-existent group',
+        { groupId: 'non-existent', toolName: 'tool1', availableGroups: expect.any(Array) },
+      );
     });
 
     it('should return null for non-existent tool', async () => {
@@ -467,6 +611,11 @@ describe('GroupManager', () => {
       const result = await groupManager.findToolInGroup('default', 'tool3');
       expect(result).not.toBeNull();
       expect(result?.serverId).toBe('server2');
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Failed to search for tool in server', {
+        serverId: 'server1',
+        toolName: 'tool3',
+        error: 'server1 down',
+      });
     });
   });
 
@@ -491,11 +640,20 @@ describe('GroupManager', () => {
       await expect(groupManager.getGroupToolsByServer('non-existent')).rejects.toThrow(
         'Group non-existent not found',
       );
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Attempted to get tools by server for non-existent group',
+        expect.any(Error),
+        expect.objectContaining({ groupId: 'non-existent' }),
+      );
     });
 
     it('无可用 server 时返回空 Map', async () => {
       const byServer = await groupManager.getGroupToolsByServer('disconnected-server');
       expect(byServer.size).toBe(0);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('No available servers for group', {
+        groupId: 'disconnected-server',
+        configuredServers: ['server3'],
+      });
     });
 
     it('单个 server 检索失败时该 server 记空数组，其余正常', async () => {
@@ -510,6 +668,14 @@ describe('GroupManager', () => {
       const byServer = await groupManager.getGroupToolsByServer('default');
       expect(byServer.get('server1')).toEqual([]);
       expect(byServer.get('server2')?.map((t) => t.name)).toEqual(['tool3']);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Failed to get tools from server for group breakdown',
+        { serverId: 'server1', groupId: 'default', error: 'server1 down' },
+      );
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        'Retrieved tools from server for group',
+        { serverId: 'server2', groupId: 'default', toolCount: 1 },
+      );
     });
   });
 
@@ -531,6 +697,10 @@ describe('GroupManager', () => {
     it('should return empty array for non-existent group', () => {
       const servers = groupManager.getGroupServers('non-existent');
       expect(servers).toEqual([]);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Attempted to get servers for non-existent group',
+        { groupId: 'non-existent', availableGroups: expect.any(Array) },
+      );
     });
   });
 
@@ -548,6 +718,14 @@ describe('GroupManager', () => {
       const servers = groupManager.getAvailableGroupServers('disconnected-server');
       expect(servers).toEqual([]); // server3 is disconnected
     });
+
+    it('不存在的组返回空数组并告警', () => {
+      expect(groupManager.getAvailableGroupServers('non-existent')).toEqual([]);
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Attempted to get available servers for non-existent group',
+        { groupId: 'non-existent', availableGroups: expect.any(Array) },
+      );
+    });
   });
 
   describe('getGroupStats', () => {
@@ -557,23 +735,33 @@ describe('GroupManager', () => {
 
     it('should return correct stats for group', () => {
       const stats = groupManager.getGroupStats('default');
-      expect(stats.totalServers).toBe(2);
-      expect(stats.availableServers).toBe(2);
-      expect(stats.configuredTools).toBe(0); // No tool restrictions
+      expect(stats).toStrictEqual({
+        totalServers: 2,
+        availableServers: 2,
+        configuredTools: 0, // No tool restrictions
+      });
     });
 
     it('should return correct stats for filtered group', () => {
       const stats = groupManager.getGroupStats('filtered-tools');
-      expect(stats.totalServers).toBe(2);
-      expect(stats.availableServers).toBe(2);
-      expect(stats.configuredTools).toBe(2); // 2 specific tools
+      expect(stats).toStrictEqual({
+        totalServers: 2,
+        availableServers: 2,
+        configuredTools: 2, // 2 specific tools
+      });
     });
 
     it('should return zero stats for non-existent group', () => {
       const stats = groupManager.getGroupStats('non-existent');
-      expect(stats.totalServers).toBe(0);
-      expect(stats.availableServers).toBe(0);
-      expect(stats.configuredTools).toBe(0);
+      expect(stats).toStrictEqual({
+        totalServers: 0,
+        availableServers: 0,
+        configuredTools: 0,
+      });
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Attempted to get stats for non-existent group',
+        { groupId: 'non-existent', availableGroups: expect.any(Array) },
+      );
     });
   });
 
@@ -586,13 +774,20 @@ describe('GroupManager', () => {
       const health = await groupManager.validateGroupHealth('default');
       expect(health.isHealthy).toBe(true);
       expect(health.issues).toHaveLength(0);
-      expect(health.stats.availableServers).toBe(2);
+      expect(health.warnings).toEqual([]); // 全部可用时不产生 warning
+      expect(health.stats).toStrictEqual({
+        totalServers: 2,
+        availableServers: 2,
+        configuredTools: 0,
+        actualTools: 4,
+      });
     });
 
     it('should report unhealthy group with no available servers', async () => {
       const health = await groupManager.validateGroupHealth('disconnected-server');
       expect(health.isHealthy).toBe(false);
-      expect(health.issues).toContain('No servers are currently available');
+      expect(health.issues).toEqual(['No servers are currently available']);
+      expect(health.warnings).toEqual([]);
     });
 
     it('should report warnings for partially available servers', async () => {
@@ -611,7 +806,90 @@ describe('GroupManager', () => {
 
       const health = await mixedManager.validateGroupHealth('mixed-servers');
       expect(health.isHealthy).toBe(true); // Still healthy with some servers
-      expect(health.warnings.length).toBeGreaterThan(0);
+      expect(health.warnings).toEqual(['Only 1 of 2 servers are available']);
+    });
+
+    it('配置了工具白名单且全部可用时不产生 issue/warning', async () => {
+      const health = await groupManager.validateGroupHealth('filtered-tools');
+      expect(health.isHealthy).toBe(true);
+      expect(health.issues).toEqual([]);
+      expect(health.warnings).toEqual([]);
+      expect(health.stats).toStrictEqual({
+        totalServers: 2,
+        availableServers: 2,
+        configuredTools: 2,
+        actualTools: 2,
+      });
+    });
+
+    it('配置了工具但实际一个都不可用时产生 issue', async () => {
+      const cfg = {
+        'tool-starved': {
+          id: 'tool-starved',
+          name: 'Tool Starved',
+          servers: ['server1'],
+          tools: ['tool1'],
+        },
+      };
+      const manager = new GroupManager(cfg, mockServerManager);
+      await manager.initialize();
+      // server1 已连接但工具列表为空 → 配置的工具全部不可用
+      vi.mocked(mockServerManager.getServerTools).mockResolvedValue([]);
+
+      const health = await manager.validateGroupHealth('tool-starved');
+      expect(health.isHealthy).toBe(false);
+      expect(health.issues).toEqual(['No configured tools are available']);
+    });
+
+    it('配置的工具部分可用时产生精确 warning', async () => {
+      const cfg = {
+        'tool-partial': {
+          id: 'tool-partial',
+          name: 'Tool Partial',
+          servers: ['server1'],
+          tools: ['tool1', 'tool2'],
+        },
+      };
+      const manager = new GroupManager(cfg, mockServerManager);
+      await manager.initialize();
+      // server1 仅返回 tool1 → 2 个配置工具中 1 个可用
+      vi.mocked(mockServerManager.getServerTools).mockImplementation((serverId: string) => {
+        if (serverId === 'server1') {
+          return Promise.resolve([
+            { name: 'tool1', description: '', inputSchema: {}, serverId: 'server1' },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const health = await manager.validateGroupHealth('tool-partial');
+      expect(health.isHealthy).toBe(true);
+      expect(health.warnings).toEqual(['Only 1 of 2 configured tools are available']);
+    });
+
+    it('工具解析抛错时记为 issue', async () => {
+      const cfg = {
+        'resolve-broken': {
+          id: 'resolve-broken',
+          name: 'Resolve Broken',
+          servers: ['server1'],
+          tools: [],
+        },
+      };
+      const manager = new GroupManager(cfg, mockServerManager);
+      await manager.initialize();
+      // 第 1 次调用（validateGroupHealth 的 getAvailableServersForGroup）成功，
+      // 第 2 次（resolveGroupTools 内）抛错 → catch 记 issue
+      let calls = 0;
+      vi.mocked(mockServerManager.getAllServers).mockImplementation(() => {
+        calls++;
+        if (calls <= 1) return new Map([['server1', { status: ServerStatus.CONNECTED }]]);
+        throw new Error('server map exploded');
+      });
+
+      const health = await manager.validateGroupHealth('resolve-broken');
+      expect(health.isHealthy).toBe(false);
+      expect(health.issues).toEqual(['Failed to resolve group tools: server map exploded']);
     });
 
     it('should handle non-existent group', async () => {
@@ -782,6 +1060,29 @@ describe('GroupManager', () => {
 
       const tools = await groupManager.getGroupTools('default');
       expect(tools).toEqual([]); // Should return empty array as fallback
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Failed to get tools from server', {
+        serverId: 'server1',
+        groupId: 'default',
+        error: 'Server manager error',
+      });
+    });
+
+    it('getGroupTools 解析过程抛错时降级为空数组并记录错误', async () => {
+      // getAllServers 抛错 → resolveGroupTools 直接抛出 → getGroupTools catch 兜底
+      vi.mocked(mockServerManager.getAllServers).mockImplementation(() => {
+        throw new Error('resolve exploded');
+      });
+
+      const tools = await groupManager.getGroupTools('default');
+      expect(tools).toEqual([]);
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'Failed to resolve tools for group',
+        expect.any(Error),
+        { groupId: 'default', groupName: 'Default Group' },
+      );
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith('Returning empty tool list as fallback', {
+        groupId: 'default',
+      });
     });
 
     it('should handle getAllGroupsHealth errors', async () => {
@@ -794,6 +1095,22 @@ describe('GroupManager', () => {
         expect(health).toHaveProperty('isHealthy');
         expect(health).toHaveProperty('issues');
         expect(health).toHaveProperty('warnings');
+      }
+    });
+
+    it('getAllGroupsHealth 单组健康检查抛错时该组记为不健康', async () => {
+      // 所有 server 检索都正常，但 getAllServers 在健康检查内部抛错 →
+      // validateGroupHealth 整体抛错 → getAllGroupsHealth catch 兜底
+      vi.mocked(mockServerManager.getAllServers).mockImplementation(() => {
+        throw new Error('health store exploded');
+      });
+
+      const healthMap = await groupManager.getAllGroupsHealth();
+      expect(healthMap.size).toBeGreaterThan(0);
+      for (const health of healthMap.values()) {
+        expect(health.isHealthy).toBe(false);
+        expect(health.issues).toEqual(['Health check failed: health store exploded']);
+        expect(health.warnings).toEqual([]);
       }
     });
   });

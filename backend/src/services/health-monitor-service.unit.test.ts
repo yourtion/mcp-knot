@@ -254,6 +254,383 @@ describe('HealthMonitorService', () => {
     });
   });
 
+  describe('start/stop 日志与状态（补强）', () => {
+    it('全新实例 stop 不产生任何清理日志或错误', () => {
+      const { serverManager, groupManager } = createMockManagers([], []);
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      expect(() => monitor.stop()).not.toThrow();
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.info).not.toHaveBeenCalledWith('Health monitoring stopped', expect.anything());
+    });
+
+    it('start 记录监控启动与定时器注册日志', () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.markInitialized();
+      monitor.start();
+
+      expect(logger.info).toHaveBeenCalledWith('Starting service health monitoring', {
+        intervalMs: 30000,
+      });
+      expect(logger.debug).toHaveBeenCalledWith('Health monitoring timers registered', {
+        timerCount: 2,
+      });
+      monitor.stop();
+    });
+
+    it('重复 start 记录 debug 且不再注册定时器', () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.markInitialized();
+      monitor.start();
+      monitor.start();
+
+      expect(logger.debug).toHaveBeenCalledWith('Health monitoring already running');
+      monitor.stop();
+    });
+
+    it('禁用状态下 start 记录 debug 并跳过', () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.setEnabled(false);
+      monitor.start();
+
+      expect(logger.debug).toHaveBeenCalledWith('Health monitoring disabled, skipping start');
+    });
+
+    it('stop 记录精确的清理数量', () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.start();
+      monitor.stop();
+
+      expect(logger.info).toHaveBeenCalledWith('Health monitoring stopped', { clearedTimers: 2 });
+    });
+
+    it('start→stop→start→stop：每次清理 2 个且不产生清理错误', () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.start();
+      monitor.stop();
+      monitor.start();
+      monitor.stop();
+
+      expect(logger.error).not.toHaveBeenCalled();
+      const stoppedCalls = vi
+        .mocked(logger.info)
+        .mock.calls.filter(([msg]) => msg === 'Health monitoring stopped');
+      expect(stoppedCalls).toHaveLength(2);
+      expect(stoppedCalls[1]).toEqual(['Health monitoring stopped', { clearedTimers: 2 }]);
+    });
+
+    it('performCheck 抛错时 initial/interval 回调均记录错误且不产生未处理拒绝', async () => {
+      const { serverManager, groupManager } = createMockManagers([], []);
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      (monitor as unknown as { performCheck: () => Promise<void> }).performCheck = async () => {
+        throw new Error('check boom');
+      };
+      monitor.start();
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(logger.error).toHaveBeenCalledWith('Initial health check failed', expect.any(Error));
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(logger.error).toHaveBeenCalledWith('Health check failed', expect.any(Error));
+      monitor.stop();
+    });
+  });
+
+  describe('setEnabled（补强）', () => {
+    it('运行中重新 setEnabled(true) 不停止监控', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.markInitialized();
+      monitor.start();
+      await vi.advanceTimersByTimeAsync(0); // 初始检查
+
+      monitor.setEnabled(true);
+      expect(logger.info).toHaveBeenCalledWith('Health monitoring setting changed', {
+        enabled: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(onHealthCheck).toHaveBeenCalledTimes(2); // 仍在运行
+      monitor.stop();
+    });
+
+    it('运行中重复 setEnabled(true) 不重启监控（Starting 日志仅一次）', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.markInitialized();
+      monitor.start();
+      await vi.advanceTimersByTimeAsync(0); // 初始检查
+
+      monitor.setEnabled(true);
+      monitor.setEnabled(true);
+      const startingCalls = vi
+        .mocked(logger.info)
+        .mock.calls.filter(([msg]) => msg === 'Starting service health monitoring');
+      expect(startingCalls).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(onHealthCheck).toHaveBeenCalledTimes(2); // 监控持续运行
+      monitor.stop();
+    });
+
+    it('运行中 setEnabled(false) 记录设置变更日志', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.markInitialized();
+      monitor.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      monitor.setEnabled(false);
+      expect(logger.info).toHaveBeenCalledWith('Health monitoring setting changed', {
+        enabled: false,
+      });
+    });
+  });
+
+  describe('getLifecycleStatus（补强）', () => {
+    it('返回完整状态对象（toStrictEqual）', async () => {
+      const { serverManager, groupManager } = createMockManagers([], []);
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+      monitor.markInitialized();
+      await monitor.triggerCheck();
+
+      expect(monitor.getLifecycleStatus()).toStrictEqual({
+        isInitialized: true,
+        healthMonitoringEnabled: true,
+        uptime: 0,
+        lastHealthCheck: '2026-01-15T08:00:00.000Z',
+        initializationTime: '2026-01-15T08:00:00.000Z',
+      });
+    });
+  });
+
+  describe('健康报告精确断言（logger payload）', () => {
+    it('全部健康：debug 记录精确的 healthScore/connectedServers/totalServers', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.CONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.debug).toHaveBeenCalledWith('Performing service health check', {
+        timestamp: '2026-01-15T08:00:00.000Z',
+      });
+      expect(logger.debug).toHaveBeenCalledWith('Service health check passed', {
+        healthScore: 100,
+        connectedServers: 1,
+        totalServers: 1,
+      });
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('零服务器：critical 记录精确的 criticalIssues 与 healthScore', async () => {
+      const { serverManager, groupManager } = createMockManagers([], []);
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Critical health issues detected',
+        expect.any(Error),
+        {
+          criticalIssues: ['No servers are connected'],
+          warnings: [],
+          healthScore: 70,
+        },
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('连接率低于一半且有 error 服务器：两条 warning、healthScore 80、触发断连处理', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [
+          { id: 's1', status: ServerStatus.CONNECTED },
+          { id: 's2', status: ServerStatus.DISCONNECTED },
+          { id: 's3', status: ServerStatus.ERROR },
+        ],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.warn).toHaveBeenCalledWith('Service health warnings detected', {
+        warnings: ['Only 1 of 3 servers are connected', '1 servers are in error state'],
+        healthScore: 80,
+      });
+      expect(logger.info).toHaveBeenCalledWith('Handling server disconnections', {
+        disconnectedServers: 1,
+        failedServers: 1,
+      });
+      expect(onHealthCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('恰好一半连接（1/2）：不产生 Only 警告但仍处理断连', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [
+          { id: 's1', status: ServerStatus.CONNECTED },
+          { id: 's2', status: ServerStatus.DISCONNECTED },
+        ],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith('Service health check passed', {
+        healthScore: 100,
+        connectedServers: 1,
+        totalServers: 2,
+      });
+      expect(logger.info).toHaveBeenCalledWith('Handling server disconnections', {
+        disconnectedServers: 1,
+        failedServers: 0,
+      });
+      expect(onHealthCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('三分之二连接（2/3）：不产生 Only 警告', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [
+          { id: 's1', status: ServerStatus.CONNECTED },
+          { id: 's2', status: ServerStatus.CONNECTED },
+          { id: 's3', status: ServerStatus.DISCONNECTED },
+        ],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith('Service health check passed', {
+        healthScore: 100,
+        connectedServers: 2,
+        totalServers: 3,
+      });
+    });
+
+    it('组内无已连接服务器：warning 精确内容、healthScore 90', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.CONNECTED }],
+        [{ id: 'g1', servers: ['missing'] }],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.warn).toHaveBeenCalledWith('Service health warnings detected', {
+        warnings: ["Group 'g1' has no connected servers"],
+        healthScore: 90,
+      });
+    });
+
+    it('健康组：不产生组警告', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.CONNECTED }],
+        [{ id: 'g1', servers: ['s1'] }],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await monitor.triggerCheck();
+
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('getGroupServers 抛错：warning 携带错误信息、healthScore 90', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.CONNECTED }],
+        [{ id: 'g1', servers: ['s1'] }],
+      );
+      vi.mocked(groupManager.getGroupServers).mockImplementation(() => {
+        throw new Error('group broken');
+      });
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await expect(monitor.triggerCheck()).resolves.toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledWith('Service health warnings detected', {
+        warnings: ["Group 'g1' health check failed: group broken"],
+        healthScore: 90,
+      });
+    });
+
+    it('generateReport 抛错：记录 Health check execution failed', async () => {
+      const serverManager = {
+        getAllServers: vi.fn().mockImplementation(() => {
+          throw new Error('server map broken');
+        }),
+      } as unknown as ServerManager;
+      const groupManager = {} as unknown as GroupManager;
+      const monitor = new HealthMonitorService(serverManager, groupManager, onHealthCheck);
+
+      await expect(monitor.triggerCheck()).resolves.toBeUndefined();
+      expect(logger.error).toHaveBeenCalledWith('Health check execution failed', expect.any(Error));
+    });
+
+    it('回调抛错：记录 Error in health check callback', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const failing = vi.fn().mockRejectedValue(new Error('cleanup failed'));
+      const monitor = new HealthMonitorService(serverManager, groupManager, failing);
+
+      await expect(monitor.triggerCheck()).resolves.toBeUndefined();
+      expect(failing).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith(
+        'Error in health check callback',
+        expect.any(Error),
+      );
+    });
+
+    it('未设置回调且有断连：不误报回调错误', async () => {
+      const { serverManager, groupManager } = createMockManagers(
+        [{ id: 's1', status: ServerStatus.DISCONNECTED }],
+        [],
+      );
+      const monitor = new HealthMonitorService(serverManager, groupManager, undefined);
+
+      await expect(monitor.triggerCheck()).resolves.toBeUndefined();
+      expect(logger.error).not.toHaveBeenCalledWith(
+        'Error in health check callback',
+        expect.anything(),
+      );
+    });
+  });
+
   describe('组健康统计（经 triggerCheck 间接验证）', () => {
     it('组内无已连接服务器时发出警告', async () => {
       const { serverManager, groupManager } = createMockManagers(

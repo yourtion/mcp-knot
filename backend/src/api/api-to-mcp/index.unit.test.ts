@@ -5,6 +5,24 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const hubState = vi.hoisted(() => ({
+  service: undefined as { reloadApiToolConfig: ReturnType<typeof vi.fn> } | undefined,
+}));
+
+vi.mock('../../services/service-registry.js', () => ({
+  getHubServiceSafe: () => hubState.service,
+  getHubService: () => hubState.service,
+}));
+
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock('../../utils/logger.js', () => ({ logger: loggerMock }));
+
 import { apiToMcpRoutes } from './index.js';
 
 import type { ApiToMcpWebService } from '../../services/api-to-mcp-web-service.js';
@@ -29,6 +47,11 @@ describe('API to MCP API Routes', () => {
       shutdown: vi.fn(),
     } as unknown as ApiToMcpWebService;
 
+    app.use('*', async (c, next) => {
+      c.set('requestId', 'a2m-request');
+      await next();
+    });
+
     // Set service in context for routes
     app.use('*', async (c, next) => {
       c.set('apiToMcpWebService', mockApiToMcpService);
@@ -40,6 +63,7 @@ describe('API to MCP API Routes', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    hubState.service = undefined;
   });
 
   describe('GET /api/api-to-mcp/configs', () => {
@@ -75,6 +99,7 @@ describe('API to MCP API Routes', () => {
 
       expect(body.success).toBe(true);
       expect(body.data).toEqual(mockConfigs);
+      expect(loggerMock.info).toHaveBeenCalledWith('获取API配置列表');
     });
 
     it('应该处理获取配置列表错误', async () => {
@@ -93,6 +118,7 @@ describe('API to MCP API Routes', () => {
 
       expect(body.success).toBe(false);
       expect(body.error.message).toBe('获取失败');
+      expect(loggerMock.error).toHaveBeenCalledWith('获取API配置列表失败', error);
     });
   });
 
@@ -152,6 +178,83 @@ describe('API to MCP API Routes', () => {
       expect(body.data.id).toBe('new-config');
       expect(body.data.message).toBe('API配置创建成功');
       expect(body.data.config).toEqual(validConfig.config);
+      expect(loggerMock.info).toHaveBeenCalledWith('创建新的API配置', {
+        context: { config: validConfig.config },
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('API配置创建成功', {
+        context: { configId: 'new-config' },
+      });
+    });
+
+    it('Hub 未初始化时创建成功并跳过同步', async () => {
+      hubState.service = undefined;
+      vi.mocked(mockApiToMcpService.createConfig).mockResolvedValue({
+        success: true,
+        message: 'API配置创建成功',
+        config: validConfig.config,
+      });
+
+      const response = await app.request('/api/api-to-mcp/configs', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(201);
+      expect(loggerMock.debug).toHaveBeenCalledWith('Hub服务尚未初始化，跳过API工具同步');
+    });
+
+    it('Hub 已初始化时创建后同步 API 工具配置', async () => {
+      const reloadApiToolConfig = vi.fn().mockResolvedValue(undefined);
+      hubState.service = { reloadApiToolConfig };
+      vi.mocked(mockApiToMcpService.createConfig).mockResolvedValue({
+        success: true,
+        message: 'API配置创建成功',
+        config: validConfig.config,
+      });
+
+      const response = await app.request('/api/api-to-mcp/configs', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(201);
+      expect(reloadApiToolConfig).toHaveBeenCalledOnce();
+      expect(loggerMock.info).toHaveBeenCalledWith('Hub服务API工具配置同步完成');
+    });
+
+    it('Hub 同步失败不影响创建结果', async () => {
+      const reloadApiToolConfig = vi.fn().mockRejectedValue(new Error('同步失败'));
+      hubState.service = { reloadApiToolConfig };
+      vi.mocked(mockApiToMcpService.createConfig).mockResolvedValue({
+        success: true,
+        message: 'API配置创建成功',
+        config: validConfig.config,
+      });
+
+      const response = await app.request('/api/api-to-mcp/configs', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(201);
+      expect(loggerMock.warn).toHaveBeenCalledWith(
+        'Hub服务API工具配置同步失败，不影响配置管理操作',
+        {
+          error: '同步失败',
+        },
+      );
     });
 
     it('应该处理创建配置错误', async () => {
@@ -174,9 +277,11 @@ describe('API to MCP API Routes', () => {
       expect(response.status).toBe(400);
       const body = await response.json();
 
-      expect(body.success).toBe(false);
-      expect(body.error.code).toBe('CREATE_API_CONFIG_FAILED');
-      expect(body.error.message).toBe('配置ID已存在');
+      expect(body).toEqual({
+        success: false,
+        error: { code: 'CREATE_API_CONFIG_FAILED', message: '配置ID已存在' },
+        requestId: 'a2m-request',
+      });
     });
 
     it('应该验证请求数据格式', async () => {
@@ -191,9 +296,12 @@ describe('API to MCP API Routes', () => {
 
       expect(response.status).toBe(400);
       const body = await response.json();
-      expect(body.success).toBe(false);
-      expect(body.error.code).toBe('INVALID_JSON');
-      expect(body.error.message).toBe('请求体包含无效的JSON格式');
+      expect(body).toEqual({
+        success: false,
+        error: { code: 'INVALID_JSON', message: '请求体包含无效的JSON格式' },
+        requestId: 'a2m-request',
+      });
+      expect(loggerMock.error).toHaveBeenCalledWith('创建API配置失败', expect.any(SyntaxError));
     });
 
     it('非 JSON 解析类错误不应误判为 INVALID_JSON（返回 500）', async () => {
@@ -214,6 +322,25 @@ describe('API to MCP API Routes', () => {
       expect(response.status).toBe(500);
       const body = await response.json();
       expect(body.error?.code ?? body.error).not.toBe('INVALID_JSON');
+    });
+
+    it('message 为 null 的 SyntaxError 不会导致处理器崩溃', async () => {
+      const syntaxError = new SyntaxError();
+      Object.defineProperty(syntaxError, 'message', { value: null });
+      vi.mocked(mockApiToMcpService.createConfig).mockRejectedValue(syntaxError);
+
+      const response = await app.request('/api/api-to-mcp/configs', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.success).toBe(false);
     });
   });
 
@@ -261,6 +388,12 @@ describe('API to MCP API Routes', () => {
       expect(body.data.id).toBe(configId);
       expect(body.data.message).toBe('API配置更新成功');
       expect(body.data.config).toEqual(validConfig.config);
+      expect(loggerMock.info).toHaveBeenCalledWith('更新API配置', {
+        context: { configId, config: validConfig.config },
+      });
+      expect(loggerMock.info).toHaveBeenCalledWith('API配置更新成功', {
+        context: { configId },
+      });
     });
 
     it('应该拒绝ID不匹配的更新', async () => {
@@ -283,9 +416,90 @@ describe('API to MCP API Routes', () => {
       expect(response.status).toBe(400);
       const body = await response.json();
 
-      expect(body.success).toBe(false);
-      expect(body.error.code).toBe('UPDATE_API_CONFIG_FAILED');
-      expect(body.error.message).toBe('配置ID不匹配');
+      expect(body).toEqual({
+        success: false,
+        error: { code: 'UPDATE_API_CONFIG_FAILED', message: '配置ID不匹配' },
+        requestId: 'a2m-request',
+      });
+    });
+
+    it('配置缺少 name 时返回 INVALID_CONFIG', async () => {
+      const response = await app.request(`/api/api-to-mcp/configs/${configId}`, {
+        method: 'PUT' as const,
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ config: { id: configId } }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        success: false,
+        error: { code: 'INVALID_CONFIG', message: '配置数据无效：缺少必要字段' },
+        requestId: 'a2m-request',
+      });
+      expect(vi.mocked(mockApiToMcpService.updateConfig)).not.toHaveBeenCalled();
+    });
+
+    it('配置整体缺失时返回 INVALID_CONFIG 而非 500', async () => {
+      const response = await app.request(`/api/api-to-mcp/configs/${configId}`, {
+        method: 'PUT' as const,
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        error: { code: 'INVALID_CONFIG' },
+      });
+    });
+
+    it('更新服务返回失败时透传消息', async () => {
+      vi.mocked(mockApiToMcpService.updateConfig).mockResolvedValue({
+        success: false,
+        message: '配置不存在',
+      });
+
+      const response = await app.request(`/api/api-to-mcp/configs/${configId}`, {
+        method: 'PUT' as const,
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        success: false,
+        error: { code: 'UPDATE_API_CONFIG_FAILED', message: '配置不存在' },
+        requestId: 'a2m-request',
+      });
+    });
+
+    it('更新服务抛错时返回 500', async () => {
+      vi.mocked(mockApiToMcpService.updateConfig).mockRejectedValue(new Error('更新崩溃'));
+
+      const response = await app.request(`/api/api-to-mcp/configs/${configId}`, {
+        method: 'PUT' as const,
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(validConfig),
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        requestId: 'a2m-request',
+      });
+      expect(loggerMock.error).toHaveBeenCalledWith('更新API配置失败', expect.any(Error));
     });
   });
 
