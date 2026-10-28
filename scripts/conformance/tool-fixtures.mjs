@@ -74,14 +74,22 @@ function createFixtureServer() {
   }
   server.registerTool(
     'tool_with_progress',
-    { description: 'Isolated progress-notification fixture', inputSchema: z.object({}) },
-    async (_args, context) => {
+    {
+      description: 'Isolated progress-notification fixture',
+      inputSchema: z.object({ label: z.string().optional() }),
+    },
+    async (args, context) => {
       const token = context.mcpReq._meta?.progressToken;
       for (const progress of [0, 50, 100]) {
         if (token !== undefined) {
           await context.mcpReq.notify({
             method: 'notifications/progress',
-            params: { progressToken: token, progress, total: 100 },
+            params: {
+              progressToken: token,
+              progress,
+              total: 100,
+              ...(args.label ? { message: args.label } : {}),
+            },
           });
         }
         await delay(50);

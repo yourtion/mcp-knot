@@ -27,17 +27,38 @@ for (const era of ['legacy', 'modern']) {
       assert.deepEqual(actual.content, expected.content, `${era}: ${name} content changed`);
       assert.equal(!!actual.isError, !!expected.isError, `${era}: ${name} error state changed`);
     }
+    const progress = [];
+    await client.callTool(
+      { name: 'test_tool_with_progress', arguments: {} },
+      { onprogress: (value) => progress.push(value) },
+    );
+    assert.deepEqual(
+      progress.map(({ progress, total }) => ({ progress, total })),
+      [0, 50, 100].map((progress) => ({ progress, total: 100 })),
+    );
+    await Promise.all(
+      ['caller-a', 'caller-b'].map(async (label) => {
+        const notifications = [];
+        await client.callTool(
+          { name: 'test_tool_with_progress', arguments: { label } },
+          { onprogress: (value) => notifications.push(value) },
+        );
+        assert.deepEqual(
+          notifications.map(({ progress, message }) => ({ progress, message })),
+          [0, 50, 100].map((progress) => ({ progress, message: label })),
+        );
+      }),
+    );
     console.log(
-      `Hub fixture routing (${era}): 7 namespaced tools, 6 contents/error results passed.`,
+      `Hub fixture routing (${era}): 7 namespaced tools, 6 contents/error results, progress and concurrent caller isolation passed.`,
     );
   } finally {
     await client.close();
   }
 }
 
-// A positive direct-upstream control keeps a broken progress fixture from being
-// confused with the Hub's known missing progress relay. Official TCK tests the
-// Hub path separately and must still report its actual progress failure.
+// Keep an independent direct-upstream control alongside real Hub assertions;
+// the official TCK also checks the Hub's legacy progress path separately.
 const direct = new Client(
   { name: 'progress-fixture-control', version: '1.0.0' },
   { versionNegotiation: { mode: { pin: '2026-07-28' } } },

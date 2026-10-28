@@ -2,7 +2,7 @@ name: Mutation Testing
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, fix/conformance-baseline-cleanup, fix/progress-notification-relay]
   push:
     branches: [main]
   workflow_dispatch:

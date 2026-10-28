@@ -7,6 +7,7 @@ import {
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { runWithProgressContext } from '../middleware/progress-context.js';
 import { runWithTraceContext, type TraceContext } from '../middleware/trace-context.js';
 import { ServerStatus } from '../types/mcp-knot.js';
 import { logger } from '../utils/logger.js';
@@ -450,6 +451,33 @@ describe('ServerManager', () => {
       mockClient.listTools.mockResolvedValue({ tools: [] });
       await serverManager.initialize();
     });
+
+    it.each(['plain', 'retry'] as const)(
+      'relays request-local progress through the %s call without replacing trace metadata',
+      async (mode) => {
+        const notify = vi.fn(async () => {});
+        mockClient.callTool.mockImplementation(async (_params, options) => {
+          options.onprogress({ progress: 1, total: 2 });
+          return { content: [] };
+        });
+        await runWithTraceContext({ traceparent: 'trace-parent' }, () =>
+          runWithProgressContext({ progressToken: 'downstream-token', notify }, () =>
+            mode === 'plain'
+              ? serverManager.executeToolOnServer('test-server-1', 'test-tool', {})
+              : serverManager.executeToolOnServerWithContext('test-server-1', 'test-tool', {}, {}),
+          ),
+        );
+        expect(notify).toHaveBeenCalledExactlyOnceWith({
+          progress: 1,
+          total: 2,
+          progressToken: 'downstream-token',
+        });
+        expect(mockClient.callTool).toHaveBeenCalledWith(
+          { name: 'test-tool', arguments: {}, _meta: { traceparent: 'trace-parent' } },
+          expect.objectContaining({ onprogress: expect.any(Function) }),
+        );
+      },
+    );
 
     it('把 retryContext 透传给 callTool params 顶层（inputResponses + requestState）', async () => {
       const mockResult = { content: [{ type: 'text', text: 'resumed' }] };

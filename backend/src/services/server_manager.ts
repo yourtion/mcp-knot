@@ -7,6 +7,7 @@ import {
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
+import { getProgressCallback } from '../middleware/progress-context.js';
 import { getCurrentTraceContext, hasTraceContext } from '../middleware/trace-context.js';
 import { ServerStatus } from '../types/mcp-knot.js';
 import { logger } from '../utils/logger.js';
@@ -424,7 +425,10 @@ export class ServerManager implements IServerManager {
           Object.entries(traceCtx).filter(([, v]) => v !== undefined),
         ) as Record<string, string>;
       }
-      const response = await server.client.callTool(callParams);
+      const onprogress = getProgressCallback();
+      const response = onprogress
+        ? await server.client.callTool(callParams, { onprogress })
+        : await server.client.callTool(callParams);
       const executionTime = Date.now() - startTime;
 
       logger.debug('Tool execution completed', {
@@ -553,6 +557,7 @@ export class ServerManager implements IServerManager {
       }
       // SDK callTool 要求 arguments 为 { [x: string]: unknown }（adapter wire 为 unknown 形态，
       // args 本身已是 Record<string, unknown>，断言还原）
+      const onprogress = getProgressCallback();
       const response = await server.client.callTool(
         callParams as Parameters<typeof server.client.callTool>[0],
         {
@@ -561,6 +566,7 @@ export class ServerManager implements IServerManager {
           // 结果以 InputRequiredResult 形态回到这里，再由 group-service.ts 的
           // isInputRequiredResult 分支识别并 mint Hub state 中转给下游。
           allowInputRequired: true,
+          ...(onprogress ? { onprogress } : {}),
         },
       );
       const executionTime = Date.now() - startTime;
