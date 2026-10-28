@@ -33,6 +33,7 @@
     "mutation": "node .github/scripts/mutation.mjs",
     "mutation:full": "node .github/scripts/mutation.mjs --force",
     "test:conformance": "bash scripts/conformance/run.sh",
+    "test:conformance:report": "node --test scripts/conformance/summarize.test.mjs",
     "coverage:report": "tsx scripts/check-coverage.ts",
     "coverage:merge": "tsx scripts/merge-coverage.ts",
     "coverage:full": "pnpm test:coverage && pnpm coverage:merge && pnpm coverage:report",

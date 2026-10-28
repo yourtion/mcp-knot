@@ -10,7 +10,7 @@
 #   2. 在固定端口 8181 以「开放访问」配置起 Hub（OAuth 未配置 → /:group/mcp 全开）；
 #      配置**完全自包含**：在临时目录里生成最小 system/group/mcp_server.json，
 #      不依赖仓库 backend/config/*.json（那些被 .gitignore 忽略，干净 CI 里不存在），
-#      也不连任何外部上游（占位 stub 永远连不上，只为满足组校验）；
+#      仅连接仓库内确定性的 stdio 测试上游，不连接任何外部服务；
 #   3. 用官方 @modelcontextprotocol/conformance v0.1.16（npx 拉取，不加为依赖）
 #      在 server 模式下连 http://localhost:8181/default/mcp 跑 active suite；
 #   4. 用 scripts/conformance/expected-failures.yaml 作 baseline：所有失败必须落在
@@ -34,6 +34,8 @@ HUB_PORT="${HUB_PORT:-8181}"
 # 不再支持通过 HUB_GROUP 指向其他组——干净 CI 里没有别的组，避免误导。
 HUB_GROUP="default"
 HUB_URL="http://localhost:${HUB_PORT}/${HUB_GROUP}/mcp"
+# 网关验证可明确指定独立入口；Hub 仍在本机启动并做直连寻址验证。
+TCK_URL="${CONFORMANCE_URL:-${HUB_URL}}"
 SPEC_VERSION="${SPEC_VERSION:-2025-11-25}"   # 累积过滤；覆盖全部 server 场景
 SUITE="${SUITE:-active}"
 BASELINE="${REPO_ROOT}/scripts/conformance/expected-failures.yaml"
@@ -92,48 +94,43 @@ fi
 # （这些 .json 被 .gitignore 忽略，干净 CI checkout 里不存在）。
 #
 # 设计目标（C1 修复）：
-#   - 只有 default 组，且该组只引用一个**永远连不上**的占位上游 stub server。
-#     这样既满足 GroupSchema 的 servers.min(1) 校验，又不会引入任何外部进程/网络依赖，
+#   - 只有 default 组，且该组只引用仓库内的 stdio fixture server。
+#     这样既满足 GroupSchema 的 servers.min(1) 校验，又不引入任何外部服务依赖，
 #     也不依赖工作树里未提交的 group.json / mcp_server.json。
 #   - system.json={} → port 默认 8181、OAuth 未配置 → /:group/mcp 全开，TCK 无需凭据。
-#   - 占位上游连不上 → ServerManager 把它登记为 ERROR（仍出现在 getAllServers，
-#     使 group 校验通过），但 getAvailableServersForGroup 只留 status=connected 的 →
-#     该组可用上游为空。tools/list 仍会返回 Hub 自注册的两个组管理工具
-#     （group_status / list_group_tools），它们缺 description → tools-list 场景 FAILURE，
-#     已在 baseline（详见 expected-failures.yaml 第五节）。
+#   - 上游 ID=test，原始工具名 simple_text 等经真实 Hub 命名空间规则变为
+#     test_simple_text 等 TCK 名称；不更改生产命名规则、不注册生产测试别名。
 #   - 不生成 api-tools.json：JsonStorage 在缺失时不报错，且无 apiToolService 注册。
 TMP_CONFIG="$(mktemp -d)"
 
 # system.json：空对象触发 system=空分支（port 默认 8181，OAuth 未配置）
 printf '{}\n' > "${TMP_CONFIG}/system.json"
 
-# group.json：default 组引用占位上游 stub（满足 servers.min(1)）
+# group.json：default 组只引用隔离的测试上游
 cat > "${TMP_CONFIG}/group.json" <<'EOF'
 {
   "default": {
     "id": "default",
     "name": "conformance-default",
-    "description": "自包含的最小 default 组（conformance TCK 用，不连任何真实上游）",
-    "servers": ["stub"],
+    "description": "隔离的工具 conformance 测试组，不连外部上游",
+    "servers": ["test"],
     "tools": []
   }
 }
 EOF
 
-# mcp_server.json：占位上游 stub——stdio 命令指向不存在的二进制，spawn 立即 ENOENT 失败，
-# 注册为 ERROR 状态，不产生任何工具，也不拉起真实进程。
-cat > "${TMP_CONFIG}/mcp_server.json" <<'EOF'
-{
-  "servers": {
-    "stub": {
-      "type": "stdio",
-      "command": "conformance-stub-upstream-not-real",
-      "args": [],
-      "env": {},
-      "enabled": true
-    }
-  }
-}
+# JSON 由 Node 编码，仓库路径含空格/引号时仍保持参数边界。
+node --input-type=module - "${TMP_CONFIG}" "${REPO_ROOT}" <<'EOF'
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [config, root] = process.argv.slice(2);
+writeFileSync(join(config, 'mcp_server.json'), JSON.stringify({
+  servers: { test: {
+    type: 'stdio', command: process.execPath,
+    args: [join(root, 'scripts/conformance/tool-fixtures.mjs'), 'serve'],
+    env: {}, enabled: true,
+  } },
+}));
 EOF
 # 若调用方通过 HUB_PORT 改了端口，写进 system.json（需要完整 system 校验，故仅当端口非默认时
 # 走环境变量 HUB_PORT 让 index.ts 读取——index.ts 当前只读 config，不读 env，因此改端口需配
@@ -173,13 +170,31 @@ log "Hub 就绪（${HUB_URL}）"
 mkdir -p "${OUT_DIR}"
 rm -rf "${OUT_DIR:?}"/*
 
+node --input-type=module - "${OUT_DIR}" "${HUB_URL}" "${TCK_URL}" "${SPEC_VERSION}" <<'EOF'
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [output, directHubUrl, testedUrl, specVersion] = process.argv.slice(2);
+const url = new URL(testedUrl);
+if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+  throw new Error('CONFORMANCE_URL must be an HTTP(S) endpoint without credentials');
+}
+writeFileSync(join(output, 'target.json'), JSON.stringify({
+  profile: testedUrl === directHubUrl ? 'direct' : 'gateway',
+  testedUrl, directHubUrl, specVersion,
+  conformancePackage: '@modelcontextprotocol/conformance@0.1.16',
+}, null, 2) + '\n');
+EOF
+
+log "验证真实 Hub 工具寻址及 legacy/modern 内容转发"
+node "${REPO_ROOT}/scripts/conformance/verify-tools.mjs" "${HUB_URL}"
+
 log "运行 conformance TCK：spec=${SPEC_VERSION} suite=${SUITE}"
-log "  npx ${CONFORMANCE_PKG} server --url ${HUB_URL} --suite ${SUITE} --spec-version ${SPEC_VERSION}"
+log "  npx ${CONFORMANCE_PKG} server --url ${TCK_URL} --suite ${SUITE} --spec-version ${SPEC_VERSION}"
 
 # TCK 在 baseline 全部命中时 exit 0；出现 unexpected / stale 时 exit 1。
 set +e
 npx "${CONFORMANCE_PKG}" server \
-  --url "${HUB_URL}" \
+  --url "${TCK_URL}" \
   --suite "${SUITE}" \
   --spec-version "${SPEC_VERSION}" \
   --expected-failures "${BASELINE}" \
@@ -188,9 +203,19 @@ npx "${CONFORMANCE_PKG}" server \
 TCK_EXIT=$?
 set -e
 
+# 区分实际失败与 warning-only 场景。诊断分类不改变 TCK 的 baseline 门禁。
+set +e
+node "${REPO_ROOT}/scripts/conformance/summarize.mjs" "${OUT_DIR}"
+SUMMARY_EXIT=$?
+set -e
+
 # ---------- 5. 结果 ----------
 if [[ "${TCK_EXIT}" -eq 0 ]]; then
-  log "✅ conformance 通过：所有失败均在 baseline 内，无新增回归，无 stale 条目。"
+  if [[ "${SUMMARY_EXIT}" -ne 0 ]]; then
+    err "Conformance 结果不完整或格式无效。"
+    exit "${SUMMARY_EXIT}"
+  fi
+  log "Conformance baseline 门禁通过：无新增失败、无 stale 项；实际失败和警告见 summary.json。"
   exit 0
 else
   err "❌ conformance 未通过（exit ${TCK_EXIT}）：存在 unexpected failure 或 stale baseline 条目。"

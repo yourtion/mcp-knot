@@ -6,8 +6,7 @@
 #
 # 维护规则：
 #   - 新增失败 → 先判定是「Hub 架构性不支持」还是「真实回归」。
-#       * 架构性不支持（参考实现才提供的 test_* 工具 / test:// 资源 / prompts /
-#         completion / logging / sampling / elicitation 等）→ 加进本 baseline；
+#       * 测试桩缺失 / 可选能力未实现 → 记录根因并评审范围，不为清零自动扩大 baseline；
 #       * 真实回归（initialize / ping / tools-list 结构 / SSE 传输 / Hub 自有工具行为）
 #         → 不进 baseline，修 Hub。
 #   - 已恢复（原本在 baseline、现在通过）→ 必须从本文件移除，否则报 stale。
@@ -25,19 +24,14 @@
 #
 # Fix round 1（2026-08-02）：run.sh 改为自包含配置（空 default 组，不连外部上游）。
 # Fix round 2（2026-08-02）：group_status/list_group_tools 补 description，tools-list
-#   场景通过、移出 baseline（真 bug 不再被 baseline 掩盖）。当前 25 条已知失败。
+#   场景通过、移出 baseline（真 bug 不再被 baseline 掩盖）。
+# 2026-10-27：接通隔离 stdio fixture，经真实 test_<tool> 寻址恢复六种内容/错误场景；
+#   仅移除实际通过的六项。当前 19 个失败场景及 1 个 warning-only 场景。
 # =============================================================================
 
 server:
-  # ---- 一、参考实现专有工具（test_*）：Hub 是路由/代理，不提供这些 conformance
-  # ----     测试桩工具，故所有 tools-call/* 场景缺失被测工具 → -32602。
-  - tools-call-simple-text # 缺 test_simple_text 工具
-  - tools-call-image # 缺 test_image_content 工具
-  - tools-call-audio # 缺 test_audio_content 工具
-  - tools-call-embedded-resource # 缺 test_embedded_resource 工具
-  - tools-call-mixed-content # 缺 test_multiple_content_types 工具
-  - tools-call-error # 缺 test_error_handling 工具
-  - tools-call-with-progress # 缺 test_tool_with_progress 工具
+  # ---- 一、剩余工具能力：六种基本内容/错误结果已有真实 Hub 转发测试。
+  - tools-call-with-progress # fixture 已提供；Hub 未中继 progress token/通知，实测收到 0 条
   - tools-call-sampling # 缺 test_sampling 工具（需 sampling server 能力）
   - tools-call-elicitation # 缺 test_elicitation 工具（需 elicitation server 能力）
   - tools-call-with-logging # logging/setLevel method not found（见下）
@@ -68,12 +62,11 @@ server:
 
   # ---- 六、DNS rebinding：Hub 当前不校验 Host/Origin 头（无 DNS-rebinding 防护）。
   # ----     localhost-host-valid-accepted 子检查通过；invalid-host 子检查期望 4xx 实得 200。
-  # ----     属安全增强项，暂入 baseline；接入 Host 头校验后可移除。
+  # ----     是裸后端已知防护缺口，baseline 接受不代表符合 Origin 校验要求。
+  # ----     网关部署需单独验证唯一入口与 Host/Origin 策略，不能用其结果替代裸后端。
   - dns-rebinding-protection
 
   # ---- 七、SSE 多流会话（SEP-1699）：Hub 是无状态路由器，不在 initialize 响应里
-  # ----     下发 Mcp-Session-Id，且并发多 POST 流偶发 GROUP_NOT_FOUND（handler 缓存
-  # ----     竞态）。套件上下文里表现为 WARNING（无 session id），独立跑表现为 FAILURE。
-  # ----     属架构性（无状态路由 + 无 session 关联），暂入 baseline；若后续 Hub 引入
-  # ----     session id 与并发安全的 handler 缓存可移除。
+  # ----     下发 Mcp-Session-Id；当前固定 TCK 提前返回 WARNING，没有运行多流检查。
+  # ----     独立 3 路并发 × 50 批请求未复现 GROUP_NOT_FOUND，不据此宣称支持有状态会话。
   - server-sse-multiple-streams
